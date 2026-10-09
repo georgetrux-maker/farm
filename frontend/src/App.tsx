@@ -9,13 +9,14 @@ import { QuickCheckoutDrawer } from './components/TryOn/QuickCheckoutDrawer'
 import { VietQRModal } from './components/Wallet/VietQRModal'
 import { AuditModal } from './components/SystemAudit/AuditModal'
 import { DashboardView } from './components/Dashboard/DashboardView'
+import { CreateVideoView } from './components/Create/CreateVideoView'
 import type { PipelineNode } from './types'
 import { triggerPipelineRun, fetchJobStatus, fetchProfile } from './services/api'
 
 const DEMO_PRODUCT_ID = 'prod_dam_voan_to'
 
 export default function App() {
-  const [activeView, setActiveView] = useState<'split' | 'studio' | 'tryon' | 'dashboard'>('split')
+  const [activeView, setActiveView] = useState<'create' | 'split' | 'studio' | 'tryon' | 'dashboard'>('create')
   const [walletCredits, setWalletCredits] = useState<number>(0)
 
   // Số dư thật từ máy chủ
@@ -292,6 +293,8 @@ export default function App() {
         )}
 
         {/* VIEW 3: Dedicated Comprehensive Dashboard & Settings */}
+        {activeView === 'create' && <CreateVideoView onCreditsChange={setWalletCredits} />}
+
         {activeView === 'dashboard' && (
           <DashboardView
             walletCredits={walletCredits}

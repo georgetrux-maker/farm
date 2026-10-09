@@ -83,8 +83,52 @@ def max_workers() -> int:
     return max(1, _env_int("PIPELINE_MAX_WORKERS", 2))
 
 
-def kling_api_key() -> str:
-    return _env("KLING_API_KEY")
+# --- Nhà cung cấp AI (để trống = dùng engine tạm, không tốn phí) ---
+def anthropic_enabled() -> bool:
+    """SDK Anthropic tự đọc ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN từ môi trường."""
+    return bool(_env("ANTHROPIC_API_KEY") or _env("ANTHROPIC_AUTH_TOKEN"))
+
+
+def anthropic_model() -> str:
+    return _env("ANTHROPIC_MODEL", "claude-opus-5-5")
+
+
+def fashn_api_key() -> str:
+    return _env("FASHN_API_KEY")
+
+
+def fashn_model_name() -> str:
+    return _env("FASHN_MODEL_NAME", "tryon-v1.6")
+
+
+def fashn_mode() -> str:
+    return _env("FASHN_MODE", "balanced")
+
+
+def replicate_api_token() -> str:
+    return _env("REPLICATE_API_TOKEN")
+
+
+def replicate_video_model() -> str:
+    return _env("REPLICATE_VIDEO_MODEL", "kwaivgi/kling-v3-video")
+
+
+def kling_mode() -> str:
+    return _env("KLING_MODE", "standard")
+
+
+def ai_timeout_sec() -> int:
+    return _env_int("AI_TIMEOUT_SEC", 600)
+
+
+def public_base_url() -> str:
+    """Địa chỉ công khai của server (vd https://app.example.com) để AI tải ảnh trực tiếp."""
+    return _env("PUBLIC_BASE_URL")
+
+
+def tryon_preview_cost_credits() -> int:
+    """Phần credit không hoàn lại khi khách từ chối ảnh thử đồ (đã tốn phí thử đồ)."""
+    return _env_int("TRYON_PREVIEW_COST_CREDITS", 5)
 
 
 # Thông tin nhận tiền VietQR (phải trùng với tài khoản thật của shop)

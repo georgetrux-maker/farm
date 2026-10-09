@@ -27,23 +27,17 @@ def test_profile_does_not_leak_token_hash(client):
     assert "api_token_hash" not in body
 
 
-def test_settings_require_admin_and_mask_secrets(client, shop, monkeypatch):
+def test_settings_require_admin_and_never_store_api_keys(client, shop):
     assert client.get("/api/settings", headers=shop["headers"]).status_code == 403
     assert client.post("/api/settings", headers=shop["headers"], json={"fps_setting": "60"}).status_code == 403
 
-    client.post("/api/settings", headers=DEMO_AUTH, json={"kling_api_key": "kl_live_supersecret1234"})
+    # API key chỉ đọc từ biến môi trường, gửi qua API sẽ bị bỏ qua
+    client.post("/api/settings", headers=DEMO_AUTH, json={"kling_api_key": "kl_live_supersecret1234",
+                                                         "evil_key": "x", "fps_setting": "60"})
     settings = client.get("/api/settings", headers=DEMO_AUTH).json()
-    assert "supersecret" not in settings["kling_api_key"]
-    assert settings["kling_api_key"].endswith("1234")
-
-    # Gửi lại giá trị đã che không được ghi đè key thật
-    client.post("/api/settings", headers=DEMO_AUTH, json={"kling_api_key": settings["kling_api_key"]})
-    from backend.database import get_system_settings
-    assert get_system_settings(mask_secrets=False)["kling_api_key"] == "kl_live_supersecret1234"
-
-    # Khóa lạ bị bỏ qua
-    client.post("/api/settings", headers=DEMO_AUTH, json={"evil_key": "x"})
-    assert "evil_key" not in client.get("/api/settings", headers=DEMO_AUTH).json()
+    assert "kling_api_key" not in settings
+    assert "evil_key" not in settings
+    assert settings["fps_setting"] == "60"
 
 
 def test_media_refs_cannot_escape_media_dir(client):

@@ -1,9 +1,9 @@
 import React from 'react'
-import { Sparkles, Layers, QrCode, CheckCircle2, Video, Sun, Moon, LayoutDashboard } from 'lucide-react'
+import { Sparkles, Layers, Wand2, QrCode, CheckCircle2, Video, Sun, Moon, LayoutDashboard } from 'lucide-react'
 
 interface HeaderProps {
-  activeView: 'split' | 'studio' | 'tryon' | 'dashboard'
-  setActiveView: (view: 'split' | 'studio' | 'tryon' | 'dashboard') => void
+  activeView: 'create' | 'split' | 'studio' | 'tryon' | 'dashboard'
+  setActiveView: (view: 'create' | 'split' | 'studio' | 'tryon' | 'dashboard') => void
   walletCredits: number
   theme: 'dark' | 'light'
   onToggleTheme: () => void
@@ -38,8 +38,19 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
       </div>
 
-      {/* View Switcher (4 Navigation Modes) */}
+      {/* Chuyển màn hình */}
       <div className="flex items-center bg-[var(--bg-surface)] p-1 rounded-xl border border-[var(--border-subtle)]">
+        <button
+          onClick={() => setActiveView('create')}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+            activeView === 'create'
+              ? 'bg-[var(--bg-card)] text-[var(--text-main)] shadow-sm border border-[var(--border-subtle)]'
+              : 'text-[var(--text-muted)] hover:text-[var(--text-main)]'
+          }`}
+        >
+          <Wand2 className="w-3.5 h-3.5 text-[var(--accent-color)]" />
+          <span>Tạo Video</span>
+        </button>
         <button
           onClick={() => setActiveView('split')}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${

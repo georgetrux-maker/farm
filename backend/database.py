@@ -1,4 +1,5 @@
 import hashlib
+import json
 import sqlite3
 import uuid
 
@@ -7,12 +8,12 @@ from backend import config
 DEMO_USER_ID = "user_linh_chi"
 DEMO_PRODUCT_ID = "prod_dam_voan_to"
 
-# Các khóa cấu hình được phép lưu qua API; khóa kết thúc bằng _api_key được coi là bí mật
+# Các khóa cấu hình được phép lưu qua API. API key của nhà cung cấp AI KHÔNG lưu trong DB
+# mà chỉ đọc từ biến môi trường (backend/.env).
 ALLOWED_SETTING_KEYS = {
-    "kling_api_key", "sam_threshold", "motion_speed", "fps_setting", "auto_subtitles",
+    "sam_threshold", "motion_speed", "fps_setting", "auto_subtitles",
     "selected_voice", "watermark_enabled", "shopee_sync", "tiktok_sync", "default_model_id",
 }
-SECRET_MASK_PREFIX = "••••"
 
 
 def get_db():
@@ -161,6 +162,7 @@ def init_db():
     # Migration cho các database tạo bằng phiên bản cũ
     _add_column_if_missing(cursor, "users", "api_token_hash", "TEXT")
     _add_column_if_missing(cursor, "products", "owner_id", "TEXT")
+    _add_column_if_missing(cursor, "products", "analysis_json", "TEXT")
     _add_column_if_missing(cursor, "ai_jobs", "params_json", "TEXT")
     _add_column_if_missing(cursor, "ai_jobs", "script_json", "TEXT")
     _add_column_if_missing(cursor, "ai_jobs", "cost_credits", "INTEGER DEFAULT 0")
@@ -169,8 +171,8 @@ def init_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_user ON ai_jobs(user_id, created_at)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_tx_user ON wallet_transactions(user_id, created_at)")
     cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_token ON users(api_token_hash)")
-    # Bản cũ seed sẵn một API key giả vào DB; key thật giờ đọc từ biến môi trường KLING_API_KEY
-    cursor.execute("DELETE FROM system_settings WHERE key = 'kling_api_key' AND value = 'kl_live_994821a8bf9028e19273'")
+    # API key không còn lưu trong DB (bản cũ seed sẵn key giả và cho sửa qua giao diện)
+    cursor.execute("DELETE FROM system_settings WHERE key LIKE '%_api_key'")
 
     default_settings = {
         'sam_threshold': '0.96',
@@ -263,24 +265,11 @@ def public_user(user: dict) -> dict:
     return {k: v for k, v in user.items() if k != "api_token_hash"}
 
 
-def _mask_secret(value: str) -> str:
-    if not value:
-        return ""
-    return SECRET_MASK_PREFIX + value[-4:] if len(value) > 8 else SECRET_MASK_PREFIX
-
-
-def get_system_settings(mask_secrets: bool = True):
+def get_system_settings():
     conn = get_db()
     rows = conn.execute("SELECT key, value FROM system_settings").fetchall()
     conn.close()
-    settings = {row['key']: row['value'] for row in rows}
-    if config.kling_api_key() and not settings.get("kling_api_key"):
-        settings["kling_api_key"] = config.kling_api_key()
-    if mask_secrets:
-        for k in list(settings):
-            if k.endswith("_api_key"):
-                settings[k] = _mask_secret(settings[k])
-    return settings
+    return {row['key']: row['value'] for row in rows}
 
 
 def save_system_settings(settings_dict: dict):
@@ -290,9 +279,6 @@ def save_system_settings(settings_dict: dict):
         if k not in ALLOWED_SETTING_KEYS:
             continue
         value = str(v).lower() if isinstance(v, bool) else str(v)
-        # Frontend gửi lại giá trị đã che (••••abcd) khi người dùng không đổi key: bỏ qua
-        if k.endswith("_api_key") and value.startswith(SECRET_MASK_PREFIX):
-            continue
         cursor.execute("INSERT OR REPLACE INTO system_settings (key, value) VALUES (?, ?)", (k, value))
     conn.commit()
     conn.close()
@@ -347,17 +333,27 @@ def get_product(product_id: str):
 
 def create_product(owner_id: str, title: str, price: int, image_url: str, category: str = None,
                    fabric_type: str = None, original_price: int = None,
-                   affiliate_shopee_url: str = None, affiliate_tiktok_url: str = None) -> dict:
+                   affiliate_shopee_url: str = None, affiliate_tiktok_url: str = None,
+                   analysis: dict = None) -> dict:
     product_id = f"prod_{uuid.uuid4().hex[:10]}"
     conn = get_db()
     conn.execute('''
-    INSERT INTO products (id, owner_id, title, price, original_price, category, fabric_type, image_url, affiliate_shopee_url, affiliate_tiktok_url)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO products (id, owner_id, title, price, original_price, category, fabric_type, image_url,
+                          affiliate_shopee_url, affiliate_tiktok_url, analysis_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (product_id, owner_id, title, price, original_price, category, fabric_type, image_url,
-          affiliate_shopee_url, affiliate_tiktok_url))
+          affiliate_shopee_url, affiliate_tiktok_url, json.dumps(analysis, ensure_ascii=False) if analysis else None))
     conn.commit()
     conn.close()
     return get_product(product_id)
+
+
+def save_product_analysis(product_id: str, analysis: dict):
+    conn = get_db()
+    conn.execute("UPDATE products SET analysis_json = ? WHERE id = ?",
+                 (json.dumps(analysis, ensure_ascii=False), product_id))
+    conn.commit()
+    conn.close()
 
 
 def list_products(owner_id: str):

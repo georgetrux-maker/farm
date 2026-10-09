@@ -21,7 +21,9 @@ from backend.ai import script as script_engine
 from backend.ai import segmentation as seg_engine
 from backend.ai import tts as tts_engine
 from backend.ai import vton as vton_engine
+from backend.ai.http_utils import ProviderError
 from backend.ai.motion import TEMPLATES, generate_motion
+from backend.ai.product_analysis import analyze_product
 from backend.ai.render import render_final_video
 from backend.ai.script import STYLES, generate_koc_script
 from backend.ai.segmentation import segment_garment
@@ -37,7 +39,8 @@ from backend.ffmpeg_utils import FFmpegError, ffmpeg_available
 from backend.media_paths import MediaPathError, media_path, media_url, resolve_media_ref, try_resolve_media_ref
 from backend.services.cache_manager import check_tryon_cache, save_tryon_cache
 from backend.services.queue_manager import (
-    InsufficientCredits, create_ai_job, create_ai_jobs, get_job_status, recover_stale_jobs,
+    InsufficientCredits, approve_job, create_ai_job, create_ai_jobs, ensure_product_analysis, get_job_status,
+    recover_stale_jobs, reject_job,
 )
 from backend.services.scraper import scrape_product_url
 from backend.services.security import check_rate_limit
@@ -103,6 +106,12 @@ def _unique(prefix: str, ext: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:12]}.{ext}"
 
 
+def _product_out(product: dict) -> dict:
+    out = {k: v for k, v in product.items() if k != "analysis_json"}
+    out["analysis"] = json.loads(product["analysis_json"]) if product.get("analysis_json") else None
+    return out
+
+
 def _owned_product(product_id: str, user: dict) -> dict:
     product = get_product(product_id)
     # Sản phẩm của người khác cũng trả 404 để không lộ việc nó tồn tại
@@ -153,27 +162,42 @@ class ProductCreateRequest(BaseModel):
     fabric_type: Optional[str] = Field(default=None, max_length=100)
     affiliate_shopee_url: Optional[HttpUrl] = None
     affiliate_tiktok_url: Optional[HttpUrl] = None
+    analysis: Optional[dict] = Field(default=None, description="Kết quả 'ai' từ /api/products/analyze")
+
+
+class AnalyzeRequest(BaseModel):
+    image_url: str
+    title: Optional[str] = Field(default=None, max_length=200)
+
+
+@app.post("/api/products/analyze")
+def api_analyze_product(req: AnalyzeRequest, user: dict = Depends(get_current_user)):
+    """Chấm chất lượng ảnh và (nếu có Claude) mô tả sản phẩm: loại, màu, chất liệu, điểm nổi bật"""
+    return analyze_product(resolve_media_ref(req.image_url), req.title)
 
 
 @app.post("/api/products")
 def api_create_product(req: ProductCreateRequest, user: dict = Depends(get_current_user)):
     image_path = resolve_media_ref(req.image_url)
-    return create_product(
+    if req.analysis is not None and len(json.dumps(req.analysis, ensure_ascii=False)) > 20_000:
+        raise HTTPException(status_code=400, detail="Dữ liệu phân tích quá lớn")
+    return _product_out(create_product(
         owner_id=user["id"], title=req.title.strip(), price=req.price, image_url=media_url(image_path),
         category=req.category, fabric_type=req.fabric_type, original_price=req.original_price,
         affiliate_shopee_url=str(req.affiliate_shopee_url) if req.affiliate_shopee_url else None,
         affiliate_tiktok_url=str(req.affiliate_tiktok_url) if req.affiliate_tiktok_url else None,
-    )
+        analysis=req.analysis,
+    ))
 
 
 @app.get("/api/products")
 def api_list_products(user: dict = Depends(get_current_user)):
-    return list_products(user["id"])
+    return [_product_out(p) for p in list_products(user["id"])]
 
 
 @app.get("/api/products/{product_id}")
 def api_get_product(product_id: str, user: dict = Depends(get_current_user)):
-    return _owned_product(product_id, user)
+    return _product_out(_owned_product(product_id, user))
 
 
 # =============================================================================
@@ -210,16 +234,23 @@ def api_tryon(req: TryOnRequest, user: dict = Depends(get_current_user)):
         return {"status": "success", "cached": True, "media_url": cache["result_image_url"],
                 "gpu_cost_saved": cache["gpu_cost_saved"]}
 
-    seg = segment_garment(try_resolve_media_ref(product["image_url"]), output_name=_unique("seg", "png"))
-    res = generate_tryon(seg["output_path"], req.avatar_id, avatar, {"height": req.height, "weight": req.weight},
-                         output_name=_unique("tryon", "jpg"))
+    analysis = ensure_product_analysis(product)
+    product_image = try_resolve_media_ref(product["image_url"])
+    garment = product_image if vton_engine.engine_name() == "fashn" else \
+        segment_garment(product_image, output_name=_unique("seg", "png"))["output_path"]
+    try:
+        res = generate_tryon(garment, req.avatar_id, avatar, {"height": req.height, "weight": req.weight},
+                             output_name=_unique("tryon", "jpg"), garment_type=analysis.get("garment_type", "auto"),
+                             photo_type=analysis.get("photo_type", "auto"))
+    except ProviderError as e:
+        raise HTTPException(status_code=502, detail=str(e))
     save_tryon_cache(req.product_id, req.avatar_id, req.body_shape, req.height, req.weight, res["media_url"])
     return {**res, "cached": False}
 
 
 class MotionRequest(BaseModel):
     image_url: str
-    duration_sec: int = Field(default=5, ge=1, le=30)
+    duration_sec: int = Field(default=5, ge=1, le=15)
     template: str = motion_engine.DEFAULT_TEMPLATE
 
 
@@ -228,8 +259,11 @@ def api_motion(req: MotionRequest, user: dict = Depends(get_current_user)):
     """Task 3: Sinh video dọc 9:16 theo mẫu chuyển động"""
     if req.template not in TEMPLATES:
         raise HTTPException(status_code=400, detail=f"Mẫu video phải là một trong: {', '.join(TEMPLATES)}")
-    return generate_motion(resolve_media_ref(req.image_url), req.duration_sec, req.template,
-                           output_name=_unique("motion", "mp4"))
+    try:
+        return generate_motion(resolve_media_ref(req.image_url), req.duration_sec, req.template,
+                               output_name=_unique("motion", "mp4"))
+    except ProviderError as e:
+        raise HTTPException(status_code=502, detail=str(e))
 
 
 @app.get("/api/ai/templates")
@@ -239,6 +273,13 @@ def api_templates():
         "templates": [{"id": k, "label": v["label"]} for k, v in TEMPLATES.items()],
         "voices": [{"id": k, "label": v} for k, v in VOICES.items()],
         "script_styles": list(STYLES),
+        "pipeline_cost_credits": config.pipeline_cost_credits(),
+        "tryon_preview_cost_credits": config.tryon_preview_cost_credits(),
+        "engines": {
+            "analysis": script_engine.engine_name(),
+            "tryon": vton_engine.engine_name(),
+            "video": motion_engine.engine_name(),
+        },
     }
 
 
@@ -295,6 +336,7 @@ class PipelineRunRequest(BaseModel):
     voice: str = tts_engine.DEFAULT_VOICE
     script_style: str = "genz"
     duration_sec: int = Field(default=5, ge=3, le=15)
+    require_approval: bool = Field(default=False, description="Dừng sau bước thử đồ để người bán duyệt ảnh")
 
 
 def _pipeline_params(req) -> dict:
@@ -308,7 +350,8 @@ def _pipeline_params(req) -> dict:
     if get_brand_avatar(avatar_id) is None:
         raise HTTPException(status_code=404, detail="Người mẫu không tồn tại")
     return {"avatar_id": avatar_id, "template": req.template, "voice": req.voice,
-            "script_style": req.script_style, "duration_sec": req.duration_sec}
+            "script_style": req.script_style, "duration_sec": req.duration_sec,
+            "require_approval": bool(getattr(req, "require_approval", False))}
 
 
 @app.post("/api/pipeline/run")
@@ -336,6 +379,24 @@ def api_job_status(job_id: str, user: dict = Depends(get_current_user)):
     if job is None:
         raise HTTPException(status_code=404, detail="Job không tồn tại")
     return job
+
+
+@app.post("/api/jobs/{job_id}/approve")
+def api_approve_job(job_id: str, user: dict = Depends(get_current_user)):
+    """Đồng ý ảnh thử đồ, tiếp tục tạo video"""
+    if not approve_job(job_id, user["id"]):
+        raise HTTPException(status_code=409, detail="Job không ở trạng thái chờ duyệt")
+    return {"status": "queued"}
+
+
+@app.post("/api/jobs/{job_id}/reject")
+def api_reject_job(job_id: str, user: dict = Depends(get_current_user)):
+    """Không ưng ảnh thử đồ: hủy job, hoàn credit (trừ phí thử đồ)"""
+    res = reject_job(job_id, user["id"])
+    if res is None:
+        raise HTTPException(status_code=409, detail="Job không ở trạng thái chờ duyệt")
+    res["remaining_credits"] = get_user(user["id"])["credits"]
+    return res
 
 
 class DepositRequest(BaseModel):
@@ -400,15 +461,18 @@ class AddAvatarRequest(BaseModel):
     height: str = Field(max_length=20)
     weight: str = Field(max_length=20)
     measurements: str = Field(max_length=40)
-    avatar_url: HttpUrl
+    avatar_url: str = Field(max_length=1000, description="URL https hoặc /media/... (ảnh toàn thân đã upload)")
     badge: Optional[str] = Field(default="Tùy Chỉnh", max_length=40)
 
 
 @app.post("/api/avatars")
 def api_add_avatar(req: AddAvatarRequest, user: dict = Depends(require_admin_role)):
+    url = req.avatar_url.strip()
+    if not url.startswith("https://"):
+        url = media_url(resolve_media_ref(url))
     return add_brand_avatar_entry(
         name=req.name, style=req.style, height=req.height, weight=req.weight,
-        measurements=req.measurements, avatar_url=str(req.avatar_url), badge=req.badge or "Tùy Chỉnh",
+        measurements=req.measurements, avatar_url=url, badge=req.badge or "Tùy Chỉnh",
     )
 
 
@@ -432,7 +496,7 @@ def api_dashboard_stats(user: dict = Depends(get_current_user)):
 
 @app.get("/api/settings")
 def api_get_settings(user: dict = Depends(require_admin_role)):
-    """Cấu hình hệ thống (API key được che)"""
+    """Cấu hình hệ thống (API key không lưu ở đây mà trong backend/.env)"""
     return get_system_settings()
 
 
@@ -481,7 +545,8 @@ def api_export_publisher(req: ExportRequest, user: dict = Depends(get_current_us
         "status": "success",
         "download_url": job["output_video_url"],
         "subtitles_vtt": script.get("subtitles_vtt"),
-        "seo_caption": script.get("full_script", ""),
+        "seo_caption": script.get("post_caption") or script.get("full_script", ""),
+        "voice_script": script.get("full_script", ""),
         "hashtags": script.get("hashtags", []),
         "ai_generated_label": "Video có sử dụng hình ảnh minh họa do AI tạo",
     }
@@ -575,15 +640,18 @@ def _health_report() -> list:
     add("Thư mục media", "PASSED" if media_ok else "FAILED", config.media_dir())
     add("Tài khoản nhận tiền VietQR", "PASSED" if config.bank_account_no() else "WARNING", "services/wallet.py",
         "" if config.bank_account_no() else "Chưa đặt VIETQR_ACCOUNT_NO")
-    for name, module, engine in (
-        ("Tách nền trang phục", "ai/segmentation.py", seg_engine.ENGINE),
-        ("Thử đồ ảo", "ai/vton.py", vton_engine.ENGINE),
-        ("Sinh chuyển động video", "ai/motion.py", motion_engine.ENGINE),
-        ("Viết kịch bản review", "ai/script.py", script_engine.ENGINE),
+    for name, module, engine, how in (
+        ("Phân tích ảnh & viết kịch bản (Claude)", "ai/claude_client.py", script_engine.engine_name(),
+         "đặt ANTHROPIC_API_KEY"),
+        ("Tách nền trang phục", "ai/segmentation.py", seg_engine.engine_name(),
+         "cài backend/requirements-ai.txt"),
+        ("Thử đồ lên người mẫu (FASHN)", "ai/vton.py", vton_engine.engine_name(), "đặt FASHN_API_KEY"),
+        ("Tạo video AI (Kling qua Replicate)", "ai/motion.py", motion_engine.engine_name(),
+         "đặt REPLICATE_API_TOKEN"),
     ):
         real = not engine.startswith(("placeholder", "template"))
         add(name, "PASSED" if real else "WARNING", module,
-            "" if real else f"Đang dùng engine tạm '{engine}', chưa nối AI thật")
+            f"Đang dùng: {engine}" if real else f"Đang dùng engine tạm '{engine}'; để dùng AI thật: {how}")
     return checks
 
 

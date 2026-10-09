@@ -70,7 +70,7 @@ def wait_for_job(client, job_id, headers, timeout=90) -> dict:
     deadline = time.time() + timeout
     while time.time() < deadline:
         job = client.get(f"/api/jobs/{job_id}", headers=headers).json()
-        if job["status"] in ("completed", "failed"):
+        if job["status"] in ("completed", "failed", "awaiting_approval", "rejected"):
             return job
         time.sleep(0.3)
     raise AssertionError(f"Job {job_id} không xong sau {timeout}s")

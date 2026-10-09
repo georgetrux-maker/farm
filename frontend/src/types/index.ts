@@ -43,13 +43,22 @@ export interface AIJob {
   job_id: string
   user_id: string
   product_id: string
-  status: 'pending' | 'processing' | 'completed' | 'failed'
+  status: 'queued' | 'pending' | 'processing' | 'awaiting_approval' | 'completed' | 'failed' | 'rejected'
   progress: number
   current_step: string
   output_video_url?: string
   output_image_url?: string
   error_message?: string | null
   refunded?: boolean
+  script?: {
+    engine: string
+    warning?: string | null
+    post_caption?: string
+    full_script: string
+    hashtags: string[]
+    tts_warning?: string | null
+    motion_engine?: string
+  } | null
 }
 
 export interface SystemAuditTask {

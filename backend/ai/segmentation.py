@@ -4,9 +4,17 @@ from PIL import Image, ImageDraw, ImageFilter, ImageStat
 
 from backend.media_paths import media_path, media_url
 
-# Engine hiện tại: tách nền đơn giản cho ảnh chụp trên nền sáng.
-# Đợt 2 sẽ thay bằng mô hình tách nền thật (BiRefNet / rembg / SAM).
-ENGINE = "placeholder-threshold"
+# Có cài `rembg` (pip install -r backend/requirements-ai.txt): tách nền bằng mô hình AI chạy tại chỗ.
+# Chưa cài: tách nền sáng đơn giản (đủ cho ảnh chụp trên nền trắng).
+# Khi dùng FASHN, bước này chỉ để xem trước; FASHN tự xử lý ảnh gốc.
+
+
+def engine_name() -> str:
+    try:
+        import rembg  # noqa: F401
+        return "rembg"
+    except ImportError:
+        return "placeholder-threshold"
 
 
 def _demo_garment() -> Image.Image:
@@ -43,9 +51,15 @@ def segment_garment(image_path: Optional[str], output_name: str = "segmented_gar
     `image_path` phải là đường dẫn đã kiểm tra (nằm trong thư mục media) hoặc None để dùng hình minh họa.
     """
     output_path = media_path(output_name)
+    engine = engine_name()
     if image_path:
         with Image.open(image_path) as src:
-            garment = _remove_light_background(src)
+            src.load()
+            if engine == "rembg":
+                import rembg
+                garment = rembg.remove(src.convert("RGBA"))
+            else:
+                garment = _remove_light_background(src)
         source = "upload"
     else:
         garment = _demo_garment()
@@ -58,7 +72,7 @@ def segment_garment(image_path: Optional[str], output_name: str = "segmented_gar
 
     return {
         "status": "success",
-        "engine": ENGINE,
+        "engine": engine,
         "source": source,
         "output_path": output_path,
         "media_url": media_url(output_path),

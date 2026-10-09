@@ -62,6 +62,7 @@ export interface PipelineParams {
   voice?: string
   script_style?: string
   duration_sec?: number
+  require_approval?: boolean
 }
 
 export function triggerPipelineRun(
@@ -168,4 +169,66 @@ export function createProduct(data: {
   fabric_type?: string
 }) {
   return post<{ id: string; title: string }>('/api/products', data, 'Không thể tạo sản phẩm')
+}
+
+export interface ProductAnalysisAI {
+  is_fashion_item: boolean
+  title_suggestion: string
+  category: string
+  garment_type: string
+  photo_type: string
+  colors: string[]
+  material_guess: string
+  style_tags: string[]
+  key_features: string[]
+  suitable_occasions: string[]
+  image_quality_score: number
+  image_issues: string[]
+}
+
+export interface ProductAnalysis {
+  quality: { score: number; issues: string[]; width: number; height: number }
+  ai: ProductAnalysisAI | null
+  engine: 'claude' | 'local'
+  warning: string | null
+}
+
+export function analyzeProduct(imageUrl: string, title?: string): Promise<ProductAnalysis> {
+  return post('/api/products/analyze', { image_url: imageUrl, title }, 'Không thể phân tích ảnh sản phẩm')
+}
+
+export function createAnalyzedProduct(data: {
+  title: string
+  price: number
+  image_url: string
+  category?: string
+  fabric_type?: string
+  analysis?: ProductAnalysisAI | null
+}) {
+  return post<{ id: string; title: string }>('/api/products', data, 'Không thể tạo sản phẩm')
+}
+
+export interface StudioOptions {
+  templates: { id: string; label: string }[]
+  voices: { id: string; label: string }[]
+  script_styles: string[]
+  pipeline_cost_credits: number
+  tryon_preview_cost_credits: number
+  engines: { analysis: string; tryon: string; video: string }
+}
+
+export function fetchStudioOptions(): Promise<StudioOptions> {
+  return request('/api/ai/templates', {}, 'Không thể tải danh sách mẫu video')
+}
+
+export function approveJob(jobId: string) {
+  return post<{ status: string }>(`/api/jobs/${encodeURIComponent(jobId)}/approve`, {}, 'Không thể duyệt ảnh thử đồ')
+}
+
+export function rejectJob(jobId: string) {
+  return post<{ status: string; credits_refunded: number; remaining_credits: number }>(
+    `/api/jobs/${encodeURIComponent(jobId)}/reject`,
+    {},
+    'Không thể hủy job',
+  )
 }

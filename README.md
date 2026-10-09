@@ -12,18 +12,39 @@ Upload ảnh sản phẩm, chọn người mẫu và mẫu video, hệ thống t
 
 | Phần | Trạng thái |
 |---|---|
-| Upload ảnh, tạo sản phẩm, hàng đợi tạo video | ✅ Chạy thật |
-| Ví credit: trừ tiền nguyên tử, hoàn credit khi job lỗi | ✅ Chạy thật |
-| Nạp tiền VietQR | ⚠️ Tạo mã QR thật; **xác nhận tiền về do quản trị viên làm thủ công** (webhook ngân hàng: Đợt 3) |
+| Màn hình **Tạo Video** 3 bước: upload ảnh → chọn người mẫu, kiểu video → duyệt & tải | ✅ |
+| Chấm chất lượng ảnh đầu vào (độ phân giải, độ nét, độ sáng) | ✅ Chạy tại chỗ, miễn phí |
+| Phân tích ảnh sản phẩm (loại, màu, chất liệu, điểm nổi bật) + viết kịch bản, caption, hashtag | ✅ **Claude** khi có `ANTHROPIC_API_KEY`; không có thì dùng mẫu câu |
+| Thử đồ lên đúng người mẫu đã chọn | ✅ **FASHN** khi có `FASHN_API_KEY`; không có thì chỉ đặt sản phẩm lên phông nền |
+| 4 kiểu video (catwalk, xoay, dạo phố, cận chất liệu) | ✅ **Kling 3.0 qua Replicate** khi có `REPLICATE_API_TOKEN`; không có thì chuyển động máy quay bằng FFmpeg |
+| Duyệt ảnh thử đồ trước khi tạo video, từ chối được hoàn credit | ✅ |
 | Lồng tiếng tiếng Việt + phụ đề WebVTT | ✅ Edge-TTS (cần internet), có phương án dự phòng |
-| 4 mẫu video (catwalk, xoay, dạo phố, cận chất liệu) | ⚠️ Chuyển động máy quay bằng FFmpeg, **chưa phải AI image-to-video** |
-| Tách nền trang phục | ⚠️ Tách nền sáng đơn giản, **chưa phải mô hình AI** |
-| Thử đồ lên người mẫu | ⚠️ **Mới đặt trang phục lên phông nền**, chưa ghép lên người mẫu |
-| Kịch bản review, hashtag | ⚠️ Mẫu câu theo tên/giá/chất liệu, **chưa dùng LLM** |
-| Đăng nhập | ⚠️ API token (tạo bằng dòng lệnh); màn đăng nhập: Đợt 3 |
-| Đăng TikTok / Facebook, cào Shopee | ❌ Chưa có |
+| Ví credit, hoàn credit khi lỗi, upload, hàng đợi | ✅ |
+| Nạp tiền VietQR | ⚠️ Tạo QR thật; **xác nhận tiền về làm thủ công** (webhook ngân hàng: Đợt 3) |
+| Đăng nhập | ⚠️ API token tạo bằng dòng lệnh; màn đăng nhập: Đợt 3 |
+| Đăng TikTok / Facebook tự động, cào Shopee | ❌ Đợt 3 (hiện tải video + copy caption để đăng tay) |
+| Tư vấn size, điểm ghim trên video | ⚠️ Vẫn là số liệu cố định |
 
-Trang **Kiểm tra hệ thống** trong app (`/api/system/audit-25-tasks`) báo đúng trạng thái này theo thời gian thực.
+Trang **Kiểm Tra Hệ Thống** trong app cho biết đang dùng AI thật hay engine tạm cho từng bước.
+
+---
+
+## Bật AI thật
+
+Điền key vào `backend/.env` (chi tiết trong `backend/.env.example`), khởi động lại backend:
+
+| Bước | Biến môi trường | Lấy ở đâu | Chi phí tham khảo |
+|---|---|---|---|
+| Phân tích ảnh + kịch bản | `ANTHROPIC_API_KEY` | platform.claude.com | ~1-3 cent/video (model `claude-opus-5-5`) |
+| Thử đồ | `FASHN_API_KEY` | app.fashn.ai | ~0,075 USD/ảnh |
+| Video | `REPLICATE_API_TOKEN` | replicate.com/account/api-tokens | Kling 5 giây khoảng 0,3-1,5 USD tùy chế độ |
+
+**Nhớ tăng `PIPELINE_COST_CREDITS`** (mặc định 30 credit = 3.000đ, chỉ hợp với engine tạm) cho đủ bù chi phí AI, ví dụ 300-600 credit/video.
+
+Mẹo:
+- Ảnh người mẫu phải là **ảnh toàn thân, rõ dáng**. Ảnh mẫu trong dữ liệu demo lấy từ Unsplash, nên thay bằng người mẫu AI hoặc người mẫu có hợp đồng của shop (`POST /api/avatars`, nhận URL https hoặc ảnh đã upload).
+- Khi chạy trên server thật, đặt `PUBLIC_BASE_URL` để FASHN/Replicate tải ảnh trực tiếp, nhanh hơn upload lại.
+- Tách nền bằng AI chạy tại chỗ (không bắt buộc khi dùng FASHN): `pip install -r backend/requirements-ai.txt`.
 
 ---
 
@@ -82,9 +103,12 @@ GitHub Actions chạy các bước này trên mỗi pull request (`.github/workf
 
 ```text
 POST /api/uploads/image        (multipart: file)            -> { media_url }
-POST /api/products             { title, price, image_url, category?, fabric_type? } -> { id }
-POST /api/pipeline/run         { product_id, avatar_id?, template?, voice?, script_style?, duration_sec? }
-GET  /api/jobs/{job_id}        -> tiến độ %, link video khi xong
+POST /api/products/analyze     { image_url, title? }        -> điểm chất lượng ảnh + phân tích AI
+POST /api/products             { title, price, image_url, category?, fabric_type?, analysis? } -> { id }
+POST /api/pipeline/run         { product_id, avatar_id?, template?, voice?, script_style?, duration_sec?, require_approval? }
+GET  /api/jobs/{job_id}        -> tiến độ %, ảnh thử đồ, link video khi xong
+POST /api/jobs/{job_id}/approve   (khi status = awaiting_approval) tiếp tục tạo video
+POST /api/jobs/{job_id}/reject    hủy, hoàn credit trừ TRYON_PREVIEW_COST_CREDITS
 POST /api/publisher/export     { job_id } -> link tải, caption, hashtag, phụ đề
 ```
 
@@ -108,7 +132,8 @@ backend/
   media_paths.py     kiểm tra mọi đường dẫn file nằm trong thư mục media
   ffmpeg_utils.py    chạy ffmpeg có timeout
   manage.py          công cụ quản trị dòng lệnh
-  ai/                segmentation, vton, motion, script, tts, render
+  ai/                claude_client, product_analysis, segmentation, vton (FASHN), motion (Replicate/Kling),
+                     script, tts, render, http_utils
   services/          wallet, queue_manager, cache_manager, security, scraper, size_advisor
   samples/           video/âm thanh mẫu cho giao diện
   tests/             pytest

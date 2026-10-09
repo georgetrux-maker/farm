@@ -14,8 +14,6 @@ import {
   ShieldCheck,
   CheckCircle2,
   Volume2,
-  Eye,
-  EyeOff,
   Plus,
   X,
   Check
@@ -26,7 +24,9 @@ import {
   saveSettings,
   fetchAvatars,
   addNewAvatar,
-  setDefaultAvatar
+  setDefaultAvatar,
+  fetchStudioOptions,
+  type StudioOptions,
 } from '../../services/api'
 
 interface DashboardViewProps {
@@ -45,7 +45,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ walletCredits }) =
   const [avatars, setAvatars] = useState<any[]>([])
 
   // Real AI Config States from Database
-  const [klingKey, setKlingKey] = useState('')
+  const [engines, setEngines] = useState<StudioOptions['engines'] | null>(null)
   const [samThreshold, setSamThreshold] = useState(0.96)
   const [motionSpeed, setMotionSpeed] = useState(7)
   const [fpsSetting, setFpsSetting] = useState('60')
@@ -56,7 +56,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ walletCredits }) =
   const [tiktokSync, setTiktokSync] = useState(true)
 
   // UI state
-  const [showKlingKey, setShowKlingKey] = useState(false)
   const [isPlayingVoice, setIsPlayingVoice] = useState(false)
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null)
   const [isSaving, setIsSaving] = useState(false)
@@ -74,18 +73,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ walletCredits }) =
   const loadAllData = async () => {
     try {
       setLoadingStats(true)
-      const [statsData, settingsData, avatarsData] = await Promise.all([
+      const [statsData, settingsData, avatarsData, studioOptions] = await Promise.all([
         fetchDashboardStats(),
         fetchSettings(),
         fetchAvatars(),
+        fetchStudioOptions(),
       ])
+      setEngines(studioOptions.engines)
 
       setStats(statsData)
       setAvatars(avatarsData)
 
       // Bind Settings from SQLite
       if (settingsData) {
-        if (settingsData.kling_api_key) setKlingKey(settingsData.kling_api_key)
         if (settingsData.sam_threshold) setSamThreshold(parseFloat(settingsData.sam_threshold))
         if (settingsData.motion_speed) setMotionSpeed(parseInt(settingsData.motion_speed))
         if (settingsData.fps_setting) setFpsSetting(settingsData.fps_setting)
@@ -113,7 +113,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ walletCredits }) =
     try {
       setIsSaving(true)
       await saveSettings({
-        kling_api_key: klingKey,
         sam_threshold: samThreshold,
         motion_speed: motionSpeed,
         fps_setting: fpsSetting,
@@ -508,33 +507,36 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ walletCredits }) =
                 </p>
               </div>
 
-              {/* Kling Video Engine API Key */}
+              {/* Trạng thái nhà cung cấp AI (key đặt trong backend/.env, không nhập qua giao diện) */}
               <div className="p-4 rounded-2xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Key className="w-4 h-4 text-[var(--accent-color)]" />
-                    <span className="font-semibold text-xs text-[var(--text-main)]">Khóa API Kling I2V / Runway Gen-3</span>
+                <div className="flex items-center gap-2">
+                  <Key className="w-4 h-4 text-[var(--accent-color)]" />
+                  <span className="font-semibold text-xs text-[var(--text-main)]">Nhà Cung Cấp AI Đang Dùng</span>
+                </div>
+                {engines ? (
+                  <div className="grid sm:grid-cols-3 gap-2 text-xs">
+                    {[
+                      ['Phân tích & kịch bản', engines.analysis, 'ANTHROPIC_API_KEY'],
+                      ['Thử đồ lên người mẫu', engines.tryon, 'FASHN_API_KEY'],
+                      ['Tạo video', engines.video, 'REPLICATE_API_TOKEN'],
+                    ].map(([name, engine, envKey]) => {
+                      const real = !engine.startsWith('placeholder') && engine !== 'template'
+                      return (
+                        <div key={name} className="p-3 rounded-xl bg-[var(--bg-card)] border border-[var(--border-subtle)]">
+                          <div className="text-[var(--text-muted)]">{name}</div>
+                          <div className={`font-mono font-semibold mt-1 ${real ? 'text-[var(--accent-color)]' : 'text-amber-400'}`}>
+                            {real ? engine : 'Engine tạm'}
+                          </div>
+                          {!real && <div className="text-[10px] text-[var(--text-muted)] mt-1">Đặt {envKey} trong backend/.env</div>}
+                        </div>
+                      )
+                    })}
                   </div>
-                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[var(--accent-color)]/10 text-[var(--accent-color)]">
-                    Đã Lưu Trong SQLite
-                  </span>
-                </div>
-                <div className="relative">
-                  <input
-                    type={showKlingKey ? 'text' : 'password'}
-                    value={klingKey}
-                    onChange={(e) => setKlingKey(e.target.value)}
-                    className="w-full bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-xl px-3.5 py-2.5 text-xs font-mono text-[var(--text-main)] focus:border-[var(--accent-color)] outline-none pr-10"
-                  />
-                  <button
-                    onClick={() => setShowKlingKey(!showKlingKey)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)] hover:text-[var(--text-main)]"
-                  >
-                    {showKlingKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
+                ) : (
+                  <p className="text-[11px] text-[var(--text-muted)]">Đang tải...</p>
+                )}
                 <p className="text-[11px] text-[var(--text-muted)]">
-                  Khóa API dùng để sinh chuyển động bước đi Catwalk độ nét cao 1080x1920 không giới hạn tốc độ.
+                  Vì lý do bảo mật, API key chỉ đặt trong file backend/.env trên máy chủ, không lưu trong cơ sở dữ liệu.
                 </p>
               </div>
 
