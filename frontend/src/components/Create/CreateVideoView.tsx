@@ -9,6 +9,7 @@ import {
   triggerPipelineRun, uploadImage, type ProductAnalysis, type StudioOptions,
 } from '../../services/api'
 import type { AIJob } from '../../types'
+import { PublishPanel } from './PublishPanel'
 
 interface Avatar {
   id: string
@@ -604,6 +605,10 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({ onCreditsChang
                   <CopyButton text={job.script?.full_script ?? ''} />
                 </div>
               </div>
+              <PublishPanel
+                jobId={job.job_id}
+                defaultCaption={`${job.script?.post_caption ?? ''}\n${(job.script?.hashtags ?? []).join(' ')}`.trim()}
+              />
               <p className="text-[11px] text-[var(--text-muted)] flex gap-1.5">
                 <Info className="w-3.5 h-3.5 shrink-0" />
                 Video có hình ảnh do AI tạo. Khi đăng TikTok/Facebook, hãy bật nhãn "Nội dung do AI tạo" theo quy định của

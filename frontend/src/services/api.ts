@@ -15,6 +15,17 @@ export function setApiToken(token: string) {
   localStorage.setItem(TOKEN_KEY, token)
 }
 
+export function clearApiToken() {
+  try {
+    localStorage.removeItem(TOKEN_KEY)
+  } catch {
+    // bỏ qua
+  }
+}
+
+/** Lỗi 401: phiên đăng nhập hết hạn hoặc chưa đăng nhập */
+export class UnauthorizedError extends Error {}
+
 async function request<T>(path: string, options: RequestInit = {}, fallbackError = 'Lỗi kết nối máy chủ'): Promise<T> {
   const headers = new Headers(options.headers)
   const token = getApiToken()
@@ -31,6 +42,7 @@ async function request<T>(path: string, options: RequestInit = {}, fallbackError
     } catch {
       // giữ thông báo mặc định
     }
+    if (res.status === 401) throw new UnauthorizedError(message)
     throw new Error(message)
   }
   return res.json()
@@ -231,4 +243,98 @@ export function rejectJob(jobId: string) {
     {},
     'Không thể hủy job',
   )
+}
+
+// ------------------------------------------------------------------ Đăng nhập
+export interface AuthResult {
+  token: string
+  user: UserProfile
+}
+
+export function register(name: string, email: string, password: string): Promise<AuthResult> {
+  return post('/api/auth/register', { name, email, password }, 'Không thể đăng ký')
+}
+
+export function login(email: string, password: string): Promise<AuthResult> {
+  return post('/api/auth/login', { email, password }, 'Không thể đăng nhập')
+}
+
+export async function logout() {
+  try {
+    await post('/api/auth/logout', {})
+  } finally {
+    clearApiToken()
+  }
+}
+
+// ------------------------------------------------------------------ Mạng xã hội
+export interface SocialAccount {
+  id: string
+  platform: 'tiktok' | 'facebook'
+  external_id: string
+  display_name: string
+}
+
+export interface SocialStatus {
+  platforms: { tiktok: boolean; facebook: boolean }
+  accounts: SocialAccount[]
+}
+
+export function fetchSocialStatus(): Promise<SocialStatus> {
+  return request('/api/social/status', {}, 'Không thể tải tài khoản mạng xã hội')
+}
+
+export function getSocialConnectUrl(platform: 'tiktok' | 'facebook'): Promise<{ auth_url: string }> {
+  return request(`/api/social/${platform}/connect`, {}, 'Không thể kết nối')
+}
+
+/** Chuyển trình duyệt sang trang cấp quyền của TikTok/Facebook */
+export async function startSocialConnect(platform: 'tiktok' | 'facebook') {
+  const { auth_url } = await getSocialConnectUrl(platform)
+  window.location.href = auth_url
+}
+
+export function disconnectSocial(accountId: string) {
+  return request(`/api/social/accounts/${encodeURIComponent(accountId)}`, { method: 'DELETE' }, 'Không thể ngắt kết nối')
+}
+
+export interface TikTokCreatorInfo {
+  creator_nickname?: string
+  privacy_level_options?: string[]
+  comment_disabled?: boolean
+  duet_disabled?: boolean
+  stitch_disabled?: boolean
+  max_video_post_duration_sec?: number
+}
+
+export function fetchCreatorInfo(accountId: string): Promise<TikTokCreatorInfo> {
+  return request(`/api/social/accounts/${encodeURIComponent(accountId)}/creator-info`, {}, 'Không đọc được thông tin TikTok')
+}
+
+export interface Publication {
+  id: string
+  job_id: string
+  platform: string
+  status: 'pending' | 'processing' | 'published' | 'failed'
+  external_id: string | null
+  error_message: string | null
+  account_name: string | null
+  created_at: string
+}
+
+export function publishVideo(data: {
+  job_id: string
+  account_id: string
+  caption: string
+  privacy_level?: string
+  allow_comment?: boolean
+  allow_duet?: boolean
+  allow_stitch?: boolean
+}) {
+  return post<{ publication_id: string }>('/api/social/publish', data, 'Không thể đăng video')
+}
+
+export function fetchPublications(jobId?: string): Promise<Publication[]> {
+  const q = jobId ? `?job_id=${encodeURIComponent(jobId)}` : ''
+  return request(`/api/social/publications${q}`, {}, 'Không thể tải lịch sử đăng')
 }

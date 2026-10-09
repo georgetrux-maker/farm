@@ -1,16 +1,20 @@
+import hmac
 import io
 import json
+import secrets
 import logging
 import os
 import sqlite3
+import urllib.parse
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from typing import List, Optional
 
 import uvicorn
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, Field, HttpUrl
@@ -29,9 +33,11 @@ from backend.ai.script import STYLES, generate_koc_script
 from backend.ai.segmentation import segment_garment
 from backend.ai.tts import VOICES, generate_speech
 from backend.ai.vton import generate_tryon
-from backend.auth import get_current_user, require_admin_role, require_admin_token
+from backend.auth import bearer_token, get_current_user, require_admin_role, require_admin_token
+from backend.crypto_utils import SecretKeyMissing, hash_password, unsign, verify_password
 from backend.database import (
     add_brand_avatar_entry, create_product, get_brand_avatar, get_brand_avatars_list,
+    create_session, delete_session, get_user_by_email, register_user,
     get_dashboard_summary, get_db, get_product, get_system_settings, get_user, init_db, list_products,
     public_user, save_system_settings, set_default_brand_avatar,
 )
@@ -43,6 +49,8 @@ from backend.services.queue_manager import (
     recover_stale_jobs, reject_job,
 )
 from backend.services.scraper import scrape_product_url
+from backend.services import social
+from backend.services.bank_webhook import handle_sepay_event
 from backend.services.security import check_rate_limit
 from backend.services.size_advisor import calculate_smart_size
 from backend.services.wallet import (
@@ -50,11 +58,13 @@ from backend.services.wallet import (
 )
 
 log = logging.getLogger("aura")
+_publish_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="aura-publish")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    social.recover_stale_publications()
     recovered = recover_stale_jobs()
     if recovered:
         log.warning("Đã hoàn credit cho %d job bị dở dang do server khởi động lại", recovered)
@@ -81,7 +91,8 @@ app.add_middleware(
 async def rate_limit_middleware(request: Request, call_next):
     path = request.url.path
     # Không tính file tĩnh và việc hỏi tiến độ job (frontend hỏi liên tục)
-    exempt = (not path.startswith("/api/")) or (request.method == "GET" and path.startswith("/api/jobs/"))
+    exempt = (not path.startswith("/api/")) or (request.method == "GET" and path.startswith("/api/jobs/")) \
+        or path.startswith("/api/webhooks/")  # webhook đã có xác thực riêng, không được chặn nhầm
     if not exempt:
         client_ip = request.client.host if request.client else "unknown"
         res = check_rate_limit(client_ip, max_requests=config.rate_limit_per_minute())
@@ -675,24 +686,237 @@ def api_system_audit():
 
 
 # =============================================================================
+# ĐĂNG KÝ / ĐĂNG NHẬP
+# =============================================================================
+class RegisterRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    email: str = Field(min_length=5, max_length=200, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    password: str = Field(min_length=8, max_length=200)
+
+
+class LoginRequest(BaseModel):
+    email: str = Field(max_length=200)
+    password: str = Field(max_length=200)
+
+
+def _login_rate_limit(request: Request, email: str):
+    ip = request.client.host if request.client else "unknown"
+    # Chặn dò mật khẩu: tối đa 10 lần mỗi phút cho mỗi IP và mỗi email
+    for key in (f"auth-ip:{ip}", f"auth-email:{email.lower()}"):
+        res = check_rate_limit(key, max_requests=10)
+        if not res["allowed"]:
+            raise HTTPException(status_code=429, detail="Thử đăng nhập quá nhiều lần, vui lòng chờ một phút")
+
+
+def _session_response(user: dict) -> dict:
+    return {"token": create_session(user["id"], config.session_days()), "user": public_user(user)}
+
+
+@app.post("/api/auth/register")
+def api_register(req: RegisterRequest, request: Request):
+    if not config.allow_signup():
+        raise HTTPException(status_code=403, detail="Hiện chưa mở đăng ký tài khoản mới")
+    _login_rate_limit(request, req.email)
+    user = register_user(req.name.strip(), req.email.strip().lower(), hash_password(req.password),
+                         credits=config.signup_bonus_credits())
+    if user is None:
+        raise HTTPException(status_code=409, detail="Email này đã được đăng ký")
+    return _session_response(user)
+
+
+@app.post("/api/auth/login")
+def api_login(req: LoginRequest, request: Request):
+    _login_rate_limit(request, req.email)
+    user = get_user_by_email(req.email.strip())
+    if not user or not user.get("password_hash") or not verify_password(req.password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Sai email hoặc mật khẩu")
+    return _session_response(user)
+
+
+@app.post("/api/auth/logout")
+def api_logout(token: str = Depends(bearer_token)):
+    if token:
+        delete_session(token)
+    return {"status": "ok"}
+
+
+# =============================================================================
+# WEBHOOK NGÂN HÀNG (SePay): tự cộng credit khi tiền về
+# =============================================================================
+@app.post("/api/webhooks/sepay", include_in_schema=False)
+async def api_sepay_webhook(request: Request):
+    expected = config.sepay_webhook_key()
+    provided = request.headers.get("authorization", "")
+    if not expected or not hmac.compare_digest(provided.encode(), f"Apikey {expected}".encode()):
+        raise HTTPException(status_code=401, detail="Sai API key webhook")
+    try:
+        payload = await request.json()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Body không phải JSON")
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Body không hợp lệ")
+    res = handle_sepay_event(payload)
+    log.info("Webhook SePay %s: %s", payload.get("id"), res)
+    # SePay coi phản hồi 200 + success=true là đã nhận, không gửi lại
+    return {"success": True, **res}
+
+
+# =============================================================================
+# KẾT NỐI & ĐĂNG VIDEO LÊN TIKTOK / FACEBOOK
+# =============================================================================
+def _social_platform(platform: str) -> str:
+    if platform not in social.PLATFORMS:
+        raise HTTPException(status_code=404, detail="Nền tảng không hỗ trợ")
+    return platform
+
+
+@app.get("/api/social/status")
+def api_social_status(user: dict = Depends(get_current_user)):
+    return {
+        "platforms": {p: social.platform_configured(p) for p in social.PLATFORMS},
+        "accounts": social.list_accounts(user["id"]),
+    }
+
+
+def _oauth_cookie(platform: str) -> str:
+    return f"aura_oauth_{platform}"
+
+
+@app.get("/api/social/{platform}/connect")
+def api_social_connect(platform: str, user: dict = Depends(get_current_user)):
+    """Trả link đăng nhập TikTok/Facebook để frontend chuyển hướng tới"""
+    nonce = secrets.token_urlsafe(16)
+    try:
+        url = social.authorize_url(_social_platform(platform), user["id"], nonce)
+    except (social.SocialError, SecretKeyMissing) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    # Gắn phiên kết nối với trình duyệt đã bấm nút: chặn việc gửi link cấp quyền cho người khác bấm
+    response = JSONResponse({"auth_url": url})
+    response.set_cookie(_oauth_cookie(platform), nonce, max_age=600, httponly=True, samesite="lax",
+                        secure=config.public_base_url().startswith("https://"), path="/api/social")
+    return response
+
+
+@app.get("/api/social/{platform}/callback", include_in_schema=False)
+def api_social_callback(request: Request, platform: str, state: str = "", code: str = "", error: str = ""):
+    """TikTok/Facebook chuyển người dùng về đây sau khi đồng ý cấp quyền"""
+    _social_platform(platform)
+
+    def back(result: str, message: str = ""):
+        query = urllib.parse.urlencode({"social": platform, "result": result, "message": message[:300]})
+        return RedirectResponse(f"{config.frontend_url()}/?{query}")
+
+    try:
+        data = unsign(state)
+    except SecretKeyMissing as e:
+        return back("error", str(e))
+    if not data or data.get("p") != platform:
+        return back("error", "Phiên kết nối không hợp lệ hoặc đã hết hạn, vui lòng thử lại")
+    cookie = request.cookies.get(_oauth_cookie(platform), "")
+    if not cookie or not hmac.compare_digest(cookie, str(data.get("n", ""))):
+        return back("error", "Vui lòng bấm Kết nối ngay trên trình duyệt đang đăng nhập AURA")
+    if error or not code:
+        return back("cancelled", "Bạn đã hủy cấp quyền")
+    try:
+        accounts = social.complete_oauth(platform, data["uid"], code)
+    except (social.SocialError, SecretKeyMissing) as e:
+        return back("error", str(e))
+    return back("connected", ", ".join(a["display_name"] for a in accounts))
+
+
+@app.delete("/api/social/accounts/{account_id}")
+def api_social_disconnect(account_id: str, user: dict = Depends(get_current_user)):
+    if not social.delete_account(account_id, user["id"]):
+        raise HTTPException(status_code=404, detail="Tài khoản không tồn tại")
+    return {"status": "deleted"}
+
+
+def _owned_account(account_id: str, user: dict) -> dict:
+    account = social.get_account(account_id, user["id"])
+    if account is None:
+        raise HTTPException(status_code=404, detail="Tài khoản mạng xã hội không tồn tại")
+    return account
+
+
+@app.get("/api/social/accounts/{account_id}/creator-info")
+def api_tiktok_creator_info(account_id: str, user: dict = Depends(get_current_user)):
+    """TikTok yêu cầu hiển thị các lựa chọn quyền riêng tư của nhà sáng tạo trước khi đăng"""
+    account = _owned_account(account_id, user)
+    if account["platform"] != "tiktok":
+        return {}
+    try:
+        return social.tiktok_creator_info(account)
+    except (social.SocialError, ProviderError, SecretKeyMissing) as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+class PublishRequest(BaseModel):
+    job_id: str
+    account_id: str
+    caption: str = Field(min_length=1, max_length=2200)
+    privacy_level: Optional[str] = Field(default=None, max_length=50, description="Bắt buộc với TikTok")
+    allow_comment: bool = True
+    allow_duet: bool = True
+    allow_stitch: bool = True
+
+
+@app.post("/api/social/publish")
+def api_social_publish(req: PublishRequest, user: dict = Depends(get_current_user)):
+    account = _owned_account(req.account_id, user)
+    job = get_job_status(req.job_id, user_id=user["id"])
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job không tồn tại")
+    if job["status"] != "completed" or not job["output_video_url"]:
+        raise HTTPException(status_code=409, detail="Video chưa tạo xong")
+    if account["platform"] == "tiktok" and not req.privacy_level:
+        raise HTTPException(status_code=400, detail="Vui lòng chọn chế độ hiển thị cho video TikTok")
+    pub_id = social.create_publication(user["id"], job, account, req.caption)
+    options = {"privacy_level": req.privacy_level, "allow_comment": req.allow_comment,
+               "allow_duet": req.allow_duet, "allow_stitch": req.allow_stitch}
+    _publish_executor.submit(social.run_publication, pub_id, account, job["output_video_url"], req.caption, options)
+    return {"status": "pending", "publication_id": pub_id}
+
+
+@app.get("/api/social/publications")
+def api_social_publications(job_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    return social.list_publications(user["id"], job_id)
+
+
+# =============================================================================
 # FILE TĨNH: chỉ phục vụ đúng các file cần thiết, không mở cả thư mục repo
 # =============================================================================
 app.mount("/media", StaticFiles(directory=config.media_dir()), name="media")
 app.mount("/samples", StaticFiles(directory=config.SAMPLES_DIR), name="samples")
 
-_PUBLIC_FILES = {"index.html", "app.js", "styles.css"}
+# Bản HTML thuần cũ: /legacy (cần app.js, styles.css ở gốc)
+_LEGACY_FILES = {"app.js", "styles.css"}
+# Bản React đã build (npm run build) được phục vụ ở "/" nếu có
+_DIST_DIR = os.path.join(config.REPO_DIR, "frontend", "dist")
+_HAS_DIST = os.path.isfile(os.path.join(_DIST_DIR, "index.html"))
+if _HAS_DIST and os.path.isdir(os.path.join(_DIST_DIR, "assets")):
+    app.mount("/assets", StaticFiles(directory=os.path.join(_DIST_DIR, "assets")), name="assets")
+_DIST_FILES = {f for f in os.listdir(_DIST_DIR) if os.path.isfile(os.path.join(_DIST_DIR, f))} if _HAS_DIST else set()
 
 
 @app.get("/", include_in_schema=False)
 def serve_index():
+    if _HAS_DIST:
+        return FileResponse(os.path.join(_DIST_DIR, "index.html"))
+    return FileResponse(os.path.join(config.REPO_DIR, "index.html"))
+
+
+@app.get("/legacy", include_in_schema=False)
+def serve_legacy():
     return FileResponse(os.path.join(config.REPO_DIR, "index.html"))
 
 
 @app.get("/{filename}", include_in_schema=False)
 def serve_public_file(filename: str):
-    if filename not in _PUBLIC_FILES:
-        raise HTTPException(status_code=404, detail="Not Found")
-    return FileResponse(os.path.join(config.REPO_DIR, filename))
+    if filename in _DIST_FILES and filename != "index.html":
+        return FileResponse(os.path.join(_DIST_DIR, filename))
+    if filename in _LEGACY_FILES:
+        return FileResponse(os.path.join(config.REPO_DIR, filename))
+    raise HTTPException(status_code=404, detail="Not Found")
 
 
 if __name__ == '__main__':

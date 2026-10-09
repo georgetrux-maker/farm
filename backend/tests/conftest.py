@@ -35,7 +35,7 @@ def client():
         if os.path.exists(db + suffix):
             os.remove(db + suffix)
     reset_rate_limits()
-    with TestClient(app) as c:
+    with TestClient(app, base_url="https://testserver") as c:
         yield c
 
 

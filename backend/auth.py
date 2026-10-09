@@ -1,7 +1,8 @@
-"""Xác thực bằng API token (header `Authorization: Bearer <token>`).
+"""Xác thực bằng header `Authorization: Bearer <token>`.
 
-Đăng nhập bằng email/mật khẩu sẽ làm ở Đợt 3. Khi phát triển có thể đặt
-ALLOW_DEMO_USER=1 để request không kèm token được coi là user demo.
+Token là phiên đăng nhập (POST /api/auth/login) hoặc API token cố định tạo bằng
+`python -m backend.manage create-user`. Khi phát triển có thể đặt ALLOW_DEMO_USER=1
+để request không kèm token được coi là user demo.
 """
 import hmac
 
@@ -11,10 +12,14 @@ from backend import config
 from backend.database import DEMO_USER_ID, get_user, get_user_by_token
 
 
-def get_current_user(authorization: str = Header(default="")) -> dict:
+def bearer_token(authorization: str = Header(default="")) -> str:
     scheme, _, token = authorization.partition(" ")
-    if scheme.lower() == "bearer" and token:
-        user = get_user_by_token(token.strip())
+    return token.strip() if scheme.lower() == "bearer" else ""
+
+
+def get_current_user(token: str = Depends(bearer_token)) -> dict:
+    if token:
+        user = get_user_by_token(token)
         if user:
             return user
         raise HTTPException(status_code=401, detail="Token không hợp lệ")

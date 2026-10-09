@@ -11,20 +11,63 @@ import { AuditModal } from './components/SystemAudit/AuditModal'
 import { DashboardView } from './components/Dashboard/DashboardView'
 import { CreateVideoView } from './components/Create/CreateVideoView'
 import type { PipelineNode } from './types'
-import { triggerPipelineRun, fetchJobStatus, fetchProfile } from './services/api'
+import { triggerPipelineRun, fetchJobStatus, fetchProfile, logout, UnauthorizedError, type UserProfile } from './services/api'
+import { LoginView } from './components/Auth/LoginView'
 
 const DEMO_PRODUCT_ID = 'prod_dam_voan_to'
 
 export default function App() {
   const [activeView, setActiveView] = useState<'create' | 'split' | 'studio' | 'tryon' | 'dashboard'>('create')
   const [walletCredits, setWalletCredits] = useState<number>(0)
+  const [user, setUser] = useState<UserProfile | null>(null)
+  const [authState, setAuthState] = useState<'loading' | 'in' | 'out'>('loading')
+  const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null)
 
-  // Số dư thật từ máy chủ
+  const handleLoggedIn = (u: UserProfile) => {
+    setUser(u)
+    setWalletCredits(u.credits)
+    setAuthState('in')
+  }
+
+  // Kiểm tra phiên đăng nhập và số dư thật từ máy chủ
   useEffect(() => {
     fetchProfile()
-      .then((p) => setWalletCredits(p.credits))
-      .catch((e) => console.error('Không tải được tài khoản:', e))
+      .then(handleLoggedIn)
+      .catch((e) => {
+        if (e instanceof UnauthorizedError) setAuthState('out')
+        else {
+          console.error('Không tải được tài khoản:', e)
+          setAuthState('in')
+        }
+      })
   }, [])
+
+  // Quay về từ trang cấp quyền TikTok/Facebook: hiện kết quả rồi xóa tham số khỏi URL
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search)
+    const platform = q.get('social')
+    if (!platform) return
+    const name = platform === 'tiktok' ? 'TikTok' : 'Facebook'
+    const result = q.get('result')
+    const message = q.get('message') ?? ''
+    const id = setTimeout(() => {
+      setNotice(
+        result === 'connected'
+          ? { ok: true, text: `Đã kết nối ${name}: ${message}` }
+          : { ok: false, text: `Kết nối ${name} không thành công. ${message}` },
+      )
+      setActiveView('dashboard')
+    }, 0)
+    window.history.replaceState(null, '', window.location.pathname)
+    return () => clearTimeout(id)
+  }, [])
+
+  const handleLogout = async () => {
+    await logout().catch(() => {})
+    setUser(null)
+    setActiveView('create')
+    setAuthState('out')
+  }
 
   // Light / Dark Theme State
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
@@ -241,6 +284,13 @@ export default function App() {
     setCompletedVideoUrl(null)
   }
 
+  if (authState === 'loading') {
+    return <div className="h-screen w-screen bg-[var(--bg-app)]" />
+  }
+  if (authState === 'out') {
+    return <LoginView onLoggedIn={handleLoggedIn} />
+  }
+
   return (
     <div className="h-screen w-screen flex flex-col bg-[var(--bg-app)] text-[var(--text-main)] overflow-hidden transition-colors duration-200">
       {/* Header with Light/Dark and 4 Navigation Views */}
@@ -252,7 +302,22 @@ export default function App() {
         onToggleTheme={handleToggleTheme}
         onOpenDeposit={() => setIsDepositOpen(true)}
         onOpenAudit={() => setIsAuditOpen(true)}
+        userName={user?.name}
+        onLogout={handleLogout}
       />
+
+      {notice && (
+        <div
+          className={`px-4 py-2 text-sm flex items-center justify-between ${
+            notice.ok ? 'bg-[var(--accent-color)]/10 text-[var(--accent-color)]' : 'bg-red-500/10 text-red-400'
+          }`}
+        >
+          <span>{notice.text}</span>
+          <button onClick={() => setNotice(null)} className="text-xs underline">
+            Đóng
+          </button>
+        </div>
+      )}
 
       {/* Main Workspace Body */}
       <div className="flex-1 flex overflow-hidden relative">
@@ -299,6 +364,7 @@ export default function App() {
           <DashboardView
             walletCredits={walletCredits}
             theme={theme}
+            initialTab={notice ? 'integrations' : undefined}
           />
         )}
 

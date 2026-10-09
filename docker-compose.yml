@@ -1,0 +1,33 @@
+# Chạy:  cp backend/.env.example backend/.env  (điền giá trị thật, đặt DOMAIN), rồi
+#        docker compose up -d --build
+services:
+  app:
+    build: .
+    env_file: backend/.env
+    environment:
+      ALLOW_DEMO_USER: "0"
+      PUBLIC_BASE_URL: "https://${DOMAIN:?Hãy đặt DOMAIN, ví dụ DOMAIN=app.cuaban.vn}"
+      FRONTEND_URL: "https://${DOMAIN}"
+      CORS_ORIGINS: "https://${DOMAIN}"
+    volumes:
+      - aura-data:/data
+    restart: unless-stopped
+
+  # Caddy tự xin chứng chỉ HTTPS (Let's Encrypt) cho DOMAIN
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    depends_on:
+      - app
+    restart: unless-stopped
+
+volumes:
+  aura-data:
+  caddy-data:

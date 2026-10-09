@@ -28,14 +28,18 @@ import {
   fetchStudioOptions,
   type StudioOptions,
 } from '../../services/api'
+import { SocialConnections } from './SocialConnections'
 
 interface DashboardViewProps {
   walletCredits: number
   theme: 'dark' | 'light'
+  initialTab?: 'analytics' | 'ai_config' | 'models' | 'integrations'
 }
 
-export const DashboardView: React.FC<DashboardViewProps> = ({ walletCredits }) => {
-  const [activeTab, setActiveTab] = useState<'analytics' | 'ai_config' | 'models' | 'integrations'>('analytics')
+export const DashboardView: React.FC<DashboardViewProps> = ({ walletCredits, initialTab }) => {
+  const [activeTab, setActiveTab] = useState<'analytics' | 'ai_config' | 'models' | 'integrations'>(
+    initialTab ?? 'analytics',
+  )
 
   // Real Database Stats
   const [stats, setStats] = useState<any>(null)
@@ -51,9 +55,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ walletCredits }) =
   const [fpsSetting, setFpsSetting] = useState('60')
   const [autoSubtitles, setAutoSubtitles] = useState(true)
   const [selectedVoice, setSelectedVoice] = useState('vi-VN-HoaiMyNeural')
-  const [watermarkEnabled, setWatermarkEnabled] = useState(false)
-  const [shopeeSync, setShopeeSync] = useState(true)
-  const [tiktokSync, setTiktokSync] = useState(true)
 
   // UI state
   const [isPlayingVoice, setIsPlayingVoice] = useState(false)
@@ -75,7 +76,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ walletCredits }) =
       setLoadingStats(true)
       const [statsData, settingsData, avatarsData, studioOptions] = await Promise.all([
         fetchDashboardStats(),
-        fetchSettings(),
+        // Cài đặt hệ thống chỉ admin xem được; shop thường bỏ qua
+        fetchSettings().catch(() => null),
         fetchAvatars(),
         fetchStudioOptions(),
       ])
@@ -91,9 +93,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ walletCredits }) =
         if (settingsData.fps_setting) setFpsSetting(settingsData.fps_setting)
         if (settingsData.auto_subtitles) setAutoSubtitles(settingsData.auto_subtitles === 'true')
         if (settingsData.selected_voice) setSelectedVoice(settingsData.selected_voice)
-        if (settingsData.watermark_enabled) setWatermarkEnabled(settingsData.watermark_enabled === 'true')
-        if (settingsData.shopee_sync) setShopeeSync(settingsData.shopee_sync === 'true')
-        if (settingsData.tiktok_sync) setTiktokSync(settingsData.tiktok_sync === 'true')
       }
     } catch (e) {
       console.error('Lỗi khi tải dữ liệu thực tế:', e)
@@ -118,9 +117,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ walletCredits }) =
         fps_setting: fpsSetting,
         auto_subtitles: autoSubtitles,
         selected_voice: selectedVoice,
-        watermark_enabled: watermarkEnabled,
-        shopee_sync: shopeeSync,
-        tiktok_sync: tiktokSync,
       })
       setSaveSuccessMsg('Đã lưu cấu hình thực tế vào cơ sở dữ liệu SQLite thành công!')
       setTimeout(() => setSaveSuccessMsg(null), 3000)
@@ -749,98 +745,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ walletCredits }) =
         {/* =================================================================== */}
         {/* TAB 4: SHOP INTEGRATIONS & CHANNELS (Persisted to SQLite)           */}
         {/* =================================================================== */}
-        {activeTab === 'integrations' && (
-          <div className="max-w-4xl mx-auto space-y-6">
-            <div className="p-6 rounded-3xl bg-[var(--bg-card)] border border-[var(--border-subtle)] shadow-sm space-y-6">
-              <div className="border-b border-[var(--border-subtle)] pb-4">
-                <h3 className="font-semibold text-base text-[var(--text-main)]">Tích Hợp Kênh Bán Hàng & Nền Tảng</h3>
-                <p className="text-xs text-[var(--text-muted)]">
-                  Đồng bộ tự động sản phẩm từ gian hàng và đăng video tương tác lên TikTok Shop, Shopee
-                </p>
-              </div>
-
-              {/* Shopee Integration */}
-              <div className="flex items-center justify-between p-4 rounded-2xl bg-[var(--bg-surface)] border border-[var(--border-subtle)]">
-                <div className="flex items-center gap-3.5">
-                  <div className="w-10 h-10 rounded-xl bg-[#EE4D2D] flex items-center justify-center text-white font-bold text-sm shadow-md">
-                    S
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h4 className="font-semibold text-xs text-[var(--text-main)]">Shopee Open Platform API</h4>
-                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[var(--accent-color)]/10 text-[var(--accent-color)] font-medium">
-                        {shopeeSync ? 'Đang Kết Nối' : 'Tạm Dừng'}
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-[var(--text-muted)] mt-0.5">
-                      Shop: Aura Boutique Official (ID: 128491) - Tự động đồng bộ link sản phẩm và giá bán
-                    </p>
-                  </div>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={shopeeSync}
-                  onChange={async (e) => {
-                    const val = e.target.checked
-                    setShopeeSync(val)
-                    await saveSettings({ shopee_sync: val })
-                  }}
-                  className="w-4 h-4 accent-[var(--accent-color)] cursor-pointer"
-                />
-              </div>
-
-              {/* TikTok Shop Integration */}
-              <div className="flex items-center justify-between p-4 rounded-2xl bg-[var(--bg-surface)] border border-[var(--border-subtle)]">
-                <div className="flex items-center gap-3.5">
-                  <div className="w-10 h-10 rounded-xl bg-black border border-white/20 flex items-center justify-center text-white font-bold text-sm shadow-md">
-                    TT
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h4 className="font-semibold text-xs text-[var(--text-main)]">TikTok Shop Seller Center</h4>
-                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[var(--accent-color)]/10 text-[var(--accent-color)] font-medium">
-                        {tiktokSync ? 'Đang Kết Nối' : 'Tạm Dừng'}
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-[var(--text-muted)] mt-0.5">
-                      Kênh KOC: @linhchi.fashion - Hỗ trợ đăng tự động kèm gắn giỏ hàng sản phẩm vàng
-                    </p>
-                  </div>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={tiktokSync}
-                  onChange={async (e) => {
-                    const val = e.target.checked
-                    setTiktokSync(val)
-                    await saveSettings({ tiktok_sync: val })
-                  }}
-                  className="w-4 h-4 accent-[var(--accent-color)] cursor-pointer"
-                />
-              </div>
-
-              {/* Brand Watermark Config */}
-              <div className="p-4 rounded-2xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] space-y-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h4 className="font-semibold text-xs text-[var(--text-main)]">Đóng Dấu Watermark Bản Quyền Logo</h4>
-                    <p className="text-[11px] text-[var(--text-muted)]">Chèn logo mờ ở góc video để chống re-up lậu trên Facebook Reels</p>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={watermarkEnabled}
-                    onChange={async (e) => {
-                      const val = e.target.checked
-                      setWatermarkEnabled(val)
-                      await saveSettings({ watermark_enabled: val })
-                    }}
-                    className="w-4 h-4 accent-[var(--accent-color)] cursor-pointer"
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
+        {activeTab === 'integrations' && <SocialConnections />}
       </div>
 
       {/* Real Add Avatar Modal */}

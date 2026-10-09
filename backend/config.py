@@ -131,6 +131,65 @@ def tryon_preview_cost_credits() -> int:
     return _env_int("TRYON_PREVIEW_COST_CREDITS", 5)
 
 
+# --- Tài khoản & bảo mật ---
+def app_secret_key() -> str:
+    """Khóa bí mật để mã hóa token mạng xã hội và ký OAuth state. Bắt buộc khi kết nối TikTok/Facebook."""
+    return _env("APP_SECRET_KEY")
+
+
+def session_days() -> int:
+    return _env_int("SESSION_DAYS", 30)
+
+
+def signup_bonus_credits() -> int:
+    return _env_int("SIGNUP_BONUS_CREDITS", 0)
+
+
+def allow_signup() -> bool:
+    return _env_bool("ALLOW_SIGNUP", True)
+
+
+def frontend_url() -> str:
+    """Nơi chuyển người dùng về sau khi kết nối TikTok/Facebook."""
+    return _env("FRONTEND_URL", "http://localhost:5173").rstrip("/")
+
+
+# --- Webhook ngân hàng (SePay) ---
+def sepay_webhook_key() -> str:
+    return _env("SEPAY_WEBHOOK_KEY")
+
+
+# --- Đăng video lên mạng xã hội ---
+def tiktok_client_key() -> str:
+    return _env("TIKTOK_CLIENT_KEY")
+
+
+def tiktok_client_secret() -> str:
+    return _env("TIKTOK_CLIENT_SECRET")
+
+
+def tiktok_label_aigc() -> bool:
+    """Gắn nhãn 'Nội dung do AI tạo' (trường is_aigc) khi đăng TikTok."""
+    return _env_bool("TIKTOK_LABEL_AIGC", True)
+
+
+def facebook_app_id() -> str:
+    return _env("FACEBOOK_APP_ID")
+
+
+def facebook_app_secret() -> str:
+    return _env("FACEBOOK_APP_SECRET")
+
+
+def facebook_graph_version() -> str:
+    return _env("FACEBOOK_GRAPH_VERSION", "v23.0")
+
+
+def oauth_redirect_uri(platform: str) -> str:
+    base = public_base_url() or "http://localhost:3456"
+    return f"{base.rstrip('/')}/api/social/{platform}/callback"
+
+
 # Thông tin nhận tiền VietQR (phải trùng với tài khoản thật của shop)
 def bank_id() -> str:
     return _env("VIETQR_BANK_ID", "MB")

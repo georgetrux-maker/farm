@@ -1,4 +1,5 @@
 import React from 'react'
+import { LogOut } from 'lucide-react'
 import { Sparkles, Layers, Wand2, QrCode, CheckCircle2, Video, Sun, Moon, LayoutDashboard } from 'lucide-react'
 
 interface HeaderProps {
@@ -9,6 +10,8 @@ interface HeaderProps {
   onToggleTheme: () => void
   onOpenDeposit: () => void
   onOpenAudit: () => void
+  userName?: string
+  onLogout?: () => void
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -19,6 +22,8 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleTheme,
   onOpenDeposit,
   onOpenAudit,
+  userName,
+  onLogout,
 }) => {
   return (
     <header className="h-14 border-b border-[var(--border-subtle)] bg-[var(--bg-card)]/90 backdrop-blur-md px-6 flex items-center justify-between z-30 shrink-0 transition-colors duration-200">
@@ -30,11 +35,11 @@ export const Header: React.FC<HeaderProps> = ({
         <div className="flex flex-col">
           <div className="flex items-center gap-2">
             <span className="font-display font-bold text-base tracking-wider text-[var(--text-main)]">AURA</span>
-            <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-[var(--bg-surface)] text-[var(--accent-color)] border border-[var(--accent-color)]/30 font-medium">
+            <span className="whitespace-nowrap text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-[var(--bg-surface)] text-[var(--accent-color)] border border-[var(--accent-color)]/30 font-medium">
               V2.5 PRO
             </span>
           </div>
-          <span className="text-[10px] text-[var(--text-muted)] font-medium tracking-tight">Fashion AI Studio & Shoppable VTON</span>
+          <span className="hidden 2xl:block text-[10px] text-[var(--text-muted)] font-medium tracking-tight">Fashion AI Studio & Shoppable VTON</span>
         </div>
       </div>
 
@@ -42,7 +47,7 @@ export const Header: React.FC<HeaderProps> = ({
       <div className="flex items-center bg-[var(--bg-surface)] p-1 rounded-xl border border-[var(--border-subtle)]">
         <button
           onClick={() => setActiveView('create')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all ${
             activeView === 'create'
               ? 'bg-[var(--bg-card)] text-[var(--text-main)] shadow-sm border border-[var(--border-subtle)]'
               : 'text-[var(--text-muted)] hover:text-[var(--text-main)]'
@@ -53,7 +58,7 @@ export const Header: React.FC<HeaderProps> = ({
         </button>
         <button
           onClick={() => setActiveView('split')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all ${
             activeView === 'split'
               ? 'bg-[var(--bg-card)] text-[var(--text-main)] shadow-sm border border-[var(--border-subtle)]'
               : 'text-[var(--text-muted)] hover:text-[var(--text-main)]'
@@ -64,7 +69,7 @@ export const Header: React.FC<HeaderProps> = ({
         </button>
         <button
           onClick={() => setActiveView('studio')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all ${
             activeView === 'studio'
               ? 'bg-[var(--bg-card)] text-[var(--text-main)] shadow-sm border border-[var(--border-subtle)]'
               : 'text-[var(--text-muted)] hover:text-[var(--text-main)]'
@@ -75,7 +80,7 @@ export const Header: React.FC<HeaderProps> = ({
         </button>
         <button
           onClick={() => setActiveView('dashboard')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all ${
             activeView === 'dashboard'
               ? 'bg-[var(--bg-card)] text-[var(--text-main)] shadow-sm border border-[var(--border-subtle)]'
               : 'text-[var(--text-muted)] hover:text-[var(--text-main)]'
@@ -86,7 +91,7 @@ export const Header: React.FC<HeaderProps> = ({
         </button>
         <button
           onClick={() => setActiveView('tryon')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all ${
             activeView === 'tryon'
               ? 'bg-[var(--bg-card)] text-[var(--text-main)] shadow-sm border border-[var(--border-subtle)]'
               : 'text-[var(--text-muted)] hover:text-[var(--text-main)]'
@@ -115,17 +120,18 @@ export const Header: React.FC<HeaderProps> = ({
         {/* Kiểm tra hệ thống */}
         <button
           onClick={onOpenAudit}
+          title="Kiểm Tra Hệ Thống"
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--accent-color)]/10 border border-[var(--accent-color)]/30 text-[var(--accent-color)] hover:bg-[var(--accent-color)]/20 transition-all text-xs font-mono font-medium"
         >
           <CheckCircle2 className="w-3.5 h-3.5" />
-          <span>Kiểm Tra Hệ Thống</span>
+          <span className="hidden 2xl:inline whitespace-nowrap">Kiểm Tra Hệ Thống</span>
         </button>
 
         {/* Wallet Pill */}
         <div className="flex items-center gap-2 pl-3 border-l border-[var(--border-subtle)]">
           <div className="flex flex-col text-right">
-            <span className="text-[10px] text-[var(--text-muted)] uppercase font-mono">Ví Số Dư</span>
-            <span className="text-xs font-mono font-bold text-[var(--text-main)] tracking-wide">
+            <span className="text-[10px] text-[var(--text-muted)] uppercase font-mono whitespace-nowrap">Ví Số Dư</span>
+            <span className="text-xs font-mono font-bold text-[var(--text-main)] tracking-wide whitespace-nowrap">
               {walletCredits.toLocaleString()} <span className="text-[var(--accent-color)]">CR</span>
             </span>
           </div>
@@ -134,9 +140,22 @@ export const Header: React.FC<HeaderProps> = ({
             className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[var(--bg-surface)] hover:bg-[var(--border-strong)] border border-[var(--border-subtle)] text-xs font-medium text-[var(--text-main)] transition-all shadow-sm"
           >
             <QrCode className="w-3.5 h-3.5 text-[var(--accent-color)]" />
-            <span>Nạp VietQR</span>
+            <span className="whitespace-nowrap">Nạp VietQR</span>
           </button>
         </div>
+
+        {onLogout && (
+          <div className="flex items-center gap-2 pl-3 border-l border-[var(--border-subtle)]">
+            {userName && <span className="hidden 2xl:inline text-xs text-[var(--text-muted)] max-w-[120px] truncate">{userName}</span>}
+            <button
+              onClick={onLogout}
+              title="Đăng xuất"
+              className="w-8 h-8 rounded-xl bg-[var(--bg-surface)] hover:bg-[var(--border-strong)] border border-[var(--border-subtle)] flex items-center justify-center"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+          </div>
+        )}
       </div>
     </header>
   )

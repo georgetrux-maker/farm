@@ -20,9 +20,11 @@ Upload ảnh sản phẩm, chọn người mẫu và mẫu video, hệ thống t
 | Duyệt ảnh thử đồ trước khi tạo video, từ chối được hoàn credit | ✅ |
 | Lồng tiếng tiếng Việt + phụ đề WebVTT | ✅ Edge-TTS (cần internet), có phương án dự phòng |
 | Ví credit, hoàn credit khi lỗi, upload, hàng đợi | ✅ |
-| Nạp tiền VietQR | ⚠️ Tạo QR thật; **xác nhận tiền về làm thủ công** (webhook ngân hàng: Đợt 3) |
-| Đăng nhập | ⚠️ API token tạo bằng dòng lệnh; màn đăng nhập: Đợt 3 |
-| Đăng TikTok / Facebook tự động, cào Shopee | ❌ Đợt 3 (hiện tải video + copy caption để đăng tay) |
+| Nạp tiền VietQR, **tự cộng credit khi tiền về** | ✅ qua webhook **SePay** (`SEPAY_WEBHOOK_KEY`); chuyển thiếu tiền thì chờ quản trị viên |
+| Đăng ký / đăng nhập bằng email, đăng xuất | ✅ Mật khẩu băm scrypt, chống dò mật khẩu |
+| Đăng video lên **TikTok** và **Reels Trang Facebook** | ✅ Khi cấu hình app TikTok/Facebook (cần app được nền tảng duyệt, xem bên dưới) |
+| Deploy bằng Docker + HTTPS tự động | ✅ `docker compose up -d --build` |
+| Cào dữ liệu Shopee | ❌ Không làm: vi phạm điều khoản Shopee; cần tài khoản Shopee Open Platform |
 | Tư vấn size, điểm ghim trên video | ⚠️ Vẫn là số liệu cố định |
 
 Trang **Kiểm Tra Hệ Thống** trong app cho biết đang dùng AI thật hay engine tạm cho từng bước.
@@ -45,6 +47,41 @@ Mẹo:
 - Ảnh người mẫu phải là **ảnh toàn thân, rõ dáng**. Ảnh mẫu trong dữ liệu demo lấy từ Unsplash, nên thay bằng người mẫu AI hoặc người mẫu có hợp đồng của shop (`POST /api/avatars`, nhận URL https hoặc ảnh đã upload).
 - Khi chạy trên server thật, đặt `PUBLIC_BASE_URL` để FASHN/Replicate tải ảnh trực tiếp, nhanh hơn upload lại.
 - Tách nền bằng AI chạy tại chỗ (không bắt buộc khi dùng FASHN): `pip install -r backend/requirements-ai.txt`.
+
+---
+
+## Deploy lên máy chủ (Docker)
+
+Cần một máy chủ Linux có Docker và một tên miền trỏ về IP máy chủ.
+
+```bash
+cp backend/.env.example backend/.env     # điền giá trị thật (APP_SECRET_KEY, ADMIN_TOKEN, key AI, SePay...)
+echo "DOMAIN=app.cuaban.vn" > .env       # tên miền của bạn
+docker compose up -d --build
+docker compose exec app python -m backend.manage create-user "Admin" admin@cuaban.vn --role admin
+```
+
+- Caddy tự xin chứng chỉ HTTPS. Dữ liệu (DB + video) nằm trong volume `aura-data`, nhớ sao lưu định kỳ.
+- Chạy 1 tiến trình (hàng đợi job nằm trong bộ nhớ); job đang dở khi khởi động lại sẽ tự hoàn credit.
+- Giao diện React được phục vụ ở `/`, bản HTML cũ ở `/legacy`.
+
+## Đăng video lên TikTok / Facebook
+
+| | TikTok | Facebook Reels |
+|---|---|---|
+| Tạo app | developers.tiktok.com: thêm **Login Kit** và **Content Posting API** (bật Direct Post) | developers.facebook.com: app loại Business, thêm **Facebook Login** |
+| Redirect URI | `https://<domain>/api/social/tiktok/callback` | `https://<domain>/api/social/facebook/callback` |
+| Quyền | `user.info.basic`, `video.publish` | `pages_show_list`, `pages_read_engagement`, `pages_manage_posts` |
+| Biến môi trường | `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET` | `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET` |
+| Trước khi được duyệt | Chỉ đăng được chế độ "Chỉ mình tôi", tối đa vài tài khoản | Chỉ tài khoản có vai trò trong app dùng được |
+
+Token của nền tảng được mã hóa bằng `APP_SECRET_KEY` trước khi lưu. Theo quy định của TikTok, người dùng phải tự chọn chế độ hiển thị mỗi lần đăng (app không chọn sẵn), và video được gắn nhãn nội dung AI (`TIKTOK_LABEL_AIGC`).
+
+## Tự động xác nhận tiền về (SePay)
+
+1. Đăng ký SePay, liên kết tài khoản ngân hàng nhận tiền (trùng `VIETQR_ACCOUNT_NO`).
+2. Tạo webhook: URL `https://<domain>/api/webhooks/sepay`, chứng thực **API Key**, đặt cùng giá trị vào `SEPAY_WEBHOOK_KEY`.
+3. Khi khách chuyển khoản đúng nội dung `NAPTIEN TX...`, credit được cộng trong vài giây. Mỗi giao dịch ngân hàng chỉ được xử lý một lần; chuyển thiếu tiền được ghi lại để quản trị viên kiểm tra (`python -m backend.manage confirm-deposit`).
 
 ---
 
@@ -116,7 +153,8 @@ POST /api/publisher/export     { job_id } -> link tải, caption, hashtag, phụ
 - `voice`: `vi-VN-HoaiMyNeural` (nữ), `vi-VN-NamMinhNeural` (nam)
 - `script_style`: `genz`, `office`, `honest`
 
-Mọi API (trừ danh sách người mẫu, feed, tư vấn size, kiểm tra hệ thống) cần header `Authorization: Bearer <token>`.
+Mọi API (trừ đăng ký/đăng nhập, danh sách người mẫu, feed, tư vấn size, kiểm tra hệ thống) cần header
+`Authorization: Bearer <token>`, lấy token từ `POST /api/auth/login`.
 Mỗi video tốn `PIPELINE_COST_CREDITS` credit (mặc định 30); job lỗi được hoàn credit tự động.
 
 ---

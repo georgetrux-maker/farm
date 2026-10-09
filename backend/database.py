@@ -159,7 +159,67 @@ def init_db():
     )
     ''')
 
+    # Phiên đăng nhập (token lưu dạng băm)
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS sessions (
+        token_hash TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        expires_at TIMESTAMP NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    ''')
+
+    # Giao dịch ngân hàng nhận qua webhook (chống xử lý trùng)
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS bank_events (
+        provider TEXT NOT NULL,
+        external_id TEXT NOT NULL,
+        transaction_id TEXT,
+        amount_vnd INTEGER,
+        content TEXT,
+        result TEXT NOT NULL,
+        payload_json TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (provider, external_id)
+    )
+    ''')
+
+    # Tài khoản TikTok / Trang Facebook đã kết nối (token được mã hóa)
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS social_accounts (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        platform TEXT NOT NULL,
+        external_id TEXT NOT NULL,
+        display_name TEXT,
+        access_token_enc TEXT NOT NULL,
+        refresh_token_enc TEXT,
+        expires_at TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (user_id, platform, external_id)
+    )
+    ''')
+
+    # Lịch sử đăng video
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS publications (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        job_id TEXT NOT NULL,
+        account_id TEXT NOT NULL,
+        platform TEXT NOT NULL,
+        status TEXT NOT NULL, -- 'pending', 'processing', 'published', 'failed'
+        external_id TEXT,
+        caption TEXT,
+        error_message TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    ''')
+
     # Migration cho các database tạo bằng phiên bản cũ
+    _add_column_if_missing(cursor, "users", "password_hash", "TEXT")
+    cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email COLLATE NOCASE)")
     _add_column_if_missing(cursor, "users", "api_token_hash", "TEXT")
     _add_column_if_missing(cursor, "products", "owner_id", "TEXT")
     _add_column_if_missing(cursor, "products", "analysis_json", "TEXT")
@@ -247,9 +307,59 @@ def create_user(name: str, email: str, role: str = "shop", credits: int = 0) -> 
     return {"id": user_id, "name": name, "email": email, "role": role, "api_token": token}
 
 
+def register_user(name: str, email: str, password_hash: str, credits: int = 0):
+    """Tạo tài khoản shop bằng email. Trả None nếu email đã tồn tại."""
+    user_id = f"user_{uuid.uuid4().hex[:10]}"
+    conn = get_db()
+    try:
+        conn.execute(
+            "INSERT INTO users (id, name, email, role, credits, password_hash) VALUES (?, ?, ?, 'shop', ?, ?)",
+            (user_id, name, email, credits, password_hash),
+        )
+        conn.commit()
+    except sqlite3.IntegrityError:
+        return None
+    finally:
+        conn.close()
+    return get_user(user_id)
+
+
+def get_user_by_email(email: str):
+    conn = get_db()
+    row = conn.execute("SELECT * FROM users WHERE email = ? COLLATE NOCASE", (email,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def create_session(user_id: str, days: int) -> str:
+    import secrets
+
+    token = secrets.token_urlsafe(32)
+    conn = get_db()
+    conn.execute("DELETE FROM sessions WHERE expires_at < CURRENT_TIMESTAMP")
+    conn.execute("INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, datetime('now', ?))",
+                 (hash_token(token), user_id, f"+{int(days)} days"))
+    conn.commit()
+    conn.close()
+    return token
+
+
+def delete_session(token: str):
+    conn = get_db()
+    conn.execute("DELETE FROM sessions WHERE token_hash = ?", (hash_token(token),))
+    conn.commit()
+    conn.close()
+
+
 def get_user_by_token(token: str):
     conn = get_db()
-    row = conn.execute("SELECT * FROM users WHERE api_token_hash = ?", (hash_token(token),)).fetchone()
+    row = conn.execute('''
+    SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id
+    WHERE s.token_hash = ? AND s.expires_at > CURRENT_TIMESTAMP
+    ''', (hash_token(token),)).fetchone()
+    if row is None:
+        # API token cố định (tạo bằng backend.manage) cho tích hợp máy-với-máy
+        row = conn.execute("SELECT * FROM users WHERE api_token_hash = ?", (hash_token(token),)).fetchone()
     conn.close()
     return dict(row) if row else None
 
@@ -262,7 +372,7 @@ def get_user(user_id: str):
 
 
 def public_user(user: dict) -> dict:
-    return {k: v for k, v in user.items() if k != "api_token_hash"}
+    return {k: v for k, v in user.items() if k not in ("api_token_hash", "password_hash")}
 
 
 def get_system_settings():
