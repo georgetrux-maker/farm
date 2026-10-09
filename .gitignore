@@ -20,3 +20,10 @@ venv/
 # Operating System
 .DS_Store
 Thumbs.db
+
+# Dữ liệu sinh ra khi chạy (không commit)
+backend/media/
+backend/*.db
+backend/*.db-wal
+backend/*.db-shm
+backend/.env

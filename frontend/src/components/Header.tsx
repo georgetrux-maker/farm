@@ -101,13 +101,13 @@ export const Header: React.FC<HeaderProps> = ({
           )}
         </button>
 
-        {/* System 25 Tasks Passed Badge */}
+        {/* Kiểm tra hệ thống */}
         <button
           onClick={onOpenAudit}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--accent-color)]/10 border border-[var(--accent-color)]/30 text-[var(--accent-color)] hover:bg-[var(--accent-color)]/20 transition-all text-xs font-mono font-medium"
         >
           <CheckCircle2 className="w-3.5 h-3.5" />
-          <span>25/25 Task Passed</span>
+          <span>Kiểm Tra Hệ Thống</span>
         </button>
 
         {/* Wallet Pill */}

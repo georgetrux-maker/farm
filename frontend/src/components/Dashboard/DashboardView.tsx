@@ -103,7 +103,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ walletCredits }) =
   }
 
   useEffect(() => {
-    loadAllData()
+    // Gọi sau khi render xong để không setState đồng bộ trong effect
+    const id = setTimeout(loadAllData, 0)
+    return () => clearTimeout(id)
   }, [])
 
   // Handle Saving Settings to SQLite
@@ -177,7 +179,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ walletCredits }) =
 
   const handleTestVoice = () => {
     setIsPlayingVoice(true)
-    const audio = new Audio('/media/review_voice.mp3')
+    const audio = new Audio('/samples/review_voice.mp3')
     audio.play().catch(() => {})
     audio.onended = () => setIsPlayingVoice(false)
   }
@@ -287,11 +289,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ walletCredits }) =
                 </div>
                 <div className="flex items-baseline gap-2 mb-1">
                   <span className="text-2xl font-bold font-mono tracking-tight text-[var(--text-main)]">
-                    {stats?.conversion_rate ?? '18.6%'}
+                    {stats?.conversion_rate ?? '—'}
                   </span>
-                  <span className="text-xs font-mono font-semibold text-[var(--accent-color)]">+3.4%</span>
                 </div>
-                <span className="text-[11px] text-[var(--text-muted)]">Số liệu gắn giỏ hàng Shopee/TikTok</span>
+                <span className="text-[11px] text-[var(--text-muted)]">Cần kết nối Shopee/TikTok để có số liệu</span>
               </div>
 
               <div className="p-5 rounded-2xl bg-[var(--bg-card)] border border-[var(--border-subtle)] shadow-sm relative overflow-hidden group hover:border-[var(--border-strong)] transition-all">
@@ -303,10 +304,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ walletCredits }) =
                 </div>
                 <div className="flex items-baseline gap-2 mb-1">
                   <span className="text-2xl font-bold font-mono tracking-tight text-[var(--text-main)]">
-                    ${stats?.cache_saved_usd ?? 0.1}
+                    ${stats?.cache_saved_usd ?? 0}
                   </span>
                   <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[var(--accent-color)]/10 text-[var(--accent-color)]">
-                    {stats?.cache_hits ?? 2} Cache Hits
+                    {stats?.cache_hits ?? 0} Cache Hits
                   </span>
                 </div>
                 <span className="text-[11px] text-[var(--text-muted)]">Tái sử dụng vóc dáng từ bảng tryon_cache</span>
@@ -321,9 +322,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ walletCredits }) =
                 </div>
                 <div className="flex items-baseline gap-2 mb-1">
                   <span className="text-2xl font-bold font-mono tracking-tight text-[var(--text-main)]">
-                    {stats?.avg_render_time ?? '4.2s'}
+                    {stats?.avg_render_time ?? '—'}
                   </span>
-                  <span className="text-xs font-mono text-[var(--accent-color)]">60 FPS</span>
+                  <span className="text-xs font-mono text-[var(--accent-color)]">30 FPS</span>
                 </div>
                 <span className="text-[11px] text-[var(--text-muted)]">Xử lý tuần tự bằng FFmpeg Engine</span>
               </div>
@@ -395,14 +396,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ walletCredits }) =
 
                   <div className="space-y-2 text-xs text-[var(--text-muted)]">
                     <div className="flex items-center justify-between">
-                      <span>Tốc độ ưu tiên GPU:</span>
-                      <strong className="text-[var(--text-main)]">Tối Đa (Level 1)</strong>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span>Thời lượng lưu trữ video:</span>
-                      <strong className="text-[var(--text-main)]">Vĩnh Viễn (Cloud 4K)</strong>
-                    </div>
-                    <div className="flex items-center justify-between">
                       <span>Database Engine:</span>
                       <strong className="text-[var(--text-main)]">SQLite fashion_ai.db</strong>
                     </div>
@@ -412,7 +405,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ walletCredits }) =
                 <div className="pt-4 border-t border-[var(--border-subtle)]">
                   <div className="flex items-center gap-2 text-[11px] text-[var(--accent-color)] font-mono">
                     <ShieldCheck className="w-4 h-4" />
-                    <span>Xác thực giao dịch tự động qua VietQR NAPAS</span>
+                    <span>Nạp tiền qua VietQR, credit được cộng sau khi xác nhận tiền về</span>
                   </div>
                 </div>
               </div>

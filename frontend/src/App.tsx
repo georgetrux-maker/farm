@@ -10,11 +10,20 @@ import { VietQRModal } from './components/Wallet/VietQRModal'
 import { AuditModal } from './components/SystemAudit/AuditModal'
 import { DashboardView } from './components/Dashboard/DashboardView'
 import type { PipelineNode } from './types'
-import { triggerPipelineRun, fetchJobStatus } from './services/api'
+import { triggerPipelineRun, fetchJobStatus, fetchProfile } from './services/api'
+
+const DEMO_PRODUCT_ID = 'prod_dam_voan_to'
 
 export default function App() {
   const [activeView, setActiveView] = useState<'split' | 'studio' | 'tryon' | 'dashboard'>('split')
-  const [walletCredits, setWalletCredits] = useState<number>(4790)
+  const [walletCredits, setWalletCredits] = useState<number>(0)
+
+  // Số dư thật từ máy chủ
+  useEffect(() => {
+    fetchProfile()
+      .then((p) => setWalletCredits(p.credits))
+      .catch((e) => console.error('Không tải được tài khoản:', e))
+  }, [])
 
   // Light / Dark Theme State
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
@@ -44,7 +53,7 @@ export default function App() {
   const [isAuditOpen, setIsAuditOpen] = useState(false)
 
   // Video State
-  const [currentVideoUrl, setCurrentVideoUrl] = useState<string>('/media/sample_final.mp4')
+  const [currentVideoUrl, setCurrentVideoUrl] = useState<string>('/samples/sample_final.mp4')
   const [completedVideoUrl, setCompletedVideoUrl] = useState<string | null>(null)
 
   // Pipeline execution state
@@ -75,7 +84,7 @@ export default function App() {
       y: 120,
       status: 'idle',
       description: 'Khử nền alpha thông minh, giữ trọn nếp vải và độ rủ mềm mại',
-      metrics: { 'Alpha Mask': '99.2%', 'Độ rủ vải': '96.2%' },
+      metrics: { 'Engine': 'Tách nền sáng', 'Đầu ra': 'PNG trong suốt' },
       config: { threshold: 0.96 },
     },
     {
@@ -86,8 +95,8 @@ export default function App() {
       x: 780,
       y: 120,
       status: 'idle',
-      description: 'Mặc thử trang phục lên người mẫu AI Linh Đan độc quyền',
-      metrics: { 'Người mẫu': 'Linh Đan', 'Điểm Fit': '99.3%' },
+      description: 'Đặt trang phục lên người mẫu đã chọn (ghép AI thật ở Đợt 2)',
+      metrics: { 'Người mẫu': 'Chọn trong cấu hình', 'Engine': 'Tạm (chưa AI)' },
       config: { avatar: 'model_01' },
     },
     {
@@ -98,8 +107,8 @@ export default function App() {
       x: 1140,
       y: 120,
       status: 'idle',
-      description: 'Sinh chuyển động sải bước runway 9:16 dọc mượt mà 60fps',
-      metrics: { 'Tỉ lệ': '9:16 Dọc', 'Khung hình': '60 FPS' },
+      description: 'Tạo video dọc 9:16 theo mẫu chuyển động đã chọn',
+      metrics: { 'Tỉ lệ': '9:16 Dọc', 'Khung hình': '30 FPS' },
       config: { preset: 'catwalk', duration: 3 },
     },
     {
@@ -123,7 +132,7 @@ export default function App() {
       y: 120,
       status: 'idle',
       description: 'Tạo video mua sắm kèm điểm ghim hotspot cổ áo và eo',
-      metrics: { 'Hotspot': '2 Điểm', 'Watermark': 'Không' },
+      metrics: { 'Caption': 'Tự động', 'Hashtag': 'Theo sản phẩm' },
       config: { remove_watermark: true },
     },
   ])
@@ -144,12 +153,14 @@ export default function App() {
       setCurrentStep('Khởi tạo tác vụ trong hàng đợi...')
 
       // Step 1: Call real API to trigger pipeline
+      // Lấy lựa chọn người mẫu, mẫu video, giọng đọc từ cấu hình các node
+      const configOf = (id: string) => nodes.find((n) => n.id === id)?.config ?? {}
       const runRes = await triggerPipelineRun({
-        product_name: 'Đầm Lụa Satin Cao Cấp',
-        category: 'Váy dạ hội',
-        avatar_id: 'model_01',
-        voice_id: 'vi-VN-HoaiMyNeural',
-        scene_type: 'luxury_hall',
+        product_id: DEMO_PRODUCT_ID,
+        avatar_id: configOf('node_vton').avatar,
+        template: configOf('node_motion').preset,
+        duration_sec: configOf('node_motion').duration,
+        voice: configOf('node_tts').voice,
       })
 
       setWalletCredits(runRes.remaining_credits)
@@ -165,9 +176,11 @@ export default function App() {
         'node_publish',
       ]
 
+      let pollErrors = 0
       const interval = setInterval(async () => {
         try {
           const job = await fetchJobStatus(jobId)
+          pollErrors = 0
           setProgress(job.progress)
           setCurrentStep(job.current_step)
 
@@ -196,10 +209,21 @@ export default function App() {
           } else if (job.status === 'failed') {
             clearInterval(interval)
             setIsRunning(false)
-            alert('Có lỗi xảy ra trong quá trình xử lý!')
+            setNodes((prev) => prev.map((n) => (n.status === 'running' ? { ...n, status: 'error' } : n)))
+            fetchProfile().then((p) => setWalletCredits(p.credits)).catch(() => {})
+            alert(
+              `Tạo video thất bại: ${job.error_message ?? 'lỗi không xác định'}` +
+                (job.refunded ? '\nCredit đã được hoàn lại.' : ''),
+            )
           }
         } catch (e) {
           console.error('Lỗi khi kiểm tra tiến độ:', e)
+          // Mất kết nối liên tục khoảng 10 giây thì dừng hỏi
+          if (++pollErrors >= 15) {
+            clearInterval(interval)
+            setIsRunning(false)
+            alert('Mất kết nối tới máy chủ khi theo dõi tiến độ. Vào Dashboard để xem kết quả sau.')
+          }
         }
       }, 700)
     } catch (err: any) {
@@ -261,7 +285,7 @@ export default function App() {
         {/* Node Inspector Drawer */}
         {selectedNode && (
           <NodeInspector
-            node={selectedNode}
+            node={nodes.find((n) => n.id === selectedNode.id) ?? selectedNode}
             onClose={() => setSelectedNode(null)}
             onUpdateConfig={handleUpdateConfig}
           />
@@ -309,7 +333,7 @@ export default function App() {
       <VietQRModal
         isOpen={isDepositOpen}
         onClose={() => setIsDepositOpen(false)}
-        onSuccessDeposit={(credits) => setWalletCredits((prev) => prev + credits)}
+        onSuccessDeposit={(newBalance) => setWalletCredits(newBalance)}
       />
 
       <AuditModal

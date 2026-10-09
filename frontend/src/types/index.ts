@@ -48,6 +48,8 @@ export interface AIJob {
   current_step: string
   output_video_url?: string
   output_image_url?: string
+  error_message?: string | null
+  refunded?: boolean
 }
 
 export interface SystemAuditTask {
@@ -55,6 +57,7 @@ export interface SystemAuditTask {
   name: string
   status: string
   module: string
+  note?: string
 }
 
 export interface SystemAuditReport {

@@ -108,7 +108,7 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
             <div>
               <label className="text-[var(--text-muted)] font-medium block mb-1.5">Người Mẫu AI Độc Quyền</label>
               <select
-                defaultValue="model_01"
+                value={node.config.avatar ?? 'model_01'}
                 onChange={(e) => onUpdateConfig(node.id, { ...node.config, avatar: e.target.value })}
                 className="w-full bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-[var(--text-main)] outline-none"
               >
@@ -131,18 +131,28 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
         {node.id === 'node_motion' && (
           <div className="space-y-4 pt-2 border-t border-[var(--border-subtle)]">
             <div>
-              <label className="text-[var(--text-muted)] font-medium block mb-1.5">Preset Chuyển Động Runway</label>
-              <select className="w-full bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-[var(--text-main)] outline-none">
-                <option>Catwalk Studio Sải Bước Nhẹ Nhàng (3s)</option>
-                <option>Xoay 360 Độ Tôn Dáng Toàn Thân (5s)</option>
-                <option>Dạo Phố Streetwear Tự Nhiên (4s)</option>
+              <label className="text-[var(--text-muted)] font-medium block mb-1.5">Mẫu Video</label>
+              <select
+                value={node.config.preset ?? 'catwalk'}
+                onChange={(e) => onUpdateConfig(node.id, { ...node.config, preset: e.target.value })}
+                className="w-full bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-[var(--text-main)] outline-none"
+              >
+                <option value="catwalk">Catwalk: tiến dần vào người mẫu</option>
+                <option value="spin_360">Xoay tôn dáng: lia ngang qua lại</option>
+                <option value="street">Dạo phố: lùi ra toàn thân</option>
+                <option value="fabric_closeup">Cận chất liệu: zoom sát vào vải</option>
               </select>
             </div>
             <div>
-              <label className="text-[var(--text-muted)] font-medium block mb-1.5">Tốc Độ Khung Hình (FFmpeg)</label>
-              <select className="w-full bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-[var(--text-main)] outline-none">
-                <option>60 FPS mượt mà (Chuẩn TikTok HD)</option>
-                <option>30 FPS tiết kiệm tài nguyên</option>
+              <label className="text-[var(--text-muted)] font-medium block mb-1.5">Thời Lượng Đoạn Chuyển Động</label>
+              <select
+                value={node.config.duration ?? 5}
+                onChange={(e) => onUpdateConfig(node.id, { ...node.config, duration: Number(e.target.value) })}
+                className="w-full bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-[var(--text-main)] outline-none"
+              >
+                <option value={3}>3 giây</option>
+                <option value={5}>5 giây</option>
+                <option value={8}>8 giây</option>
               </select>
             </div>
           </div>
@@ -153,7 +163,7 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
             <div>
               <label className="text-[var(--text-muted)] font-medium block mb-1.5">Giọng Đọc KOC Tiếng Việt</label>
               <select
-                defaultValue="vi-VN-HoaiMyNeural"
+                value={node.config.voice ?? 'vi-VN-HoaiMyNeural'}
                 onChange={(e) => onUpdateConfig(node.id, { ...node.config, voice: e.target.value })}
                 className="w-full bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-[var(--text-main)] outline-none"
               >

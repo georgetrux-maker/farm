@@ -1,105 +1,144 @@
 import type { AIJob, SystemAuditReport } from '../types'
 
-export async function fetchSystemAudit(): Promise<SystemAuditReport> {
-  const res = await fetch('/api/system/audit-25-tasks')
-  if (!res.ok) throw new Error('Không thể tải dữ liệu kiểm thử hệ thống')
+const TOKEN_KEY = 'aura_api_token'
+
+/** Token lấy từ localStorage (sau này là màn đăng nhập) hoặc biến môi trường VITE_API_TOKEN khi phát triển. */
+export function getApiToken(): string {
+  try {
+    return localStorage.getItem(TOKEN_KEY) || import.meta.env.VITE_API_TOKEN || ''
+  } catch {
+    return import.meta.env.VITE_API_TOKEN || ''
+  }
+}
+
+export function setApiToken(token: string) {
+  localStorage.setItem(TOKEN_KEY, token)
+}
+
+async function request<T>(path: string, options: RequestInit = {}, fallbackError = 'Lỗi kết nối máy chủ'): Promise<T> {
+  const headers = new Headers(options.headers)
+  const token = getApiToken()
+  if (token) headers.set('Authorization', `Bearer ${token}`)
+  if (options.body && !(options.body instanceof FormData)) headers.set('Content-Type', 'application/json')
+
+  const res = await fetch(path, { ...options, headers })
+  if (!res.ok) {
+    let message = fallbackError
+    try {
+      const body = await res.json()
+      if (typeof body.detail === 'string') message = body.detail
+      else if (Array.isArray(body.detail) && body.detail[0]?.msg) message = body.detail[0].msg
+    } catch {
+      // giữ thông báo mặc định
+    }
+    throw new Error(message)
+  }
   return res.json()
 }
 
-export async function triggerPipelineRun(params: {
-  product_name: string
-  category: string
-  avatar_id: string
-  voice_id: string
-  scene_type: string
-}): Promise<{ status: string; job_id: string; credits_deducted: number; remaining_credits: number }> {
-  const res = await fetch('/api/pipeline/run', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(params),
-  })
-  if (!res.ok) throw new Error('Lỗi khi kích hoạt luồng AI')
-  return res.json()
+const post = <T>(path: string, body: unknown, fallbackError?: string) =>
+  request<T>(path, { method: 'POST', body: JSON.stringify(body) }, fallbackError)
+
+export function fetchSystemAudit(): Promise<SystemAuditReport> {
+  return request('/api/system/audit-25-tasks', {}, 'Không thể tải dữ liệu kiểm tra hệ thống')
 }
 
-export async function fetchJobStatus(jobId: string): Promise<AIJob> {
-  const res = await fetch(`/api/jobs/${jobId}`)
-  if (!res.ok) throw new Error(`Không thể tìm thấy job ${jobId}`)
-  return res.json()
+export interface UserProfile {
+  id: string
+  name: string
+  email: string
+  role: string
+  credits: number
 }
 
-export async function recommendSize(params: {
+export function fetchProfile(): Promise<UserProfile> {
+  return request('/api/user/profile', {}, 'Không thể tải thông tin tài khoản')
+}
+
+export interface PipelineParams {
+  product_id: string
+  avatar_id?: string
+  template?: string
+  voice?: string
+  script_style?: string
+  duration_sec?: number
+}
+
+export function triggerPipelineRun(
+  params: PipelineParams,
+): Promise<{ status: string; job_id: string; credits_deducted: number; remaining_credits: number }> {
+  return post('/api/pipeline/run', params, 'Lỗi khi kích hoạt luồng AI')
+}
+
+export function fetchJobStatus(jobId: string): Promise<AIJob> {
+  return request(`/api/jobs/${encodeURIComponent(jobId)}`, {}, `Không thể tìm thấy job ${jobId}`)
+}
+
+export function recommendSize(params: {
   height: number
   weight: number
   bust: number
   waist: number
   hips: number
   body_shape: string
+  product_id?: string
 }) {
-  const res = await fetch('/api/size/recommend', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(params),
-  })
-  if (!res.ok) throw new Error('Lỗi khi phân tích số đo size')
-  return res.json()
+  return post('/api/size/recommend', params, 'Lỗi khi phân tích số đo size')
 }
 
-export async function createDeposit(amount: number) {
-  const res = await fetch('/api/wallet/deposit', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ amount }),
-  })
-  if (!res.ok) throw new Error('Không thể tạo mã VietQR')
-  return res.json()
+export interface DepositInfo {
+  status: string
+  transaction_id: string
+  amount_vnd: number
+  credits_awarded: number
+  qr_code_url: string
+  bank_id: string
+  account_number: string
+  account_holder: string
+  transfer_content: string
 }
 
-export async function fetchAvatars() {
-  const res = await fetch('/api/avatars')
-  if (!res.ok) throw new Error('Không thể tải danh sách người mẫu')
-  return res.json()
+export function createDeposit(amountVnd: number): Promise<DepositInfo> {
+  return post('/api/wallet/deposit', { amount_vnd: amountVnd }, 'Không thể tạo mã VietQR')
 }
 
-export async function fetchFeedVideos() {
-  const res = await fetch('/api/feed/videos')
-  if (!res.ok) throw new Error('Không thể tải feed video')
-  return res.json()
+export function fetchDepositStatus(
+  transactionId: string,
+): Promise<{ transaction_id: string; status: 'pending' | 'success'; credits: number; balance: number }> {
+  return request(`/api/wallet/transactions/${encodeURIComponent(transactionId)}`, {}, 'Không thể kiểm tra giao dịch')
 }
 
-export async function exportVideo(jobId: string, watermark: boolean = false) {
-  const res = await fetch('/api/publisher/export', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ job_id: jobId, remove_watermark: !watermark }),
-  })
-  if (!res.ok) throw new Error('Lỗi khi xuất bản video')
-  return res.json()
+export function fetchAvatars() {
+  return request<any[]>('/api/avatars', {}, 'Không thể tải danh sách người mẫu')
 }
 
-export async function fetchDashboardStats() {
-  const res = await fetch('/api/dashboard/stats')
-  if (!res.ok) throw new Error('Không thể tải dữ liệu thống kê từ máy chủ')
-  return res.json()
+export function fetchFeedVideos() {
+  return request('/api/feed/videos', {}, 'Không thể tải feed video')
 }
 
-export async function fetchSettings() {
-  const res = await fetch('/api/settings')
-  if (!res.ok) throw new Error('Không thể tải cấu hình từ máy chủ')
-  return res.json()
+export function exportVideo(jobId: string): Promise<{
+  download_url: string
+  subtitles_vtt: string | null
+  seo_caption: string
+  hashtags: string[]
+  ai_generated_label: string
+}> {
+  return post('/api/publisher/export', { job_id: jobId }, 'Lỗi khi xuất bản video')
 }
 
-export async function saveSettings(settings: Record<string, any>) {
-  const res = await fetch('/api/settings', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(settings),
-  })
-  if (!res.ok) throw new Error('Không thể lưu cấu hình vào cơ sở dữ liệu')
-  return res.json()
+export function fetchDashboardStats() {
+  return request<any>('/api/dashboard/stats', {}, 'Không thể tải dữ liệu thống kê từ máy chủ')
 }
 
-export async function addNewAvatar(data: {
+export function fetchSettings() {
+  return request<Record<string, string>>('/api/settings', {}, 'Không thể tải cấu hình từ máy chủ')
+}
+
+export function saveSettings(settings: Record<string, any>) {
+  return post<Record<string, string>>('/api/settings', settings, 'Không thể lưu cấu hình vào cơ sở dữ liệu')
+}
+
+export function addNewAvatar(data: {
   name: string
   style: string
   height: string
@@ -108,22 +147,25 @@ export async function addNewAvatar(data: {
   avatar_url: string
   badge?: string
 }) {
-  const res = await fetch('/api/avatars', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
-  })
-  if (!res.ok) throw new Error('Không thể thêm người mẫu vào cơ sở dữ liệu')
-  return res.json()
+  return post('/api/avatars', data, 'Không thể thêm người mẫu vào cơ sở dữ liệu')
 }
 
-export async function setDefaultAvatar(avatarId: string) {
-  const res = await fetch('/api/avatars/set-default', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ avatar_id: avatarId }),
-  })
-  if (!res.ok) throw new Error('Không thể cập nhật người mẫu mặc định')
-  return res.json()
+export function setDefaultAvatar(avatarId: string) {
+  return post('/api/avatars/set-default', { avatar_id: avatarId }, 'Không thể cập nhật người mẫu mặc định')
 }
 
+export function uploadImage(file: File): Promise<{ media_url: string; width: number; height: number }> {
+  const form = new FormData()
+  form.append('file', file)
+  return request('/api/uploads/image', { method: 'POST', body: form }, 'Không thể tải ảnh lên')
+}
+
+export function createProduct(data: {
+  title: string
+  price: number
+  image_url: string
+  category?: string
+  fabric_type?: string
+}) {
+  return post<{ id: string; title: string }>('/api/products', data, 'Không thể tạo sản phẩm')
+}

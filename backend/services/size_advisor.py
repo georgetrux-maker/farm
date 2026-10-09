@@ -1,4 +1,4 @@
-def calculate_smart_size(height_cm: float, weight_kg: float, bust_cm: float = 84.0, waist_cm: float = 68.0, hips_cm: float = 92.0, body_shape: str = "pear") -> dict:
+def calculate_smart_size(height_cm: float, weight_kg: float, bust_cm: float = 84.0, waist_cm: float = 68.0, hips_cm: float = 92.0, body_shape: str = "pear", purchase_links: dict = None) -> dict:
     """
     Task 22: Thuật Toán Tư Vấn Size & Nút Mua 1 Chạm (Size Recommendation Engine)
     Đối chiếu số đo cơ thể người dùng với bảng thông số váy để gợi ý chuẩn size.
@@ -56,8 +56,5 @@ def calculate_smart_size(height_cm: float, weight_kg: float, bust_cm: float = 84
             "hips_fit": "100% Giấu khuyết điểm hông",
             "length_fit": "Độ dài qua gối 108cm"
         },
-        "purchase_links": {
-            "shopee": "https://shopee.vn/product/1298402/dam-voan?voucher=AURA30K",
-            "tiktok": "https://shop.tiktok.com/view/product/dam-voan-to?discount=30k"
-        }
+        "purchase_links": purchase_links or {},
     }

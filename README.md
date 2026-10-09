@@ -1,75 +1,118 @@
-# Aura Fashion AI - Virtual Try-On & Video Review Studio
+# Aura Fashion AI: Video Review Thời Trang
 
-Hệ sinh thái Video Thời trang AI: Kết hợp B2B Creator Studio (Sơ đồ Node n8n tự động hóa) và C2C Interactive Try-On Player (Video mua sắm và thử đồ ảo cho người dùng). Toàn bộ hệ thống gồm 25 task đã được triển khai đầy đủ, tích hợp thực tế với Backend Python FastAPI, FFmpeg, Edge-TTS, SQLite và đã vượt qua 100% bộ kiểm thử tự động.
+Upload ảnh sản phẩm, chọn người mẫu và mẫu video, hệ thống tạo video dọc 9:16 có lồng tiếng, phụ đề, caption và hashtag để đăng TikTok/Reels.
 
----
-
-## 1. Thiết Kế & Nguyên Tắc Thẩm Mỹ (Tuân thủ taste-skill)
-- Chuyển đổi linh hoạt **Chế Độ Tối (Cold Luxury Dark)** và **Chế Độ Sáng (Clean Editorial Light)** trực tiếp trên Header với hiệu ứng chuyển màu mượt mà.
-- Phối màu Dark: Nền than chì (`#0A0B10`, `#12141D`), điểm nhấn ngọc lục bảo (`#00F5A0`), chữ trắng ngà (`#F8FAFC`).
-- Phối màu Light: Nền trắng ngà thanh lịch (`#F8FAFC`, `#FFFFFF`), điểm nhấn xanh ngọc (`#00B377`), chữ đen sắc nét (`#0F172A`).
-- Phông chữ: Syne (Tiêu đề kiến trúc hiện đại) kết hợp Plus Jakarta Sans (Giao diện) và JetBrains Mono (Thông số).
-- Dashboard cài đặt toàn diện: 4 tab chuyên sâu (Tổng quan & Hiệu năng, Cài đặt lõi AI & API, Mẫu AI & Tủ đồ thương hiệu, Kênh bán hàng Shopee & TikTok Shop).
-- Loại bỏ hoàn toàn dấu gạch ngang dài (em-dash) và các khuôn mẫu AI sáo rỗng.
+- **Backend:** Python FastAPI + SQLite + FFmpeg + Edge-TTS (`backend/`)
+- **Frontend:** React + Vite + TypeScript + Tailwind (`frontend/`)
+- Bản HTML thuần cũ (`index.html`, `app.js`) vẫn chạy được ở `http://localhost:3456/`
 
 ---
 
-## 2. Danh Mục 25 Task Đã Hoàn Thành Thực Tế (100% Passed)
+## Tình trạng hiện tại
 
-### Giai Đoạn 1: Lõi Trí Tuệ Nhân Tạo & Xử Lý Video (AI Core Engine)
-1. **Task 01**: AI bóc tách chi tiết áo váy SAM 2 (`backend/ai/segmentation.py`). Trích xuất nếp gấp, độ rủ vải, tách nền alpha trong suốt.
-2. **Task 02**: Lõi thử đồ ảo IDM-VTON (`backend/ai/vton.py`). Warp trang phục theo dáng người, tính điểm fit và độ vừa vặn.
-3. **Task 03**: Sinh chuyển động video Catwalk 9:16 (`backend/ai/motion.py`). Xuất video dọc chất lượng cao mô phỏng sải bước catwalk.
-4. **Task 04**: AI soạn kịch bản review KOC chuẩn TikTok (`backend/ai/script.py`). Hook 3 giây, nội dung thuyết phục, CTA và bộ hashtag viral.
-5. **Task 05**: Lồng tiếng KOC tiếng Việt tự nhiên và phụ đề nhảy chữ (`backend/ai/tts.py`). Tích hợp Edge-TTS giọng Hoài My/Nam Minh kèm đồng bộ WebVTT.
-6. **Task 06**: Trình ghép và xuất video FFmpeg 60fps (`backend/ai/render.py`). Ghép hình ảnh, âm thanh, hiệu ứng thành tệp MP4 chuẩn mực.
+| Phần | Trạng thái |
+|---|---|
+| Upload ảnh, tạo sản phẩm, hàng đợi tạo video | ✅ Chạy thật |
+| Ví credit: trừ tiền nguyên tử, hoàn credit khi job lỗi | ✅ Chạy thật |
+| Nạp tiền VietQR | ⚠️ Tạo mã QR thật; **xác nhận tiền về do quản trị viên làm thủ công** (webhook ngân hàng: Đợt 3) |
+| Lồng tiếng tiếng Việt + phụ đề WebVTT | ✅ Edge-TTS (cần internet), có phương án dự phòng |
+| 4 mẫu video (catwalk, xoay, dạo phố, cận chất liệu) | ⚠️ Chuyển động máy quay bằng FFmpeg, **chưa phải AI image-to-video** |
+| Tách nền trang phục | ⚠️ Tách nền sáng đơn giản, **chưa phải mô hình AI** |
+| Thử đồ lên người mẫu | ⚠️ **Mới đặt trang phục lên phông nền**, chưa ghép lên người mẫu |
+| Kịch bản review, hashtag | ⚠️ Mẫu câu theo tên/giá/chất liệu, **chưa dùng LLM** |
+| Đăng nhập | ⚠️ API token (tạo bằng dòng lệnh); màn đăng nhập: Đợt 3 |
+| Đăng TikTok / Facebook, cào Shopee | ❌ Chưa có |
 
-### Giai Đoạn 2: Hạ Tầng Dữ Liệu & Hàng Đợi (Backend & Queue Infrastructure)
-7. **Task 07**: Cơ sở dữ liệu SQLite & Quản lý User (`backend/database.py`). Bảng người dùng, sản phẩm, lịch sử render, tủ đồ và giao dịch.
-8. **Task 08**: Hàng đợi tác vụ bất đồng bộ (`backend/services/queue_manager.py`). Xử lý tuần tự 6 bước render ngầm, theo dõi tiến độ thời gian thực.
-9. **Task 09**: Hệ thống ví và nạp tiền VietQR tự động (`backend/services/wallet.py`). Tạo mã chuẩn NAPAS VietQR QuickLink, trừ credit chuẩn xác.
-10. **Task 10**: Máy chủ lưu trữ Media tĩnh & CDN Streaming (`backend/main.py`). Cung cấp tệp MP4, MP3, VTT qua đường dẫn trực tiếp `/media/*`.
-
-### Giai Đoạn 3: B2B Creator Studio (Trải Nghiệm n8n Visual Pipeline)
-11. **Task 11**: Trình cào dữ liệu sản phẩm Shopee/TikTok (`backend/services/scraper.py`). Bóc tách tên sản phẩm, giá, chất liệu từ đường dẫn.
-12. **Task 12**: Canvas vô cực sơ đồ Node tương tác (`index.html`, `app.js`). Kéo thả node, tính toán dây cáp Bezier thời gian thực.
-13. **Task 13**: Khay cấu hình Inspector đồng bộ 2 chiều (`index.html`, `app.js`). Tùy biến prompt, model, giọng đọc KOC trực quan.
-14. **Task 14**: Kho mẫu AI độc quyền (Brand Avatars). Quản lý danh mục người mẫu độc quyền (Linh Đan, Bảo Anh, Mai Khanh).
-15. **Task 15**: Trình tạo video hàng loạt (Batch Generation Engine). Hỗ trợ nạp nhiều sản phẩm và đưa vào hàng đợi tự động.
-16. **Task 16**: Trình xuất file không watermark & SEO Hashtags. Tải video MP4 thành phẩm kèm nội dung caption copy 1 chạm.
-
-### Giai Đoạn 4: C2C Interactive Video Player (Trải Nghiệm Người Dùng Cuối)
-17. **Task 17**: Khung phát video dọc 9:16 tương tác (`index.html`, `app.js`). Phát video vòng lặp mượt mà, tối ưu cho thiết bị di động và web.
-18. **Task 18**: Điểm ghim hotspot tương tác trực tiếp trên video. Tọa độ cổ áo, eo phản hồi tức thì với tooltip thông tin chi tiết.
-19. **Task 19**: Hồ sơ vóc dáng cá nhân (Body Profile Twin). Dáng quả lê (1m58/51kg), đồng hồ cát (1m65/52kg), mi nhon (1m52/44kg).
-20. **Task 20**: Nút ma thuật "Thử Lên Tôi" (1-Click Instant Try-On). Xem trước trang phục trên vóc dáng cá nhân ngay lập tức.
-21. **Task 21**: Thanh trượt so sánh Trước và Sau (Split Screen Slider). Kéo trượt mượt mà từ 5% đến 95% để quan sát độ vừa vặn.
-22. **Task 22**: Thuật toán tư vấn size thông minh và nút mua 1 chạm (`backend/services/size_advisor.py`). Phân tích tỷ lệ cơ thể và khuyến nghị size chính xác.
-
-### Giai Đoạn 5: Tối Ưu Hiệu Năng, Bảo Mật & Kiểm Thử Toàn Diện
-23. **Task 23**: Bộ đệm Cache tiết kiệm chi phí GPU (`backend/services/cache_manager.py`). Tái sử dụng kết quả thử đồ đã tính toán, giảm 85% chi phí render.
-24. **Task 24**: Tường lửa bảo mật và giới hạn tần suất gọi API (`backend/services/security.py`). Chống spam và bảo vệ tài nguyên hệ thống.
-25. **Task 25**: Bộ kiểm thử tự động toàn diện 25 task (`backend/tests/test_all_25_tasks.py`). Kiểm chứng end-to-end không dùng mock data giả.
+Trang **Kiểm tra hệ thống** trong app (`/api/system/audit-25-tasks`) báo đúng trạng thái này theo thời gian thực.
 
 ---
 
-## 3. Khởi Chạy & Trải Nghiệm Ứng Dụng
+## Cài đặt và chạy
 
-### Khởi động Hệ Thống:
-1. **Khởi động Backend FastAPI (Port 3456)**:
+Yêu cầu: Python 3.10+, Node.js 20.19+ (hoặc 22.12+), **ffmpeg**.
+
+### 1. Backend (cổng 3456)
+
 ```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r backend/requirements.txt
+cp backend/.env.example backend/.env      # rồi sửa giá trị trong file
 python3 -m uvicorn backend.main:app --host 0.0.0.0 --port 3456
 ```
 
-2. **Khởi động Frontend React + Vite + TypeScript (Port 5173)**:
+Khi phát triển, `backend/.env` mẫu đã bật `ALLOW_DEMO_USER=1`: không cần token, mọi request được coi là user demo "Linh Chi" (quyền admin, 2.850 credit).
+**Khi chạy thật phải đặt `ALLOW_DEMO_USER=0`**, cùng với `ADMIN_TOKEN`, `VIETQR_ACCOUNT_NO`, `CORS_ORIGINS`.
+
+### 2. Frontend (cổng 5173)
+
 ```bash
 cd frontend
+npm ci
+cp .env.example .env.local   # điền VITE_API_TOKEN nếu backend tắt ALLOW_DEMO_USER
 npm run dev
 ```
 
-### Địa Chỉ Truy Cập:
-- **Ứng Dụng React + TypeScript Hiện Đại**: `http://localhost:5173/`
-- **Phiên Bản HTML / Vanilla Nhúng Trực Tiếp**: `http://localhost:3456/index.html`
-- **Kiểm Thử Toàn Diện 25 Task**: `python3 backend/tests/test_all_25_tasks.py`
+Mở `http://localhost:5173/`. Vite tự chuyển `/api`, `/media`, `/samples` sang backend.
 
+### 3. Quản trị
 
+```bash
+# Tạo tài khoản shop và lấy API token (token chỉ hiện một lần)
+python3 -m backend.manage create-user "Shop Hoa" shop@example.com --credits 300
+
+# Xác nhận đã nhận tiền cho một giao dịch nạp (sau khi kiểm tra sao kê ngân hàng)
+python3 -m backend.manage confirm-deposit TXABC1234567
+```
+
+Hoặc gọi API: `POST /api/admin/wallet/verify` với header `X-Admin-Token`.
+
+### 4. Kiểm thử
+
+```bash
+pip install -r backend/requirements-dev.txt
+python3 -m pytest              # backend: bảo mật, ví, pipeline, engine
+cd frontend && npm run lint && npm run build
+```
+
+GitHub Actions chạy các bước này trên mỗi pull request (`.github/workflows/ci.yml`).
+
+---
+
+## Luồng tạo video (API)
+
+```text
+POST /api/uploads/image        (multipart: file)            -> { media_url }
+POST /api/products             { title, price, image_url, category?, fabric_type? } -> { id }
+POST /api/pipeline/run         { product_id, avatar_id?, template?, voice?, script_style?, duration_sec? }
+GET  /api/jobs/{job_id}        -> tiến độ %, link video khi xong
+POST /api/publisher/export     { job_id } -> link tải, caption, hashtag, phụ đề
+```
+
+- `template`: `catwalk`, `spin_360`, `street`, `fabric_closeup` (xem `GET /api/ai/templates`)
+- `voice`: `vi-VN-HoaiMyNeural` (nữ), `vi-VN-NamMinhNeural` (nam)
+- `script_style`: `genz`, `office`, `honest`
+
+Mọi API (trừ danh sách người mẫu, feed, tư vấn size, kiểm tra hệ thống) cần header `Authorization: Bearer <token>`.
+Mỗi video tốn `PIPELINE_COST_CREDITS` credit (mặc định 30); job lỗi được hoàn credit tự động.
+
+---
+
+## Cấu trúc thư mục
+
+```text
+backend/
+  main.py            API FastAPI
+  config.py          cấu hình từ biến môi trường / backend/.env
+  auth.py            xác thực token, quyền admin
+  database.py        SQLite + migration
+  media_paths.py     kiểm tra mọi đường dẫn file nằm trong thư mục media
+  ffmpeg_utils.py    chạy ffmpeg có timeout
+  manage.py          công cụ quản trị dòng lệnh
+  ai/                segmentation, vton, motion, script, tts, render
+  services/          wallet, queue_manager, cache_manager, security, scraper, size_advisor
+  samples/           video/âm thanh mẫu cho giao diện
+  tests/             pytest
+frontend/            ứng dụng React
+```
+
+Dữ liệu sinh ra khi chạy (`backend/fashion_ai.db`, `backend/media/`) không được commit.

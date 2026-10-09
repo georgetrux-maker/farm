@@ -492,6 +492,13 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnSyncRunAgain = document.getElementById('btn-sync-run-again');
   if (btnSyncRunAgain) btnSyncRunAgain.addEventListener('click', runMasterPipeline);
 
+  // Token đăng nhập dùng chung với bản React (localStorage 'aura_api_token')
+  function authHeaders(extra = {}) {
+    let token = '';
+    try { token = localStorage.getItem('aura_api_token') || ''; } catch (e) { /* bỏ qua */ }
+    return token ? { ...extra, Authorization: `Bearer ${token}` } : extra;
+  }
+
   async function runMasterPipeline() {
     if (state.isPipelineRunning) return;
     state.isPipelineRunning = true;
@@ -505,8 +512,8 @@ document.addEventListener('DOMContentLoaded', () => {
       // Call Real Backend API
       const res = await fetch('/api/pipeline/run', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: 'user_linh_chi', product_id: 'prod_dam_voan_to' })
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ product_id: 'prod_dam_voan_to' })
       });
       const data = await res.json();
 
@@ -518,7 +525,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // Poll Real Job Status
         const pollInterval = setInterval(async () => {
           try {
-            const jRes = await fetch(`/api/jobs/${jobId}`);
+            const jRes = await fetch(`/api/jobs/${jobId}`, { headers: authHeaders() });
             const job = await jRes.json();
 
             pipelineLiveStep.textContent = `${job.current_step} (${job.progress}%)`;
@@ -556,7 +563,7 @@ document.addEventListener('DOMContentLoaded', () => {
               state.isPipelineRunning = false;
               btnMasterRun.classList.remove('opacity-75', 'pointer-events-none');
               pipelineLiveStatus.classList.add('hidden');
-              showToast('Lỗi xử lý job.');
+              showToast(`Lỗi xử lý job: ${job.error_message || 'không xác định'}${job.refunded ? ' (đã hoàn credit)' : ''}`);
             }
           } catch (err) {
             console.error('Polling error', err);

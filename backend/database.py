@@ -1,42 +1,65 @@
+import hashlib
 import sqlite3
-import os
-import json
-from datetime import datetime
+import uuid
 
-DB_PATH = os.path.join(os.path.dirname(__file__), 'fashion_ai.db')
+from backend import config
+
+DEMO_USER_ID = "user_linh_chi"
+DEMO_PRODUCT_ID = "prod_dam_voan_to"
+
+# Các khóa cấu hình được phép lưu qua API; khóa kết thúc bằng _api_key được coi là bí mật
+ALLOWED_SETTING_KEYS = {
+    "kling_api_key", "sam_threshold", "motion_speed", "fps_setting", "auto_subtitles",
+    "selected_voice", "watermark_enabled", "shopee_sync", "tiktok_sync", "default_model_id",
+}
+SECRET_MASK_PREFIX = "••••"
+
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(config.db_path(), timeout=15)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
     return conn
+
+
+def hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def _add_column_if_missing(cursor, table: str, column: str, ddl: str):
+    cols = {r[1] for r in cursor.execute(f"PRAGMA table_info({table})")}
+    if column not in cols:
+        cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+
 
 def init_db():
     conn = get_db()
     cursor = conn.cursor()
+    cursor.execute("PRAGMA journal_mode = WAL")
 
-    # 1. Users & Shops table
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS users (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         email TEXT UNIQUE,
-        role TEXT DEFAULT 'shop', -- 'shop', 'koc', 'shopper'
-        credits INTEGER DEFAULT 2850,
+        role TEXT DEFAULT 'shop', -- 'shop', 'koc', 'shopper', 'admin'
+        credits INTEGER DEFAULT 0 CHECK (credits >= 0),
         height REAL DEFAULT 158.0,
         weight REAL DEFAULT 51.0,
-        body_shape TEXT DEFAULT 'pear', -- 'pear', 'hourglass', 'petite', 'rectangle'
+        body_shape TEXT DEFAULT 'pear',
         bust REAL DEFAULT 84.0,
         waist REAL DEFAULT 68.0,
         hips REAL DEFAULT 92.0,
         avatar_url TEXT,
+        api_token_hash TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     ''')
 
-    # 2. Products table
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS products (
         id TEXT PRIMARY KEY,
+        owner_id TEXT,
         title TEXT NOT NULL,
         price INTEGER NOT NULL,
         original_price INTEGER,
@@ -52,13 +75,12 @@ def init_db():
     )
     ''')
 
-    # 3. AI Jobs / Tasks Queue table
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS ai_jobs (
         id TEXT PRIMARY KEY,
         user_id TEXT,
         product_id TEXT,
-        job_type TEXT, -- 'full_pipeline', 'tryon', 'video', 'tts'
+        job_type TEXT,
         status TEXT DEFAULT 'queued', -- 'queued', 'processing', 'completed', 'failed'
         progress INTEGER DEFAULT 0,
         current_step TEXT,
@@ -66,26 +88,29 @@ def init_db():
         output_image_url TEXT,
         output_audio_url TEXT,
         error_message TEXT,
+        params_json TEXT,
+        script_json TEXT,
+        cost_credits INTEGER DEFAULT 0,
+        refunded INTEGER DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         completed_at TIMESTAMP
     )
     ''')
 
-    # 4. Wallet & Credit Transactions table
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS wallet_transactions (
         id TEXT PRIMARY KEY,
         user_id TEXT NOT NULL,
         amount_credits INTEGER NOT NULL,
+        amount_vnd INTEGER,
         transaction_type TEXT NOT NULL, -- 'deposit', 'usage', 'refund'
         description TEXT,
         qr_code_ref TEXT,
-        status TEXT DEFAULT 'success',
+        status TEXT DEFAULT 'success', -- 'pending', 'success'
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     ''')
 
-    # 5. Wardrobe / Saved Try-On Items table
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS wardrobe_items (
         id TEXT PRIMARY KEY,
@@ -97,7 +122,6 @@ def init_db():
     )
     ''')
 
-    # 6. Cached Try-On Generations table (GPU cost saver)
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS tryon_cache (
         cache_key TEXT PRIMARY KEY,
@@ -106,12 +130,11 @@ def init_db():
         height REAL NOT NULL,
         weight REAL NOT NULL,
         result_image_url TEXT NOT NULL,
-        hit_count INTEGER DEFAULT 1,
+        hit_count INTEGER DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     ''')
 
-    # 7. System Settings table
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS system_settings (
         key TEXT PRIMARY KEY,
@@ -119,7 +142,6 @@ def init_db():
     )
     ''')
 
-    # 8. Brand Avatars table
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS brand_avatars (
         id TEXT PRIMARY KEY,
@@ -136,33 +158,44 @@ def init_db():
     )
     ''')
 
-    # Seed default system settings if not present
+    # Migration cho các database tạo bằng phiên bản cũ
+    _add_column_if_missing(cursor, "users", "api_token_hash", "TEXT")
+    _add_column_if_missing(cursor, "products", "owner_id", "TEXT")
+    _add_column_if_missing(cursor, "ai_jobs", "params_json", "TEXT")
+    _add_column_if_missing(cursor, "ai_jobs", "script_json", "TEXT")
+    _add_column_if_missing(cursor, "ai_jobs", "cost_credits", "INTEGER DEFAULT 0")
+    _add_column_if_missing(cursor, "ai_jobs", "refunded", "INTEGER DEFAULT 0")
+    _add_column_if_missing(cursor, "wallet_transactions", "amount_vnd", "INTEGER")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_user ON ai_jobs(user_id, created_at)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_tx_user ON wallet_transactions(user_id, created_at)")
+    cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_token ON users(api_token_hash)")
+    # Bản cũ seed sẵn một API key giả vào DB; key thật giờ đọc từ biến môi trường KLING_API_KEY
+    cursor.execute("DELETE FROM system_settings WHERE key = 'kling_api_key' AND value = 'kl_live_994821a8bf9028e19273'")
+
     default_settings = {
-        'kling_api_key': 'kl_live_994821a8bf9028e19273',
         'sam_threshold': '0.96',
         'motion_speed': '7',
-        'fps_setting': '60',
+        'fps_setting': '30',
         'auto_subtitles': 'true',
         'selected_voice': 'vi-VN-HoaiMyNeural',
         'watermark_enabled': 'false',
-        'shopee_sync': 'true',
-        'tiktok_sync': 'true',
+        'shopee_sync': 'false',
+        'tiktok_sync': 'false',
         'default_model_id': 'model_01'
     }
     for k, v in default_settings.items():
         cursor.execute("INSERT OR IGNORE INTO system_settings (key, value) VALUES (?, ?)", (k, v))
 
-    # Seed default brand avatars if not present
     default_avatars = [
         ('model_01', 'Linh Đan', 'Á Đông Thanh Lịch / Tiểu Thư', '1m68', '49kg', '84 - 61 - 90',
          'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=600&q=80',
-         'Được Dùng Nhiều Nhất', 142, 1),
+         'Được Dùng Nhiều Nhất', 0, 1),
         ('model_02', 'Bảo Anh', 'GenZ Năng Động / Streetwear', '1m62', '47kg', '82 - 60 - 88',
          'https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=600&q=80',
-         'Tỉ Lệ Mua Trẻ Cao', 58, 0),
+         'Tỉ Lệ Mua Trẻ Cao', 0, 0),
         ('model_03', 'Mai Khanh', 'Quyến Rũ / Sang Trọng Dạ Hội', '1m72', '53kg', '88 - 63 - 93',
          'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?auto=format&fit=crop&w=600&q=80',
-         'Thời Trang Cao Cấp', 29, 0)
+         'Thời Trang Cao Cấp', 0, 0)
     ]
     for row in default_avatars:
         cursor.execute('''
@@ -170,59 +203,120 @@ def init_db():
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', row)
 
-    # Insert default initial demo user & product if not present
-    cursor.execute("SELECT COUNT(*) FROM users WHERE id = 'user_linh_chi'")
+    cursor.execute("SELECT COUNT(*) FROM users WHERE id = ?", (DEMO_USER_ID,))
     if cursor.fetchone()[0] == 0:
         cursor.execute('''
         INSERT INTO users (id, name, email, role, credits, height, weight, body_shape, bust, waist, hips, avatar_url)
-        VALUES ('user_linh_chi', 'Linh Chi', 'linhchi@aurafashion.vn', 'shopper', 2850, 158.0, 51.0, 'pear', 84.0, 68.0, 92.0,
+        VALUES (?, 'Linh Chi', 'linhchi@aurafashion.vn', 'admin', 2850, 158.0, 51.0, 'pear', 84.0, 68.0, 92.0,
                 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=120&q=80')
-        ''')
+        ''', (DEMO_USER_ID,))
+    # Bản cũ seed user demo với quyền 'shopper' nên không vào được trang cài đặt
+    cursor.execute("UPDATE users SET role = 'admin' WHERE id = ? AND role = 'shopper'", (DEMO_USER_ID,))
+    if config.demo_user_token():
+        cursor.execute("UPDATE users SET api_token_hash = ? WHERE id = ?",
+                       (hash_token(config.demo_user_token()), DEMO_USER_ID))
 
-    cursor.execute("SELECT COUNT(*) FROM products WHERE id = 'prod_dam_voan_to'")
+    cursor.execute("SELECT COUNT(*) FROM products WHERE id = ?", (DEMO_PRODUCT_ID,))
     if cursor.fetchone()[0] == 0:
         cursor.execute('''
-        INSERT INTO products (id, title, price, original_price, category, fabric_type, breathability, wrinkle_resistance, image_url, affiliate_shopee_url, affiliate_tiktok_url)
-        VALUES ('prod_dam_voan_to', 'Đầm Voan Tơ 2 Lớp Hoa Nhí', 189000, 290000, 'Đầm Maxi', 'Voan tơ 2 lớp', 96, 'Hạn chế nhăn',
+        INSERT INTO products (id, owner_id, title, price, original_price, category, fabric_type, breathability, wrinkle_resistance, image_url, affiliate_shopee_url, affiliate_tiktok_url)
+        VALUES (?, ?, 'Đầm Voan Tơ 2 Lớp Hoa Nhí', 189000, 290000, 'Đầm Maxi', 'Voan tơ 2 lớp', 96, 'Hạn chế nhăn',
                 'https://images.unsplash.com/photo-1572804013309-59a88b7e92f1?auto=format&fit=crop&w=600&q=80',
-                'https://shopee.vn/product/1298402/dam-voan',
-                'https://shop.tiktok.com/view/product/dam-voan-to')
-        ''')
+                NULL, NULL)
+        ''', (DEMO_PRODUCT_ID, DEMO_USER_ID))
 
     conn.commit()
     conn.close()
 
-def get_system_settings():
+
+def create_user(name: str, email: str, role: str = "shop", credits: int = 0) -> dict:
+    """Tạo user mới và trả về API token (chỉ hiển thị một lần)."""
+    import secrets
+
+    user_id = f"user_{uuid.uuid4().hex[:10]}"
+    token = secrets.token_urlsafe(32)
     conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT key, value FROM system_settings")
-    rows = cursor.fetchall()
+    conn.execute(
+        "INSERT INTO users (id, name, email, role, credits, api_token_hash) VALUES (?, ?, ?, ?, ?, ?)",
+        (user_id, name, email, role, credits, hash_token(token)),
+    )
+    conn.commit()
     conn.close()
-    return {row['key']: row['value'] for row in rows}
+    return {"id": user_id, "name": name, "email": email, "role": role, "api_token": token}
+
+
+def get_user_by_token(token: str):
+    conn = get_db()
+    row = conn.execute("SELECT * FROM users WHERE api_token_hash = ?", (hash_token(token),)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_user(user_id: str):
+    conn = get_db()
+    row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def public_user(user: dict) -> dict:
+    return {k: v for k, v in user.items() if k != "api_token_hash"}
+
+
+def _mask_secret(value: str) -> str:
+    if not value:
+        return ""
+    return SECRET_MASK_PREFIX + value[-4:] if len(value) > 8 else SECRET_MASK_PREFIX
+
+
+def get_system_settings(mask_secrets: bool = True):
+    conn = get_db()
+    rows = conn.execute("SELECT key, value FROM system_settings").fetchall()
+    conn.close()
+    settings = {row['key']: row['value'] for row in rows}
+    if config.kling_api_key() and not settings.get("kling_api_key"):
+        settings["kling_api_key"] = config.kling_api_key()
+    if mask_secrets:
+        for k in list(settings):
+            if k.endswith("_api_key"):
+                settings[k] = _mask_secret(settings[k])
+    return settings
+
 
 def save_system_settings(settings_dict: dict):
     conn = get_db()
     cursor = conn.cursor()
     for k, v in settings_dict.items():
-        cursor.execute("INSERT OR REPLACE INTO system_settings (key, value) VALUES (?, ?)", (k, str(v)))
+        if k not in ALLOWED_SETTING_KEYS:
+            continue
+        value = str(v).lower() if isinstance(v, bool) else str(v)
+        # Frontend gửi lại giá trị đã che (••••abcd) khi người dùng không đổi key: bỏ qua
+        if k.endswith("_api_key") and value.startswith(SECRET_MASK_PREFIX):
+            continue
+        cursor.execute("INSERT OR REPLACE INTO system_settings (key, value) VALUES (?, ?)", (k, value))
     conn.commit()
     conn.close()
     return get_system_settings()
 
+
 def get_brand_avatars_list():
     conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM brand_avatars ORDER BY is_default DESC, created_at ASC")
-    rows = cursor.fetchall()
+    rows = conn.execute("SELECT * FROM brand_avatars ORDER BY is_default DESC, created_at ASC").fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
+
+def get_brand_avatar(avatar_id: str):
+    conn = get_db()
+    row = conn.execute("SELECT * FROM brand_avatars WHERE id = ?", (avatar_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
 def add_brand_avatar_entry(name: str, style: str, height: str, weight: str, measurements: str, avatar_url: str, badge: str = "Tùy Chỉnh"):
-    import uuid
     avatar_id = f"model_{uuid.uuid4().hex[:6]}"
     conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute('''
+    conn.execute('''
     INSERT INTO brand_avatars (id, name, style, height, weight, measurements, avatar_url, badge, renders_count, is_default)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0)
     ''', (avatar_id, name, style, height, weight, measurements, avatar_url, badge))
@@ -230,83 +324,110 @@ def add_brand_avatar_entry(name: str, style: str, height: str, weight: str, meas
     conn.close()
     return {"id": avatar_id, "name": name, "style": style, "height": height, "weight": weight, "measurements": measurements, "avatar_url": avatar_url, "badge": badge, "renders_count": 0, "is_default": 0}
 
+
 def set_default_brand_avatar(avatar_id: str):
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("UPDATE brand_avatars SET is_default = 0")
-    cursor.execute("UPDATE brand_avatars SET is_default = 1 WHERE id = ?", (avatar_id,))
+    if cursor.execute("SELECT 1 FROM brand_avatars WHERE id = ?", (avatar_id,)).fetchone() is None:
+        conn.close()
+        return None
+    cursor.execute("UPDATE brand_avatars SET is_default = (id = ?)", (avatar_id,))
     cursor.execute("INSERT OR REPLACE INTO system_settings (key, value) VALUES ('default_model_id', ?)", (avatar_id,))
     conn.commit()
     conn.close()
     return {"status": "success", "default_model_id": avatar_id}
 
-def get_dashboard_summary():
+
+def get_product(product_id: str):
+    conn = get_db()
+    row = conn.execute("SELECT * FROM products WHERE id = ?", (product_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def create_product(owner_id: str, title: str, price: int, image_url: str, category: str = None,
+                   fabric_type: str = None, original_price: int = None,
+                   affiliate_shopee_url: str = None, affiliate_tiktok_url: str = None) -> dict:
+    product_id = f"prod_{uuid.uuid4().hex[:10]}"
+    conn = get_db()
+    conn.execute('''
+    INSERT INTO products (id, owner_id, title, price, original_price, category, fabric_type, image_url, affiliate_shopee_url, affiliate_tiktok_url)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (product_id, owner_id, title, price, original_price, category, fabric_type, image_url,
+          affiliate_shopee_url, affiliate_tiktok_url))
+    conn.commit()
+    conn.close()
+    return get_product(product_id)
+
+
+def list_products(owner_id: str):
+    conn = get_db()
+    rows = conn.execute("SELECT * FROM products WHERE owner_id = ? ORDER BY created_at DESC", (owner_id,)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_dashboard_summary(user_id: str):
     conn = get_db()
     cursor = conn.cursor()
 
-    # 1. Total & completed jobs
-    cursor.execute("SELECT COUNT(*) FROM ai_jobs")
-    total_renders = cursor.fetchone()[0]
+    total_renders = cursor.execute("SELECT COUNT(*) FROM ai_jobs WHERE user_id = ?", (user_id,)).fetchone()[0]
+    completed_renders = cursor.execute(
+        "SELECT COUNT(*) FROM ai_jobs WHERE user_id = ? AND status = 'completed'", (user_id,)).fetchone()[0]
 
-    cursor.execute("SELECT COUNT(*) FROM ai_jobs WHERE status = 'completed'")
-    completed_renders = cursor.fetchone()[0]
-
-    # 2. Cache metrics
-    cursor.execute("SELECT SUM(hit_count) FROM tryon_cache")
-    cache_row = cursor.fetchone()
-    cache_hits = cache_row[0] if cache_row and cache_row[0] is not None else 0
+    # Lần dùng lại cache = tổng lượt hit (lần tạo đầu tiên không tính là tiết kiệm)
+    cache_hits = cursor.execute("SELECT COALESCE(SUM(hit_count), 0) FROM tryon_cache").fetchone()[0]
     cache_saved_usd = round(cache_hits * 0.05, 2)
 
-    # 3. User credits
-    cursor.execute("SELECT credits FROM users WHERE id = 'user_linh_chi'")
-    u_row = cursor.fetchone()
-    wallet_credits = u_row[0] if u_row else 4790
+    u_row = cursor.execute("SELECT credits FROM users WHERE id = ?", (user_id,)).fetchone()
+    wallet_credits = u_row[0] if u_row else 0
 
-    # 4. Recent jobs with real data
+    avg_row = cursor.execute('''
+    SELECT AVG((julianday(completed_at) - julianday(created_at)) * 86400)
+    FROM ai_jobs WHERE user_id = ? AND status = 'completed' AND completed_at IS NOT NULL
+    ''', (user_id,)).fetchone()
+    avg_render_time = f"{avg_row[0]:.1f}s" if avg_row and avg_row[0] is not None else None
+
     cursor.execute('''
-    SELECT j.id, COALESCE(p.title, 'Đầm Voan Tơ Hoa Nhí Cổ Vuông') as product,
-           'Linh Đan (1m68)' as model,
-           '5s / 60fps' as duration,
+    SELECT j.id, COALESCE(p.title, j.product_id) as product,
+           COALESCE(a.name, '') as model,
+           COALESCE(json_extract(j.params_json, '$.duration_sec') || 's', '') as duration,
            j.status,
            j.output_video_url,
            j.created_at
     FROM ai_jobs j
     LEFT JOIN products p ON j.product_id = p.id
+    LEFT JOIN brand_avatars a ON a.id = json_extract(j.params_json, '$.avatar_id')
+    WHERE j.user_id = ?
     ORDER BY j.created_at DESC
     LIMIT 10
-    ''')
+    ''', (user_id,))
     recent_jobs = [dict(r) for r in cursor.fetchall()]
 
-    # 5. Weekly counts grouped by date
+    # Số job theo từng ngày trong 7 ngày gần nhất (giờ UTC của SQLite)
     cursor.execute('''
-    SELECT strftime('%w', created_at) as day_of_week, COUNT(*) as count
-    FROM ai_jobs
-    GROUP BY day_of_week
-    ''')
-    day_counts = {str(r[0]): r[1] for r in cursor.fetchall()}
-
-    day_labels = [
-        {'day': 'CN', 'key': '0'},
-        {'day': 'Th 2', 'key': '1'},
-        {'day': 'Th 3', 'key': '2'},
-        {'day': 'Th 4', 'key': '3'},
-        {'day': 'Th 5', 'key': '4'},
-        {'day': 'Th 6', 'key': '5'},
-        {'day': 'Th 7', 'key': '6'}
-    ]
-    # Re-order Mon-Sun
-    ordered_days = [day_labels[1], day_labels[2], day_labels[3], day_labels[4], day_labels[5], day_labels[6], day_labels[0]]
-    max_count = max([day_counts.get(d['key'], 0) for d in ordered_days] + [1])
-    weekly_chart = [
-        {
-            'day': d['day'],
-            'count': day_counts.get(d['key'], 0),
-            'height': f"{max(15, min(100, int((day_counts.get(d['key'], 0) / max_count) * 90)))}%"
-        }
-        for d in ordered_days
-    ]
-
+    SELECT date(created_at) as d, COUNT(*) FROM ai_jobs
+    WHERE user_id = ? AND created_at >= date('now', '-6 days')
+    GROUP BY d
+    ''', (user_id,))
+    by_date = {r[0]: r[1] for r in cursor.fetchall()}
+    days = [r[0] for r in cursor.execute(
+        "SELECT date('now', printf('-%d days', 6 - value)) FROM json_each('[0,1,2,3,4,5,6]')").fetchall()]
     conn.close()
+
+    labels = ['CN', 'Th 2', 'Th 3', 'Th 4', 'Th 5', 'Th 6', 'Th 7']
+    import datetime as _dt
+    max_count = max([by_date.get(d, 0) for d in days] + [1])
+    weekly_chart = []
+    for d in days:
+        count = by_date.get(d, 0)
+        weekday = (_dt.date.fromisoformat(d).weekday() + 1) % 7  # Python: Thứ 2 = 0
+        weekly_chart.append({
+            'day': labels[weekday],
+            'date': d,
+            'count': count,
+            'height': f"{max(8, int(count / max_count * 90))}%",
+        })
 
     return {
         "total_renders": total_renders,
@@ -316,10 +437,12 @@ def get_dashboard_summary():
         "wallet_credits": wallet_credits,
         "recent_jobs": recent_jobs,
         "weekly_chart": weekly_chart,
-        "avg_render_time": "4.2s",
-        "conversion_rate": "18.6%"
+        "avg_render_time": avg_render_time,
+        # Chưa có dữ liệu đơn hàng để tính tỉ lệ chuyển đổi
+        "conversion_rate": None,
     }
+
 
 if __name__ == '__main__':
     init_db()
-    print("Database initialized successfully at", DB_PATH)
+    print("Database initialized successfully at", config.db_path())

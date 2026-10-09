@@ -1,380 +1,631 @@
+import io
+import json
+import logging
 import os
+import sqlite3
+import uuid
+from contextlib import asynccontextmanager
+from typing import List, Optional
+
 import uvicorn
-from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
-from fastapi.staticfiles import StaticFiles
+from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import Optional, List
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from PIL import Image, UnidentifiedImageError
+from pydantic import BaseModel, Field, HttpUrl
 
-from backend.database import (
-    init_db, get_db, get_system_settings, save_system_settings,
-    get_brand_avatars_list, add_brand_avatar_entry, set_default_brand_avatar,
-    get_dashboard_summary
-)
-from backend.ai.segmentation import segment_garment
-from backend.ai.vton import generate_tryon, AVATARS
-from backend.ai.motion import generate_motion
-from backend.ai.script import generate_koc_script
-from backend.ai.tts import generate_speech
+from backend import config
+from backend.ai import motion as motion_engine
+from backend.ai import script as script_engine
+from backend.ai import segmentation as seg_engine
+from backend.ai import tts as tts_engine
+from backend.ai import vton as vton_engine
+from backend.ai.motion import TEMPLATES, generate_motion
 from backend.ai.render import render_final_video
-from backend.services.wallet import generate_vietqr_deposit, verify_and_credit_transaction, deduct_credits
-from backend.services.queue_manager import create_ai_job, get_job_status
-from backend.services.scraper import scrape_product_url
-from backend.services.size_advisor import calculate_smart_size
+from backend.ai.script import STYLES, generate_koc_script
+from backend.ai.segmentation import segment_garment
+from backend.ai.tts import VOICES, generate_speech
+from backend.ai.vton import generate_tryon
+from backend.auth import get_current_user, require_admin_role, require_admin_token
+from backend.database import (
+    add_brand_avatar_entry, create_product, get_brand_avatar, get_brand_avatars_list,
+    get_dashboard_summary, get_db, get_product, get_system_settings, get_user, init_db, list_products,
+    public_user, save_system_settings, set_default_brand_avatar,
+)
+from backend.ffmpeg_utils import FFmpegError, ffmpeg_available
+from backend.media_paths import MediaPathError, media_path, media_url, resolve_media_ref, try_resolve_media_ref
 from backend.services.cache_manager import check_tryon_cache, save_tryon_cache
+from backend.services.queue_manager import (
+    InsufficientCredits, create_ai_job, create_ai_jobs, get_job_status, recover_stale_jobs,
+)
+from backend.services.scraper import scrape_product_url
 from backend.services.security import check_rate_limit
+from backend.services.size_advisor import calculate_smart_size
+from backend.services.wallet import (
+    WalletError, generate_vietqr_deposit, get_transaction, verify_and_credit_transaction,
+)
 
-# Initialize Database
-init_db()
+log = logging.getLogger("aura")
 
-app = FastAPI(title="Aura Fashion AI API", version="1.0.0")
 
-# Enable CORS
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    recovered = recover_stale_jobs()
+    if recovered:
+        log.warning("Đã hoàn credit cho %d job bị dở dang do server khởi động lại", recovered)
+    if config.allow_demo_user():
+        log.warning("ALLOW_DEMO_USER đang bật: request không có token được coi là user demo. KHÔNG dùng khi chạy thật.")
+    yield
+
+
+app = FastAPI(title="Aura Fashion AI API", version="1.1.0", lifespan=lifespan)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=config.cors_origins(),
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Authorization", "Content-Type", "X-Admin-Token"],
 )
 
-MEDIA_DIR = os.path.join(os.path.dirname(__file__), 'media')
-os.makedirs(MEDIA_DIR, exist_ok=True)
-app.mount("/media", StaticFiles(directory=MEDIA_DIR), name="media")
 
 # =============================================================================
-# RATE LIMIT MIDDLEWARE (Task 24)
+# RATE LIMIT (Task 24)
 # =============================================================================
 @app.middleware("http")
 async def rate_limit_middleware(request: Request, call_next):
-    client_ip = request.client.host if request.client else "127.0.0.1"
-    res = check_rate_limit(client_ip)
-    if not res["allowed"]:
-        raise HTTPException(status_code=429, detail=res["error"])
-    response = await call_next(request)
-    return response
+    path = request.url.path
+    # Không tính file tĩnh và việc hỏi tiến độ job (frontend hỏi liên tục)
+    exempt = (not path.startswith("/api/")) or (request.method == "GET" and path.startswith("/api/jobs/"))
+    if not exempt:
+        client_ip = request.client.host if request.client else "unknown"
+        res = check_rate_limit(client_ip, max_requests=config.rate_limit_per_minute())
+        if not res["allowed"]:
+            return JSONResponse(status_code=429, content={"detail": res["error"]},
+                                headers={"Retry-After": str(res["retry_after"])})
+    return await call_next(request)
+
+
+@app.exception_handler(MediaPathError)
+async def media_path_error_handler(request: Request, exc: MediaPathError):
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
+@app.exception_handler(FFmpegError)
+async def ffmpeg_error_handler(request: Request, exc: FFmpegError):
+    log.error("FFmpeg: %s", exc)
+    return JSONResponse(status_code=500, content={"detail": "Lỗi xử lý video trên máy chủ"})
+
+
+def _unique(prefix: str, ext: str) -> str:
+    return f"{prefix}_{uuid.uuid4().hex[:12]}.{ext}"
+
+
+def _owned_product(product_id: str, user: dict) -> dict:
+    product = get_product(product_id)
+    # Sản phẩm của người khác cũng trả 404 để không lộ việc nó tồn tại
+    if not product or (product["owner_id"] not in (None, user["id"]) and user["role"] != "admin"):
+        raise HTTPException(status_code=404, detail="Sản phẩm không tồn tại")
+    return product
+
 
 # =============================================================================
-# GIAI ĐOẠN 1: AI MEDIA PIPELINE ENDPOINTS (Tasks 1 - 6)
+# UPLOAD & SẢN PHẨM
+# =============================================================================
+@app.post("/api/uploads/image")
+async def api_upload_image(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+    """Upload ảnh sản phẩm. Ảnh được kiểm tra và lưu lại dưới dạng PNG/JPEG sạch (bỏ metadata)."""
+    limit = config.max_upload_bytes()
+    data = await file.read(limit + 1)
+    if len(data) > limit:
+        raise HTTPException(status_code=413, detail=f"Ảnh vượt quá {limit // (1024 * 1024)}MB")
+    try:
+        with Image.open(io.BytesIO(data)) as probe:
+            probe.verify()
+        img = Image.open(io.BytesIO(data))
+        if img.format not in ("JPEG", "PNG", "WEBP"):
+            raise HTTPException(status_code=415, detail="Chỉ hỗ trợ ảnh JPG, PNG, WEBP")
+        if img.width * img.height > 40_000_000:
+            raise HTTPException(status_code=413, detail="Ảnh có độ phân giải quá lớn")
+        img.load()
+    except (UnidentifiedImageError, OSError, Image.DecompressionBombError):
+        raise HTTPException(status_code=415, detail="File không phải ảnh hợp lệ")
+
+    has_alpha = img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info)
+    os.makedirs(media_path("uploads"), exist_ok=True)
+    if has_alpha:
+        name = os.path.join("uploads", _unique("img", "png"))
+        img.convert("RGBA").save(media_path(name), "PNG")
+    else:
+        name = os.path.join("uploads", _unique("img", "jpg"))
+        img.convert("RGB").save(media_path(name), "JPEG", quality=92)
+    return {"status": "success", "media_url": media_url(media_path(name)), "width": img.width, "height": img.height}
+
+
+class ProductCreateRequest(BaseModel):
+    title: str = Field(min_length=2, max_length=200)
+    price: int = Field(gt=0, le=1_000_000_000)
+    image_url: str = Field(description="Đường dẫn /media/... trả về từ /api/uploads/image")
+    original_price: Optional[int] = Field(default=None, gt=0, le=1_000_000_000)
+    category: Optional[str] = Field(default=None, max_length=100)
+    fabric_type: Optional[str] = Field(default=None, max_length=100)
+    affiliate_shopee_url: Optional[HttpUrl] = None
+    affiliate_tiktok_url: Optional[HttpUrl] = None
+
+
+@app.post("/api/products")
+def api_create_product(req: ProductCreateRequest, user: dict = Depends(get_current_user)):
+    image_path = resolve_media_ref(req.image_url)
+    return create_product(
+        owner_id=user["id"], title=req.title.strip(), price=req.price, image_url=media_url(image_path),
+        category=req.category, fabric_type=req.fabric_type, original_price=req.original_price,
+        affiliate_shopee_url=str(req.affiliate_shopee_url) if req.affiliate_shopee_url else None,
+        affiliate_tiktok_url=str(req.affiliate_tiktok_url) if req.affiliate_tiktok_url else None,
+    )
+
+
+@app.get("/api/products")
+def api_list_products(user: dict = Depends(get_current_user)):
+    return list_products(user["id"])
+
+
+@app.get("/api/products/{product_id}")
+def api_get_product(product_id: str, user: dict = Depends(get_current_user)):
+    return _owned_product(product_id, user)
+
+
+# =============================================================================
+# GIAI ĐOẠN 1: TỪNG BƯỚC AI RIÊNG LẺ (Tasks 1 - 6)
 # =============================================================================
 class SegmentRequest(BaseModel):
-    product_image_url: str
+    image_url: str = Field(description="Đường dẫn /media/... của ảnh đã upload")
+
 
 @app.post("/api/ai/segment")
-def api_segment(req: SegmentRequest):
-    """Task 1: AI Bóc Tách Trang Phục SAM 2"""
-    return segment_garment(req.product_image_url)
+def api_segment(req: SegmentRequest, user: dict = Depends(get_current_user)):
+    """Task 1: Tách nền trang phục"""
+    return segment_garment(resolve_media_ref(req.image_url), output_name=_unique("seg", "png"))
+
 
 class TryOnRequest(BaseModel):
-    garment_id: str
-    avatar_id: str = "linh_dan"
-    height: Optional[float] = 158.0
-    weight: Optional[float] = 51.0
+    product_id: str
+    avatar_id: str = "model_01"
+    body_shape: str = Field(default="standard", max_length=30)
+    height: float = Field(default=158.0, ge=120, le=220)
+    weight: float = Field(default=51.0, ge=30, le=200)
+
 
 @app.post("/api/ai/tryon")
-def api_tryon(req: TryOnRequest):
-    """Task 2 & Task 23: Thử Đồ Ảo VTON có tích hợp Cache tiết kiệm GPU"""
-    cache_check = check_tryon_cache(req.garment_id, req.avatar_id, req.height, req.weight)
-    if cache_check.get("cached"):
-        return {
-            "status": "success",
-            "cached": True,
-            "media_url": cache_check["result_image_url"],
-            "gpu_cost_saved": cache_check["gpu_cost_saved"]
-        }
+def api_tryon(req: TryOnRequest, user: dict = Depends(get_current_user)):
+    """Task 2 & 23: Thử đồ ảo có cache tiết kiệm GPU"""
+    product = _owned_product(req.product_id, user)
+    avatar = get_brand_avatar(req.avatar_id)
+    if avatar is None:
+        raise HTTPException(status_code=404, detail="Người mẫu không tồn tại")
 
-    res = generate_tryon(req.garment_id, req.avatar_id, {"height": req.height, "weight": req.weight})
-    save_tryon_cache(req.garment_id, req.avatar_id, req.height, req.weight, res["media_url"])
-    return res
+    cache = check_tryon_cache(req.product_id, req.avatar_id, req.body_shape, req.height, req.weight)
+    if cache["cached"]:
+        return {"status": "success", "cached": True, "media_url": cache["result_image_url"],
+                "gpu_cost_saved": cache["gpu_cost_saved"]}
+
+    seg = segment_garment(try_resolve_media_ref(product["image_url"]), output_name=_unique("seg", "png"))
+    res = generate_tryon(seg["output_path"], req.avatar_id, avatar, {"height": req.height, "weight": req.weight},
+                         output_name=_unique("tryon", "jpg"))
+    save_tryon_cache(req.product_id, req.avatar_id, req.body_shape, req.height, req.weight, res["media_url"])
+    return {**res, "cached": False}
+
 
 class MotionRequest(BaseModel):
     image_url: str
-    duration_sec: int = 5
+    duration_sec: int = Field(default=5, ge=1, le=30)
+    template: str = motion_engine.DEFAULT_TEMPLATE
+
 
 @app.post("/api/ai/motion")
-def api_motion(req: MotionRequest):
-    """Task 3: Sinh Chuyển Động Video Catwalk 9:16"""
-    return generate_motion(req.image_url, req.duration_sec)
+def api_motion(req: MotionRequest, user: dict = Depends(get_current_user)):
+    """Task 3: Sinh video dọc 9:16 theo mẫu chuyển động"""
+    if req.template not in TEMPLATES:
+        raise HTTPException(status_code=400, detail=f"Mẫu video phải là một trong: {', '.join(TEMPLATES)}")
+    return generate_motion(resolve_media_ref(req.image_url), req.duration_sec, req.template,
+                           output_name=_unique("motion", "mp4"))
 
-class ScriptRequest(BaseModel):
-    product_title: str
-    price: int
-    fabric: str = "Voan tơ 2 lớp"
-    style: str = "genz"
 
-@app.post("/api/ai/script")
-def api_script(req: ScriptRequest):
-    """Task 4: AI Soạn Kịch Bản Review KOC"""
-    return generate_koc_script(req.product_title, req.price, req.fabric, req.style)
-
-class TTSRequest(BaseModel):
-    text: str
-    voice: str = "mai_anh"
-
-@app.post("/api/ai/tts")
-def api_tts(req: TTSRequest):
-    """Task 5: Lồng Tiếng Việt Thật & Phụ Đề Nhảy Chữ"""
-    return generate_speech(req.text, req.voice)
-
-class RenderRequest(BaseModel):
-    video_path: str
-    audio_path: str
-
-@app.post("/api/ai/render")
-def api_render(req: RenderRequest):
-    """Task 6: Ghép Nén Video MP4 FFmpeg Hoàn Chỉnh"""
-    return render_final_video(req.video_path, req.audio_path)
-
-# =============================================================================
-# GIAI ĐOẠN 2: BACKEND, HÀNG ĐỢI & THANH TOÁN (Tasks 7 - 11)
-# =============================================================================
-@app.get("/api/user/profile")
-def api_get_profile(user_id: str = "user_linh_chi"):
-    """Task 7 & 19: Lấy thông tin tài khoản & Hồ sơ cơ thể"""
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM users WHERE id = ?", (user_id,))
-    row = cursor.fetchone()
-    conn.close()
-    if not row:
-        raise HTTPException(status_code=404, detail="User không tồn tại")
-    return dict(row)
-
-class PipelineRunRequest(BaseModel):
-    user_id: str = "user_linh_chi"
-    product_id: str = "prod_dam_voan_to"
-
-@app.post("/api/pipeline/run")
-def api_run_pipeline(req: PipelineRunRequest):
-    """Task 8: Đưa toàn bộ pipeline vào Hàng đợi xử lý bất đồng bộ"""
-    # Deduct credits first
-    deduct_res = deduct_credits(req.user_id, 30, "Chạy Pipeline tạo video thời trang AI")
-    if deduct_res["status"] == "error":
-        raise HTTPException(status_code=402, detail=deduct_res["message"])
-
-    job_id = create_ai_job(req.user_id, req.product_id)
+@app.get("/api/ai/templates")
+def api_templates():
+    """Danh sách mẫu video, giọng đọc và giọng văn hiện có"""
     return {
-        "status": "success",
-        "job_id": job_id,
-        "credits_deducted": 30,
-        "remaining_credits": deduct_res["remaining_credits"],
-        "message": "Đã tiếp nhận yêu cầu và đang render ngầm trong hàng đợi"
+        "templates": [{"id": k, "label": v["label"]} for k, v in TEMPLATES.items()],
+        "voices": [{"id": k, "label": v} for k, v in VOICES.items()],
+        "script_styles": list(STYLES),
     }
 
-@app.get("/api/jobs/{job_id}")
-def api_job_status(job_id: str):
-    """Task 8: Kiểm tra trạng thái và tiến độ % của job"""
-    return get_job_status(job_id)
 
-class DepositRequest(BaseModel):
-    user_id: str = "user_linh_chi"
-    amount_vnd: int = 200000
+class ScriptRequest(BaseModel):
+    product_title: str = Field(min_length=2, max_length=200)
+    price: int = Field(gt=0, le=1_000_000_000)
+    fabric: Optional[str] = Field(default=None, max_length=100)
+    category: Optional[str] = Field(default=None, max_length=100)
+    style: str = "genz"
 
-@app.post("/api/wallet/deposit")
-def api_deposit(req: DepositRequest):
-    """Task 9: Tạo mã VietQR nạp tiền tự động"""
-    return generate_vietqr_deposit(req.user_id, req.amount_vnd)
 
-@app.post("/api/wallet/verify")
-def api_verify_deposit(transaction_id: str):
-    """Task 9: Xác nhận nạp tiền và cộng credit"""
-    return verify_and_credit_transaction(transaction_id)
+@app.post("/api/ai/script")
+def api_script(req: ScriptRequest, user: dict = Depends(get_current_user)):
+    """Task 4: Soạn kịch bản review"""
+    return generate_koc_script(req.product_title, req.price, req.fabric, req.style, req.category)
 
-class ScrapeRequest(BaseModel):
-    url: str
 
-@app.post("/api/scraper/product")
-def api_scrape(req: ScrapeRequest):
-    """Task 11: Cào thông tin sản phẩm Shopee / TikTok Shop"""
-    return scrape_product_url(req.url)
+class TTSRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=2000)
+    voice: str = tts_engine.DEFAULT_VOICE
+
+
+@app.post("/api/ai/tts")
+def api_tts(req: TTSRequest, user: dict = Depends(get_current_user)):
+    """Task 5: Lồng tiếng tiếng Việt và phụ đề"""
+    return generate_speech(req.text, req.voice, output_name=_unique("tts", "mp3"))
+
+
+class RenderRequest(BaseModel):
+    video_url: str
+    audio_url: str
+
+
+@app.post("/api/ai/render")
+def api_render(req: RenderRequest, user: dict = Depends(get_current_user)):
+    """Task 6: Ghép video và âm thanh thành MP4"""
+    return render_final_video(resolve_media_ref(req.video_url), resolve_media_ref(req.audio_url),
+                              output_name=_unique("final", "mp4"))
+
 
 # =============================================================================
-# GIAI ĐOẠN 3: B2B CREATOR STUDIO & NODE CANVAS (Tasks 12 - 16)
+# GIAI ĐOẠN 2: TÀI KHOẢN, HÀNG ĐỢI & THANH TOÁN (Tasks 7 - 11)
+# =============================================================================
+@app.get("/api/user/profile")
+def api_get_profile(user: dict = Depends(get_current_user)):
+    """Task 7 & 19: Thông tin tài khoản & hồ sơ cơ thể của user đang đăng nhập"""
+    return public_user(user)
+
+
+class PipelineRunRequest(BaseModel):
+    product_id: str = "prod_dam_voan_to"
+    avatar_id: Optional[str] = None
+    template: str = motion_engine.DEFAULT_TEMPLATE
+    voice: str = tts_engine.DEFAULT_VOICE
+    script_style: str = "genz"
+    duration_sec: int = Field(default=5, ge=3, le=15)
+
+
+def _pipeline_params(req) -> dict:
+    if req.template not in TEMPLATES:
+        raise HTTPException(status_code=400, detail=f"Mẫu video phải là một trong: {', '.join(TEMPLATES)}")
+    if req.voice not in VOICES:
+        raise HTTPException(status_code=400, detail="Giọng đọc không hợp lệ")
+    if req.script_style not in STYLES:
+        raise HTTPException(status_code=400, detail="Giọng văn không hợp lệ")
+    avatar_id = req.avatar_id or get_system_settings().get("default_model_id") or "model_01"
+    if get_brand_avatar(avatar_id) is None:
+        raise HTTPException(status_code=404, detail="Người mẫu không tồn tại")
+    return {"avatar_id": avatar_id, "template": req.template, "voice": req.voice,
+            "script_style": req.script_style, "duration_sec": req.duration_sec}
+
+
+@app.post("/api/pipeline/run")
+def api_run_pipeline(req: PipelineRunRequest, user: dict = Depends(get_current_user)):
+    """Task 8: Trừ credit và đưa pipeline vào hàng đợi"""
+    _owned_product(req.product_id, user)
+    params = _pipeline_params(req)
+    try:
+        res = create_ai_job(user["id"], req.product_id, params)
+    except InsufficientCredits as e:
+        raise HTTPException(status_code=402, detail=str(e))
+    return {
+        "status": "success",
+        "job_id": res["job_id"],
+        "credits_deducted": res["credits_deducted"],
+        "remaining_credits": res["remaining_credits"],
+        "message": "Đã tiếp nhận yêu cầu và đang xử lý trong hàng đợi",
+    }
+
+
+@app.get("/api/jobs/{job_id}")
+def api_job_status(job_id: str, user: dict = Depends(get_current_user)):
+    """Task 8: Trạng thái và tiến độ % của job"""
+    job = get_job_status(job_id, user_id=None if user["role"] == "admin" else user["id"])
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job không tồn tại")
+    return job
+
+
+class DepositRequest(BaseModel):
+    amount_vnd: int
+
+
+@app.post("/api/wallet/deposit")
+def api_deposit(req: DepositRequest, user: dict = Depends(get_current_user)):
+    """Task 9: Tạo mã VietQR nạp tiền (giao dịch ở trạng thái chờ)"""
+    try:
+        return generate_vietqr_deposit(user["id"], req.amount_vnd)
+    except WalletError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/wallet/transactions/{transaction_id}")
+def api_transaction_status(transaction_id: str, user: dict = Depends(get_current_user)):
+    """Frontend hỏi định kỳ để biết tiền đã về chưa"""
+    tx = get_transaction(transaction_id, user_id=user["id"])
+    if tx is None:
+        raise HTTPException(status_code=404, detail="Giao dịch không tồn tại")
+    balance = get_user(user["id"])["credits"]
+    return {"transaction_id": tx["id"], "status": tx["status"], "amount_vnd": tx["amount_vnd"],
+            "credits": tx["amount_credits"], "balance": balance}
+
+
+class VerifyDepositRequest(BaseModel):
+    transaction_id: str
+
+
+@app.post("/api/admin/wallet/verify", dependencies=[Depends(require_admin_token)])
+def api_verify_deposit(req: VerifyDepositRequest):
+    """Task 9: Quản trị viên xác nhận đã nhận tiền (Đợt 3 thay bằng webhook ngân hàng)"""
+    res = verify_and_credit_transaction(req.transaction_id)
+    if res["status"] == "error":
+        raise HTTPException(status_code=404, detail=res["message"])
+    return res
+
+
+class ScrapeRequest(BaseModel):
+    url: HttpUrl
+
+
+@app.post("/api/scraper/product")
+def api_scrape(req: ScrapeRequest, user: dict = Depends(get_current_user)):
+    """Task 11: Nhận diện link Shopee / TikTok Shop (chưa cào dữ liệu thật)"""
+    return scrape_product_url(str(req.url))
+
+
+# =============================================================================
+# GIAI ĐOẠN 3: B2B CREATOR STUDIO (Tasks 12 - 16)
 # =============================================================================
 @app.get("/api/avatars")
 def api_get_avatars():
-    """Task 14: Quản lý kho Mẫu AI độc quyền"""
+    """Task 14: Kho người mẫu AI"""
     return get_brand_avatars_list()
 
+
 class AddAvatarRequest(BaseModel):
-    name: str
-    style: str
-    height: str
-    weight: str
-    measurements: str
-    avatar_url: str
-    badge: Optional[str] = "Tùy Chỉnh"
+    name: str = Field(min_length=1, max_length=80)
+    style: str = Field(min_length=1, max_length=120)
+    height: str = Field(max_length=20)
+    weight: str = Field(max_length=20)
+    measurements: str = Field(max_length=40)
+    avatar_url: HttpUrl
+    badge: Optional[str] = Field(default="Tùy Chỉnh", max_length=40)
+
 
 @app.post("/api/avatars")
-def api_add_avatar(req: AddAvatarRequest):
+def api_add_avatar(req: AddAvatarRequest, user: dict = Depends(require_admin_role)):
     return add_brand_avatar_entry(
-        name=req.name,
-        style=req.style,
-        height=req.height,
-        weight=req.weight,
-        measurements=req.measurements,
-        avatar_url=req.avatar_url,
-        badge=req.badge or "Tùy Chỉnh"
+        name=req.name, style=req.style, height=req.height, weight=req.weight,
+        measurements=req.measurements, avatar_url=str(req.avatar_url), badge=req.badge or "Tùy Chỉnh",
     )
+
 
 class SetDefaultAvatarRequest(BaseModel):
     avatar_id: str
 
+
 @app.post("/api/avatars/set-default")
-def api_set_default_avatar(req: SetDefaultAvatarRequest):
-    return set_default_brand_avatar(req.avatar_id)
+def api_set_default_avatar(req: SetDefaultAvatarRequest, user: dict = Depends(require_admin_role)):
+    res = set_default_brand_avatar(req.avatar_id)
+    if res is None:
+        raise HTTPException(status_code=404, detail="Người mẫu không tồn tại")
+    return res
+
 
 @app.get("/api/dashboard/stats")
-def api_dashboard_stats():
-    """Thống kê thực tế từ Database SQLite"""
-    return get_dashboard_summary()
+def api_dashboard_stats(user: dict = Depends(get_current_user)):
+    """Thống kê của user đang đăng nhập"""
+    return get_dashboard_summary(user["id"])
+
 
 @app.get("/api/settings")
-def api_get_settings():
-    """Lấy cấu hình thực tế từ Database"""
+def api_get_settings(user: dict = Depends(require_admin_role)):
+    """Cấu hình hệ thống (API key được che)"""
     return get_system_settings()
 
+
 @app.post("/api/settings")
-def api_save_settings(req: dict):
-    """Lưu cấu hình thực tế vào Database"""
+def api_save_settings(req: dict, user: dict = Depends(require_admin_role)):
     return save_system_settings(req)
 
+
 class BatchCreateRequest(BaseModel):
-    user_id: str
-    product_urls: List[str]
+    product_ids: List[str] = Field(min_length=1, max_length=50)
+    avatar_id: Optional[str] = None
+    template: str = motion_engine.DEFAULT_TEMPLATE
+    voice: str = tts_engine.DEFAULT_VOICE
+    script_style: str = "genz"
+    duration_sec: int = Field(default=5, ge=3, le=15)
+
 
 @app.post("/api/batch/create")
-def api_batch_create(req: BatchCreateRequest):
-    """Task 15: Tạo video hàng loạt"""
-    jobs = []
-    for url in req.product_urls:
-        jid = create_ai_job(req.user_id, url)
-        jobs.append(jid)
-    return {
-        "status": "success",
-        "total_jobs": len(jobs),
-        "job_ids": jobs
-    }
+def api_batch_create(req: BatchCreateRequest, user: dict = Depends(get_current_user)):
+    """Task 15: Tạo video hàng loạt (trừ credit cho từng video)"""
+    for pid in req.product_ids:
+        _owned_product(pid, user)
+    params = _pipeline_params(req)
+    try:
+        res = create_ai_jobs(user["id"], req.product_ids, params, config.pipeline_cost_credits())
+    except InsufficientCredits as e:
+        raise HTTPException(status_code=402, detail=str(e))
+    return {"status": "success", "total_jobs": len(res["job_ids"]), "job_ids": res["job_ids"],
+            "credits_deducted": res["credits_deducted"], "remaining_credits": res["remaining_credits"]}
+
 
 class ExportRequest(BaseModel):
-    video_url: str
-    title: str = "Đầm Voan Tơ Hoa Nhí"
+    job_id: str
+
 
 @app.post("/api/publisher/export")
-def api_export_publisher(req: ExportRequest):
-    """Task 16: Xuất video không watermark & danh sách hashtag SEO"""
+def api_export_publisher(req: ExportRequest, user: dict = Depends(get_current_user)):
+    """Task 16: Lấy link tải video và caption + hashtag để đăng"""
+    job = get_job_status(req.job_id, user_id=None if user["role"] == "admin" else user["id"])
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job không tồn tại")
+    if job["status"] != "completed":
+        raise HTTPException(status_code=409, detail="Video chưa tạo xong")
+    script = job["script"] or {}
     return {
         "status": "success",
-        "download_url": req.video_url,
-        "watermark_removed": True,
-        "seo_caption": f"Review {req.title} chuẩn dáng hè 2026! Bấm giỏ hàng góc trái săn deal hôm nay nhé cả nhà.",
-        "hashtags": ["#thoitrangnu", "#reviewquanao", "#damxinh", "#kocreview", "#tiktokshop"]
+        "download_url": job["output_video_url"],
+        "subtitles_vtt": script.get("subtitles_vtt"),
+        "seo_caption": script.get("full_script", ""),
+        "hashtags": script.get("hashtags", []),
+        "ai_generated_label": "Video có sử dụng hình ảnh minh họa do AI tạo",
     }
 
+
 # =============================================================================
-# GIAI ĐOẠN 4: C2C SHOPPER APP & THỬ ĐỒ ẢO (Tasks 17 - 22)
+# GIAI ĐOẠN 4: C2C SHOPPER APP (Tasks 17 - 22)
 # =============================================================================
 @app.get("/api/feed/videos")
 def api_feed_videos():
-    """Task 17: Trình phát video dọc mượt mà"""
-    return {
-        "status": "success",
-        "videos": [
-            {
-                "id": "vid_01",
-                "title": "Đầm Voan Tơ 2 Lớp Hoa Nhí",
-                "price": 189000,
-                "video_url": "/media/sample_final.mp4",
-                "subtitles_vtt": "/media/test_linh.vtt",
-                "shop_name": "Aura Lookbook",
-                "likes": 2400,
-                "comments": 186
-            }
-        ]
-    }
+    """Task 17: Feed video dọc từ các video đã tạo xong (kèm video mẫu nếu chưa có)"""
+    conn = get_db()
+    rows = conn.execute('''
+    SELECT j.id, j.output_video_url, j.script_json, p.title, p.price
+    FROM ai_jobs j JOIN products p ON p.id = j.product_id
+    WHERE j.status = 'completed' AND j.output_video_url IS NOT NULL
+    ORDER BY j.completed_at DESC LIMIT 20
+    ''').fetchall()
+    conn.close()
+    videos = []
+    for r in rows:
+        if not try_resolve_media_ref(r["output_video_url"]):
+            continue
+        script = json.loads(r["script_json"]) if r["script_json"] else {}
+        videos.append({"id": r["id"], "title": r["title"], "price": r["price"], "video_url": r["output_video_url"],
+                       "subtitles_vtt": script.get("subtitles_vtt"), "shop_name": "Aura Lookbook"})
+    if not videos:
+        videos.append({"id": "sample", "title": "Đầm Voan Tơ 2 Lớp Hoa Nhí", "price": 189000,
+                       "video_url": "/samples/sample_final.mp4", "subtitles_vtt": None, "shop_name": "Aura Lookbook"})
+    return {"status": "success", "videos": videos}
+
 
 @app.get("/api/products/{product_id}/hotspots")
 def api_product_hotspots(product_id: str):
-    """Task 18: Điểm ghim tương tác trên video"""
+    """Task 18: Điểm ghim trên video (đang dùng vị trí mặc định cho đầm, Đợt 2 sẽ tự nhận diện)"""
     return {
         "status": "success",
         "product_id": product_id,
         "hotspots": [
-            {
-                "id": "hp_collar",
-                "label": "Cổ Vuông Voan Tơ",
-                "x_percent": 48.0,
-                "y_percent": 37.0,
-                "detail": "Khoe xương quai xanh thanh lịch, may viền gân cao cấp."
-            },
-            {
-                "id": "hp_waist",
-                "label": "Chiết Eo Giấu Bụng Mỡ",
-                "x_percent": 45.0,
-                "y_percent": 53.0,
-                "detail": "Dây thắt nơ tự điều chỉnh theo eo từ 62cm đến 78cm."
-            }
-        ]
+            {"id": "hp_collar", "label": "Cổ áo", "x_percent": 48.0, "y_percent": 37.0,
+             "detail": "Chi tiết phần cổ áo"},
+            {"id": "hp_waist", "label": "Phần eo", "x_percent": 45.0, "y_percent": 53.0,
+             "detail": "Chi tiết phần eo"},
+        ],
     }
 
+
 class SizeAdvisorRequest(BaseModel):
-    height: float = 158.0
-    weight: float = 51.0
-    bust: float = 84.0
-    waist: float = 68.0
-    hips: float = 92.0
-    body_shape: str = "pear"
+    height: float = Field(default=158.0, ge=120, le=220)
+    weight: float = Field(default=51.0, ge=30, le=200)
+    bust: float = Field(default=84.0, ge=50, le=200)
+    waist: float = Field(default=68.0, ge=40, le=200)
+    hips: float = Field(default=92.0, ge=50, le=200)
+    body_shape: str = Field(default="pear", max_length=30)
+    product_id: Optional[str] = None
+
 
 @app.post("/api/size/recommend")
 def api_size_recommend(req: SizeAdvisorRequest):
-    """Task 22: Thuật toán tư vấn size & Mua 1 chạm"""
-    return calculate_smart_size(req.height, req.weight, req.bust, req.waist, req.hips, req.body_shape)
+    """Task 22: Tư vấn size"""
+    links = {}
+    product = get_product(req.product_id) if req.product_id else None
+    if product:
+        links = {k: v for k, v in (("shopee", product["affiliate_shopee_url"]),
+                                   ("tiktok", product["affiliate_tiktok_url"])) if v}
+    return calculate_smart_size(req.height, req.weight, req.bust, req.waist, req.hips, req.body_shape, links)
+
 
 # =============================================================================
-# GIAI ĐOẠN 5: SYSTEM HEALTH & 25-TASK COMPLIANCE AUDIT (Task 25)
+# KIỂM TRA SỨC KHỎE HỆ THỐNG (thay cho báo cáo "25 task PASSED" gõ cứng)
 # =============================================================================
+def _health_report() -> list:
+    checks = []
+
+    def add(name, status, module, note=""):
+        checks.append({"task": len(checks) + 1, "name": name, "status": status, "module": module, "note": note})
+
+    try:
+        get_db().execute("SELECT 1").fetchone()
+        add("Cơ sở dữ liệu", "PASSED", "database.py")
+    except sqlite3.Error as e:
+        add("Cơ sở dữ liệu", "FAILED", "database.py", str(e))
+    add("FFmpeg", "PASSED" if ffmpeg_available() else "FAILED", "ffmpeg_utils.py",
+        "" if ffmpeg_available() else "Chưa cài ffmpeg, không tạo được video")
+    try:
+        import edge_tts  # noqa: F401
+        add("Lồng tiếng edge-tts", "PASSED", "ai/tts.py", "Cần internet để gọi dịch vụ")
+    except ImportError:
+        add("Lồng tiếng edge-tts", "WARNING", "ai/tts.py", "Chưa cài edge-tts, sẽ dùng phương án dự phòng")
+    media_ok = os.access(config.media_dir(), os.W_OK)
+    add("Thư mục media", "PASSED" if media_ok else "FAILED", config.media_dir())
+    add("Tài khoản nhận tiền VietQR", "PASSED" if config.bank_account_no() else "WARNING", "services/wallet.py",
+        "" if config.bank_account_no() else "Chưa đặt VIETQR_ACCOUNT_NO")
+    for name, module, engine in (
+        ("Tách nền trang phục", "ai/segmentation.py", seg_engine.ENGINE),
+        ("Thử đồ ảo", "ai/vton.py", vton_engine.ENGINE),
+        ("Sinh chuyển động video", "ai/motion.py", motion_engine.ENGINE),
+        ("Viết kịch bản review", "ai/script.py", script_engine.ENGINE),
+    ):
+        real = not engine.startswith(("placeholder", "template"))
+        add(name, "PASSED" if real else "WARNING", module,
+            "" if real else f"Đang dùng engine tạm '{engine}', chưa nối AI thật")
+    return checks
+
+
+@app.get("/api/health")
+def api_health():
+    return {"status": "ok"}
+
+
 @app.get("/api/system/audit-25-tasks")
-def api_audit_all_tasks():
-    """Task 25: Báo cáo kiểm tra tự động toàn diện 25 Task"""
-    tasks_report = [
-        {"task": 1, "name": "Bóc Tách SAM 2", "status": "PASSED", "module": "ai/segmentation.py"},
-        {"task": 2, "name": "Lõi Thử Đồ VTON", "status": "PASSED", "module": "ai/vton.py"},
-        {"task": 3, "name": "Sinh Chuyển Động Catwalk", "status": "PASSED", "module": "ai/motion.py"},
-        {"task": 4, "name": "Soạn Kịch Bản KOC", "status": "PASSED", "module": "ai/script.py"},
-        {"task": 5, "name": "TTS Tiếng Việt & Subtitles", "status": "PASSED", "module": "ai/tts.py"},
-        {"task": 6, "name": "Render FFmpeg 60fps", "status": "PASSED", "module": "ai/render.py"},
-        {"task": 7, "name": "Database & Auth", "status": "PASSED", "module": "database.py"},
-        {"task": 8, "name": "Hàng Đợi Task Queue", "status": "PASSED", "module": "services/queue_manager.py"},
-        {"task": 9, "name": "Ví & VietQR Tự Động", "status": "PASSED", "module": "services/wallet.py"},
-        {"task": 10, "name": "Lưu Trữ & Media Streaming", "status": "PASSED", "module": "media/"},
-        {"task": 11, "name": "Cào Dữ Liệu Shopee/TikTok", "status": "PASSED", "module": "services/scraper.py"},
-        {"task": 12, "name": "Node Graph Canvas", "status": "PASSED", "module": "frontend/canvas"},
-        {"task": 13, "name": "Node Inspector Drawer", "status": "PASSED", "module": "frontend/inspector"},
-        {"task": 14, "name": "Kho Mẫu AI Độc Quyền", "status": "PASSED", "module": "ai/vton.py (AVATARS)"},
-        {"task": 15, "name": "Tạo Video Hàng Loạt", "status": "PASSED", "module": "api/batch/create"},
-        {"task": 16, "name": "Xuất Bản & SEO Hashtags", "status": "PASSED", "module": "api/publisher/export"},
-        {"task": 17, "name": "Feed Video Dọc 9:16", "status": "PASSED", "module": "api/feed/videos"},
-        {"task": 18, "name": "Hotspots Tương Tác", "status": "PASSED", "module": "api/products/hotspots"},
-        {"task": 19, "name": "Hồ Sơ Vóc Dáng Người Dùng", "status": "PASSED", "module": "api/user/profile"},
-        {"task": 20, "name": "Nút Thử Lên Tôi", "status": "PASSED", "module": "api/ai/tryon"},
-        {"task": 21, "name": "Thanh Trượt Before/After", "status": "PASSED", "module": "frontend/slider"},
-        {"task": 22, "name": "Tư Vấn Size & Checkout", "status": "PASSED", "module": "services/size_advisor.py"},
-        {"task": 23, "name": "Cache Tiết Kiệm GPU", "status": "PASSED", "module": "services/cache_manager.py"},
-        {"task": 24, "name": "Bảo Mật & Rate Limiter", "status": "PASSED", "module": "services/security.py"},
-        {"task": 25, "name": "Kiểm Thử Toàn Diện", "status": "PASSED", "module": "tests/test_all_25_tasks.py"}
-    ]
-
+def api_system_audit():
+    report = _health_report()
+    passed = sum(1 for r in report if r["status"] == "PASSED")
+    failed = any(r["status"] == "FAILED" for r in report)
     return {
-        "status": "ALL_SYSTEMS_OPERATIONAL",
-        "passed_tasks": 25,
-        "total_tasks": 25,
-        "accuracy_rate": "100%",
-        "report": tasks_report
+        "status": "DEGRADED" if failed else ("OK_WITH_WARNINGS" if passed < len(report) else "ALL_SYSTEMS_OPERATIONAL"),
+        "passed_tasks": passed,
+        "total_tasks": len(report),
+        "accuracy_rate": f"{round(passed * 100 / len(report))}%",
+        "report": report,
     }
 
-# Also mount the frontend static directory as root
-STATIC_DIR = os.path.dirname(os.path.dirname(__file__))
-app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
+
+# =============================================================================
+# FILE TĨNH: chỉ phục vụ đúng các file cần thiết, không mở cả thư mục repo
+# =============================================================================
+app.mount("/media", StaticFiles(directory=config.media_dir()), name="media")
+app.mount("/samples", StaticFiles(directory=config.SAMPLES_DIR), name="samples")
+
+_PUBLIC_FILES = {"index.html", "app.js", "styles.css"}
+
+
+@app.get("/", include_in_schema=False)
+def serve_index():
+    return FileResponse(os.path.join(config.REPO_DIR, "index.html"))
+
+
+@app.get("/{filename}", include_in_schema=False)
+def serve_public_file(filename: str):
+    if filename not in _PUBLIC_FILES:
+        raise HTTPException(status_code=404, detail="Not Found")
+    return FileResponse(os.path.join(config.REPO_DIR, filename))
+
 
 if __name__ == '__main__':
     uvicorn.run("backend.main:app", host="0.0.0.0", port=3456, reload=True)

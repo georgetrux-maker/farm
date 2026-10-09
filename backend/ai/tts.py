@@ -1,79 +1,142 @@
-import os
-import subprocess
 import asyncio
+import logging
+import os
+import shutil
+import subprocess
 
-MEDIA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'media')
-os.makedirs(MEDIA_DIR, exist_ok=True)
+from backend.ffmpeg_utils import probe_duration, run_ffmpeg
+from backend.media_paths import media_path, media_url
 
-def generate_speech(text: str, voice_key: str = "mai_anh", output_name: str = "review_voice.mp3") -> dict:
-    """
-    Task 5: Lồng Tiếng Việt Thật & Phụ Đề Nhảy Chữ (TTS & Subtitles Engine)
-    Hỗ trợ sinh audio tiếng Việt và tệp phụ đề WebVTT đồng bộ thời gian.
-    """
-    audio_path = os.path.join(MEDIA_DIR, output_name)
-    vtt_name = output_name.replace(".mp3", ".vtt")
-    vtt_path = os.path.join(MEDIA_DIR, vtt_name)
-    aiff_temp = os.path.join(MEDIA_DIR, f"temp_{output_name}.aiff")
+log = logging.getLogger(__name__)
 
-    # Try edge-tts first, fallback to native macOS Linh voice
-    success = False
+VOICES = {
+    "vi-VN-HoaiMyNeural": "Hoài My (nữ)",
+    "vi-VN-NamMinhNeural": "Nam Minh (nam)",
+}
+DEFAULT_VOICE = "vi-VN-HoaiMyNeural"
+# Tên cũ mà frontend/DB từng dùng
+_VOICE_ALIASES = {"mai_anh": DEFAULT_VOICE, "hoai_my": DEFAULT_VOICE, "nam_minh": "vi-VN-NamMinhNeural"}
+_TICKS_PER_SEC = 10_000_000  # edge-tts trả offset theo đơn vị 100 nano giây
+
+
+def resolve_voice(voice: str) -> str:
+    voice = _VOICE_ALIASES.get(voice, voice)
+    return voice if voice in VOICES else DEFAULT_VOICE
+
+
+def _fmt_ts(seconds: float) -> str:
+    ms = int(round(seconds * 1000))
+    h, ms = divmod(ms, 3_600_000)
+    m, ms = divmod(ms, 60_000)
+    s, ms = divmod(ms, 1000)
+    return f"{h:02d}:{m:02d}:{s:02d}.{ms:03d}"
+
+
+def build_vtt(cues: list) -> str:
+    """cues: [(start_sec, end_sec, text)] -> nội dung WebVTT hợp lệ."""
+    lines = ["WEBVTT", ""]
+    for i, (start, end, text) in enumerate(cues, 1):
+        lines += [str(i), f"{_fmt_ts(start)} --> {_fmt_ts(max(end, start + 0.05))}", text, ""]
+    return "\n".join(lines)
+
+
+def _estimate_cues(text: str, total_sec: float) -> list:
+    words = text.split()
+    if not words:
+        return []
+    step = total_sec / len(words)
+    return [(i * step, (i + 1) * step, w) for i, w in enumerate(words)]
+
+
+def _edge_tts(text: str, voice: str, audio_path: str) -> list:
+    import edge_tts
+
+    communicate = edge_tts.Communicate(text, voice, rate="+5%", boundary="WordBoundary")
+    cues = []
+
+    async def _run():
+        with open(audio_path, "wb") as f:
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    f.write(chunk["data"])
+                elif chunk["type"] == "WordBoundary":
+                    start = chunk["offset"] / _TICKS_PER_SEC
+                    cues.append((start, start + chunk["duration"] / _TICKS_PER_SEC, chunk["text"]))
+
+    asyncio.run(_run())
+    if os.path.getsize(audio_path) == 0:
+        raise RuntimeError("edge-tts không trả về âm thanh")
+    return cues
+
+
+def _local_tts(text: str, audio_path: str) -> str:
+    """Giọng đọc offline: macOS `say` hoặc espeak-ng trên Linux. Trả về tên engine."""
+    wav_tmp = audio_path + ".tmp.aiff"
     try:
-        import edge_tts
-        communicate = edge_tts.Communicate(text, "vi-VN-HoaiMyNeural", rate="+5%")
-        submaker = edge_tts.SubMaker()
+        if shutil.which("say"):
+            subprocess.run(["say", "-v", "Linh", "-o", wav_tmp, text], check=True, timeout=120)
+            engine = "macos-say"
+        elif shutil.which("espeak-ng"):
+            wav_tmp = audio_path + ".tmp.wav"
+            subprocess.run(["espeak-ng", "-v", "vi", "-w", wav_tmp, text], check=True, timeout=120)
+            engine = "espeak-ng"
+        else:
+            raise RuntimeError("Không có engine đọc offline")
+        run_ffmpeg(["-i", wav_tmp, "-b:a", "192k", audio_path])
+        return engine
+    finally:
+        if os.path.exists(wav_tmp):
+            os.remove(wav_tmp)
 
-        async def _run_edge():
-            with open(audio_path, "wb") as f:
-                async for chunk in communicate.stream():
-                    if chunk["type"] == "audio":
-                        f.write(chunk["data"])
-                    elif chunk["type"] == "WordBoundary":
-                        submaker.feed(chunk)
-            with open(vtt_path, "w", encoding="utf-8") as f:
-                f.write(submaker.get_vtt())
 
-        asyncio.run(_run_edge())
-        if os.path.exists(audio_path) and os.path.getsize(audio_path) > 0:
-            success = True
-    except Exception as e:
-        success = False
+def _silent_audio(text: str, audio_path: str) -> None:
+    seconds = max(3.0, len(text.split()) * 0.35)
+    run_ffmpeg(["-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", "-t", f"{seconds:.2f}", "-b:a", "128k", audio_path])
 
-    # Native macOS high-fidelity fallback if edge_tts is blocked
-    if not success:
-        # Use macOS Linh voice
-        cmd_say = ["say", "-v", "Linh", "-o", aiff_temp, text]
-        subprocess.run(cmd_say, check=True)
-        # Convert to MP3 using ffmpeg
-        cmd_ffmpeg = ["ffmpeg", "-y", "-i", aiff_temp, "-b:a", "192k", audio_path]
-        subprocess.run(cmd_ffmpeg, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-        if os.path.exists(aiff_temp):
-            os.remove(aiff_temp)
 
-        # Generate synced WebVTT subtitles
-        words = text.split()
-        total_duration = max(3.0, len(words) * 0.35)
-        step = total_duration / len(words)
-        
-        with open(vtt_path, "w", encoding="utf-8") as f:
-            f.write("WEBVTT\n\n")
-            for i, word in enumerate(words):
-                start_sec = i * step
-                end_sec = (i + 1) * step
-                start_str = f"00:00:{start_sec:06.3f}".replace(".", ",")
-                end_str = f"00:00:{end_sec:06.3f}".replace(".", ",")
-                f.write(f"{i+1}\n{start_str} --> {end_str}\n{word}\n\n")
+def generate_speech(text: str, voice_key: str = DEFAULT_VOICE, output_name: str = "review_voice.mp3") -> dict:
+    """
+    Task 5: Lồng tiếng tiếng Việt và tạo phụ đề WebVTT đồng bộ.
+    Thứ tự thử: edge-tts (cần internet) -> giọng offline -> âm thanh im lặng kèm phụ đề,
+    để pipeline không bao giờ chết chỉ vì TTS. Kết quả cho biết engine nào đã được dùng.
+    """
+    text = (text or "").strip()
+    if not text:
+        raise ValueError("Nội dung lồng tiếng trống")
+    voice = resolve_voice(voice_key)
+    audio_path = media_path(output_name)
+    vtt_path = os.path.splitext(audio_path)[0] + ".vtt"
+    warning = None
+
+    try:
+        cues = _edge_tts(text, voice, audio_path)
+        engine = "edge-tts"
+    except Exception as e:  # mạng bị chặn, dịch vụ đổi API...
+        log.warning("edge-tts lỗi, chuyển sang phương án dự phòng: %s", e)
+        cues = None
+        try:
+            engine = _local_tts(text, audio_path)
+            warning = "Không kết nối được edge-tts, đã dùng giọng đọc offline"
+        except Exception as e2:
+            log.warning("TTS offline lỗi: %s", e2)
+            _silent_audio(text, audio_path)
+            engine = "silent"
+            warning = "Không có dịch vụ lồng tiếng khả dụng, video chỉ có phụ đề"
+
+    if not cues:
+        cues = _estimate_cues(text, probe_duration(audio_path) or len(text.split()) * 0.35)
+    with open(vtt_path, "w", encoding="utf-8") as f:
+        f.write(build_vtt(cues))
 
     return {
         "status": "success",
+        "engine": engine,
+        "warning": warning,
         "audio_path": audio_path,
-        "audio_url": f"/media/{output_name}",
+        "audio_url": media_url(audio_path),
         "vtt_path": vtt_path,
-        "vtt_url": f"/media/{vtt_name}",
-        "voice_used": "Linh (vi_VN Neural / Native)",
+        "vtt_url": media_url(vtt_path),
+        "voice_used": VOICES[voice] if engine == "edge-tts" else engine,
         "file_size_bytes": os.path.getsize(audio_path),
-        "text_length": len(text)
+        "text_length": len(text),
     }
-
-if __name__ == "__main__":
-    res = generate_speech("Chất voan tơ 2 lớp này hack dáng cực đỉnh luôn mọi người ơi.")
-    print("TTS Success:", res)

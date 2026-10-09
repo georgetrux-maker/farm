@@ -25,10 +25,18 @@ export const AuditModal: React.FC<AuditModalProps> = ({ isOpen, onClose }) => {
   }
 
   useEffect(() => {
-    if (isOpen) {
-      loadAudit()
-    }
+    if (!isOpen) return
+    const id = setTimeout(loadAudit, 0)
+    return () => clearTimeout(id)
   }, [isOpen])
+
+  const percent = auditData ? Math.round((auditData.passed_tasks * 100) / Math.max(1, auditData.total_tasks)) : null
+  const statusStyle = (status: string) =>
+    status === 'PASSED'
+      ? 'bg-[#00F5A0]/10 text-[#00F5A0] border-[#00F5A0]/20'
+      : status === 'WARNING'
+        ? 'bg-amber-400/10 text-amber-400 border-amber-400/20'
+        : 'bg-red-500/10 text-red-400 border-red-500/20'
 
   if (!isOpen) return null
 
@@ -43,12 +51,14 @@ export const AuditModal: React.FC<AuditModalProps> = ({ isOpen, onClose }) => {
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="font-display font-bold text-base text-[var(--text-main)]">Báo Cáo Kiểm Thử 25 Task</h3>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[var(--accent-color)]/10 text-[var(--accent-color)] border border-[var(--accent-color)]/30 font-semibold">
-                  100% PASSED
-                </span>
+                <h3 className="font-display font-bold text-base text-[var(--text-main)]">Kiểm Tra Hệ Thống</h3>
+                {percent !== null && (
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[var(--accent-color)]/10 text-[var(--accent-color)] border border-[var(--accent-color)]/30 font-semibold">
+                    {auditData?.passed_tasks}/{auditData?.total_tasks} ĐẠT
+                  </span>
+                )}
               </div>
-              <p className="text-xs text-[var(--text-muted)]">Dữ liệu kiểm thử hệ thống thật từ máy chủ FastAPI</p>
+              <p className="text-xs text-[var(--text-muted)]">Kiểm tra trực tiếp trên máy chủ: cơ sở dữ liệu, FFmpeg, lồng tiếng và các engine AI</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -87,11 +97,12 @@ export const AuditModal: React.FC<AuditModalProps> = ({ isOpen, onClose }) => {
                       <Terminal className="w-2.5 h-2.5 text-zinc-500" />
                       {task.module}
                     </span>
+                    {task.note && <span className="text-[10px] text-zinc-400 block mt-0.5">{task.note}</span>}
                   </div>
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <span className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#00F5A0]/10 text-[#00F5A0] font-mono text-[10px] font-semibold border border-[#00F5A0]/20">
+                  <span className={`flex items-center gap-1 px-2.5 py-1 rounded-lg font-mono text-[10px] font-semibold border ${statusStyle(task.status)}`}>
                     <CheckCircle2 className="w-3 h-3" />
                     {task.status}
                   </span>
@@ -100,7 +111,7 @@ export const AuditModal: React.FC<AuditModalProps> = ({ isOpen, onClose }) => {
             ))
           ) : (
             <div className="flex items-center justify-center py-12 text-zinc-500 font-mono text-xs">
-              Đang tải kết quả kiểm tra 25 task...
+              Đang kiểm tra hệ thống...
             </div>
           )}
         </div>
@@ -109,11 +120,13 @@ export const AuditModal: React.FC<AuditModalProps> = ({ isOpen, onClose }) => {
         <div className="h-14 px-6 border-t border-white/[0.08] bg-[#0A0B10]/60 flex items-center justify-between text-xs font-mono">
           <span className="text-zinc-400">
             Trạng thái:{' '}
-            <strong className="text-[#00F5A0]">{auditData?.status || 'ALL_SYSTEMS_OPERATIONAL'}</strong>
+            <strong className="text-[#00F5A0]">{auditData?.status ?? '...'}</strong>
           </span>
           <span className="text-zinc-400">
             Tỷ lệ đạt:{' '}
-            <strong className="text-white">{auditData?.passed_tasks || 25}/{auditData?.total_tasks || 25} (100%)</strong>
+            <strong className="text-white">
+              {auditData ? `${auditData.passed_tasks}/${auditData.total_tasks} (${percent}%)` : '...'}
+            </strong>
           </span>
         </div>
       </div>

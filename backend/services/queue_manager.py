@@ -1,94 +1,164 @@
+import json
+import logging
 import uuid
-import threading
-import time
-from backend.database import get_db
-from backend.ai.segmentation import segment_garment
-from backend.ai.vton import generate_tryon
-from backend.ai.motion import generate_motion
-from backend.ai.script import generate_koc_script
-from backend.ai.tts import generate_speech
+from concurrent.futures import ThreadPoolExecutor
+
+from backend import config
+from backend.ai.motion import DEFAULT_TEMPLATE, generate_motion
 from backend.ai.render import render_final_video
+from backend.ai.script import generate_koc_script
+from backend.ai.segmentation import segment_garment
+from backend.ai.tts import DEFAULT_VOICE, generate_speech
+from backend.ai.vton import generate_tryon
+from backend.database import get_brand_avatar, get_db, get_product
+from backend.media_paths import try_resolve_media_ref
+from backend.services.wallet import deduct_credits, refund_credits
 
-def create_ai_job(user_id: str, product_id: str, job_type: str = "full_pipeline") -> str:
-    """Tạo mới một job trong hàng đợi"""
-    job_id = f"JOB_{uuid.uuid4().hex[:10]}"
+log = logging.getLogger(__name__)
+
+_executor = None
+
+
+def _get_executor() -> ThreadPoolExecutor:
+    global _executor
+    if _executor is None:
+        _executor = ThreadPoolExecutor(max_workers=config.max_workers(), thread_name_prefix="aura-job")
+    return _executor
+
+
+class InsufficientCredits(Exception):
+    pass
+
+
+def create_ai_jobs(user_id: str, product_ids: list, params: dict, cost_per_job: int) -> dict:
+    """Trừ credit và tạo job trong cùng một transaction (đủ tiền cho tất cả thì mới tạo)."""
+    total = cost_per_job * len(product_ids)
+    job_ids = [f"JOB_{uuid.uuid4().hex[:10]}" for _ in product_ids]
     conn = get_db()
-    cursor = conn.cursor()
-
-    cursor.execute('''
-    INSERT INTO ai_jobs (id, user_id, product_id, job_type, status, progress, current_step)
-    VALUES (?, ?, ?, ?, 'queued', 0, 'Đang chờ xử lý trong hàng đợi')
-    ''', (job_id, user_id, product_id, job_type))
-
-    conn.commit()
-    conn.close()
-
-    # Trigger background worker thread
-    thread = threading.Thread(target=_process_job_worker, args=(job_id, user_id, product_id))
-    thread.daemon = True
-    thread.start()
-
-    return job_id
-
-def _update_job(job_id: str, status: str, progress: int, step: str, output_video: str = None, output_image: str = None):
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute('''
-    UPDATE ai_jobs
-    SET status = ?, progress = ?, current_step = ?, output_video_url = COALESCE(?, output_video_url), output_image_url = COALESCE(?, output_image_url)
-    WHERE id = ?
-    ''', (status, progress, step, output_video, output_image, job_id))
-    conn.commit()
-    conn.close()
-
-def _process_job_worker(job_id: str, user_id: str, product_id: str):
-    """Worker xử lý ngầm tuần tự 6 bước của pipeline AI"""
     try:
-        # Step 1: Segmentation
-        _update_job(job_id, 'processing', 15, 'Bước 1/6: Bóc tách lớp trang phục SAM 2')
-        seg_res = segment_garment(product_id, output_name=f"seg_{job_id}.png")
-        time.sleep(0.5)
-
-        # Step 2: Try-On
-        _update_job(job_id, 'processing', 35, 'Bước 2/6: VTON ghép trang phục lên người mẫu AI', output_image=f"/media/tryon_{job_id}.jpg")
-        tryon_res = generate_tryon(product_id, avatar_id="linh_dan", output_name=f"tryon_{job_id}.jpg")
-        time.sleep(0.5)
-
-        # Step 3: Motion
-        _update_job(job_id, 'processing', 55, 'Bước 3/6: Kling I2V sinh chuyển động catwalk 9:16')
-        motion_res = generate_motion(tryon_res["output_path"], duration_sec=5, output_name=f"motion_{job_id}.mp4")
-        time.sleep(0.5)
-
-        # Step 4 & 5: Script & TTS
-        _update_job(job_id, 'processing', 75, 'Bước 4/6: Lồng tiếng review KOC tiếng Việt và phụ đề')
-        script_res = generate_koc_script("Đầm Voan Tơ Hoa Nhí", 189000, style="genz")
-        tts_res = generate_speech(script_res["hook_3s"] + " " + script_res["body_text"], output_name=f"tts_{job_id}.mp3")
-        time.sleep(0.5)
-
-        # Step 6: Render Final Video
-        _update_job(job_id, 'processing', 90, 'Bước 5/6: Render ghép video, audio và nén bit-rate')
-        final_res = render_final_video(motion_res["video_path"], tts_res["audio_path"], output_name=f"final_{job_id}.mp4")
-
-        # Completed
-        _update_job(job_id, 'completed', 100, 'Bước 6/6: Hoàn tất video tương tác sẵn sàng xuất bản',
-                    output_video=final_res["video_url"], output_image=tryon_res["media_url"])
-
-    except Exception as e:
-        conn = get_db()
-        cursor = conn.cursor()
-        cursor.execute("UPDATE ai_jobs SET status = 'failed', error_message = ? WHERE id = ?", (str(e), job_id))
+        conn.execute("BEGIN IMMEDIATE")
+        res = deduct_credits(user_id, total, f"Tạo {len(product_ids)} video thời trang AI", conn=conn)
+        if res["status"] != "success":
+            conn.rollback()
+            raise InsufficientCredits(res["message"])
+        for job_id, product_id in zip(job_ids, product_ids):
+            conn.execute('''
+            INSERT INTO ai_jobs (id, user_id, product_id, job_type, status, progress, current_step, params_json, cost_credits)
+            VALUES (?, ?, ?, 'full_pipeline', 'queued', 0, 'Đang chờ xử lý trong hàng đợi', ?, ?)
+            ''', (job_id, user_id, product_id, json.dumps(params, ensure_ascii=False), cost_per_job))
         conn.commit()
+    finally:
         conn.close()
 
-def get_job_status(job_id: str) -> dict:
+    for job_id in job_ids:
+        _get_executor().submit(_process_job_worker, job_id)
+    return {"job_ids": job_ids, "remaining_credits": res["remaining_credits"], "credits_deducted": total}
+
+
+def create_ai_job(user_id: str, product_id: str, params: dict = None, cost: int = None) -> dict:
+    cost = config.pipeline_cost_credits() if cost is None else cost
+    res = create_ai_jobs(user_id, [product_id], params or {}, cost)
+    return {"job_id": res["job_ids"][0], "remaining_credits": res["remaining_credits"], "credits_deducted": cost}
+
+
+def _update_job(job_id: str, status: str, progress: int, step: str, **outputs):
     conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM ai_jobs WHERE id = ?", (job_id,))
-    row = cursor.fetchone()
+    conn.execute('''
+    UPDATE ai_jobs
+    SET status = ?, progress = ?, current_step = ?,
+        output_video_url = COALESCE(?, output_video_url),
+        output_image_url = COALESCE(?, output_image_url),
+        output_audio_url = COALESCE(?, output_audio_url),
+        script_json = COALESCE(?, script_json),
+        completed_at = CASE WHEN ? = 'completed' THEN CURRENT_TIMESTAMP ELSE completed_at END
+    WHERE id = ?
+    ''', (status, progress, step, outputs.get("video"), outputs.get("image"), outputs.get("audio"),
+          outputs.get("script"), status, job_id))
+    conn.commit()
     conn.close()
 
-    if not row:
-        return {"status": "error", "message": "Job không tồn tại"}
+
+def fail_job(job_id: str, message: str):
+    """Đánh dấu job thất bại và hoàn credit đúng một lần."""
+    conn = get_db()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT user_id, cost_credits, refunded FROM ai_jobs WHERE id = ?", (job_id,)).fetchone()
+        if row is None:
+            conn.rollback()
+            return
+        conn.execute("UPDATE ai_jobs SET status = 'failed', error_message = ?, current_step = 'Thất bại' WHERE id = ?",
+                     (message[:1000], job_id))
+        if row["cost_credits"] and not row["refunded"]:
+            refund_credits(row["user_id"], row["cost_credits"], f"Hoàn credit job lỗi {job_id}", conn)
+            conn.execute("UPDATE ai_jobs SET refunded = 1 WHERE id = ?", (job_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _process_job_worker(job_id: str):
+    """Worker xử lý tuần tự các bước của pipeline AI."""
+    try:
+        conn = get_db()
+        job = dict(conn.execute("SELECT * FROM ai_jobs WHERE id = ?", (job_id,)).fetchone())
+        conn.close()
+        params = json.loads(job["params_json"] or "{}")
+        product = get_product(job["product_id"])
+        if product is None:
+            raise ValueError(f"Sản phẩm {job['product_id']} không tồn tại")
+        avatar_id = params.get("avatar_id") or "model_01"
+        template = params.get("template") or DEFAULT_TEMPLATE
+
+        _update_job(job_id, 'processing', 10, 'Bước 1/5: Tách nền trang phục')
+        seg = segment_garment(try_resolve_media_ref(product["image_url"]), output_name=f"seg_{job_id}.png")
+
+        _update_job(job_id, 'processing', 30, 'Bước 2/5: Ghép trang phục lên người mẫu')
+        tryon = generate_tryon(seg["output_path"], avatar_id=avatar_id, avatar_row=get_brand_avatar(avatar_id),
+                               output_name=f"tryon_{job_id}.jpg")
+        _update_job(job_id, 'processing', 45, 'Bước 3/5: Tạo chuyển động video 9:16', image=tryon["media_url"])
+        motion = generate_motion(tryon["output_path"], duration_sec=int(params.get("duration_sec") or 5),
+                                 template=template, output_name=f"motion_{job_id}.mp4")
+
+        _update_job(job_id, 'processing', 65, 'Bước 4/5: Viết kịch bản và lồng tiếng')
+        script = generate_koc_script(product["title"], product["price"], product.get("fabric_type"),
+                                     style=params.get("script_style") or "genz", category=product.get("category"))
+        tts = generate_speech(script["full_script"], params.get("voice") or DEFAULT_VOICE,
+                              output_name=f"tts_{job_id}.mp3")
+        script["tts_engine"] = tts["engine"]
+        script["tts_warning"] = tts["warning"]
+        script["subtitles_vtt"] = tts["vtt_url"]
+
+        _update_job(job_id, 'processing', 85, 'Bước 5/5: Ghép video và âm thanh', audio=tts["audio_url"],
+                    script=json.dumps(script, ensure_ascii=False))
+        final = render_final_video(motion["video_path"], tts["audio_path"], output_name=f"final_{job_id}.mp4")
+
+        conn = get_db()
+        conn.execute("UPDATE brand_avatars SET renders_count = renders_count + 1 WHERE id = ?", (avatar_id,))
+        conn.commit()
+        conn.close()
+        _update_job(job_id, 'completed', 100, 'Hoàn tất, video sẵn sàng xuất bản', video=final["video_url"])
+    except Exception as e:
+        log.exception("Job %s thất bại", job_id)
+        fail_job(job_id, str(e) or e.__class__.__name__)
+
+
+def recover_stale_jobs() -> int:
+    """Khi server khởi động lại, job đang dở sẽ không bao giờ chạy tiếp: đánh dấu lỗi và hoàn credit."""
+    conn = get_db()
+    ids = [r[0] for r in conn.execute("SELECT id FROM ai_jobs WHERE status IN ('queued', 'processing')")]
+    conn.close()
+    for job_id in ids:
+        fail_job(job_id, "Máy chủ khởi động lại khi job đang chạy, credit đã được hoàn lại")
+    return len(ids)
+
+
+def get_job_status(job_id: str, user_id: str = None):
+    conn = get_db()
+    row = conn.execute("SELECT * FROM ai_jobs WHERE id = ?", (job_id,)).fetchone()
+    conn.close()
+    if not row or (user_id is not None and row["user_id"] != user_id):
+        return None
 
     return {
         "job_id": row["id"],
@@ -99,5 +169,11 @@ def get_job_status(job_id: str) -> dict:
         "current_step": row["current_step"],
         "output_video_url": row["output_video_url"],
         "output_image_url": row["output_image_url"],
-        "created_at": row["created_at"]
+        "output_audio_url": row["output_audio_url"],
+        "error_message": row["error_message"],
+        "refunded": bool(row["refunded"]),
+        "params": json.loads(row["params_json"] or "{}"),
+        "script": json.loads(row["script_json"]) if row["script_json"] else None,
+        "created_at": row["created_at"],
+        "completed_at": row["completed_at"],
     }
