@@ -1,0 +1,181 @@
+/* ==========================================================================
+   AURA FASHION AI - DESIGN SYSTEM STYLING
+   Aesthetic: Cold Luxury / Minimalist Fashion Tech (taste-skill compliant)
+   ========================================================================== */
+
+:root {
+  --color-graphite: #0A0B10;
+  --color-panel: #12141D;
+  --color-surface: #1A1D29;
+  --color-accent: #00F5A0;
+  --color-accent-hover: #00D68B;
+  --color-pearl: #F8FAFC;
+  --color-muted: #8E95A5;
+
+  --font-sans: 'Plus Jakarta Sans', -apple-system, sans-serif;
+  --font-display: 'Syne', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+
+  --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background-color: var(--color-graphite);
+  color: var(--color-pearl);
+  font-family: var(--font-sans);
+  overflow: hidden;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ==========================================================================
+   VIEW PANES & TAB SWITCHING
+   ========================================================================== */
+.view-pane {
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.99);
+  transition: opacity 0.3s var(--ease-spring), transform 0.3s var(--ease-spring);
+}
+
+.view-pane.active {
+  opacity: 1;
+  pointer-events: auto;
+  transform: scale(1);
+}
+
+.view-tab {
+  transition: all 0.2s var(--ease-spring);
+}
+
+.view-tab.active {
+  background: rgba(255, 255, 255, 0.12);
+  color: #FFFFFF !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+/* ==========================================================================
+   RUNWAY VIDEO PLAYER
+   ========================================================================== */
+.video-zoom-pan {
+  animation: catwalk-pan 12s ease-in-out infinite alternate;
+  transform-origin: center 25%;
+}
+
+@keyframes catwalk-pan {
+  0% { transform: scale(1) translateY(0); }
+  50% { transform: scale(1.05) translateY(-1.5%); }
+  100% { transform: scale(1.02) translateY(1%); }
+}
+
+.hotspot-pin {
+  transition: transform 0.2s var(--ease-spring);
+}
+.hotspot-pin:hover {
+  transform: translate(-50%, -50%) scale(1.15);
+}
+
+/* ==========================================================================
+   VIRTUAL FITTING ROOM MODAL & SLIDER
+   ========================================================================== */
+#modal-fitting-room.open {
+  transform: translateY(0);
+}
+
+#drawer-buy-sheet.open {
+  transform: translateY(0);
+}
+
+.profile-tab.active {
+  background: rgba(0, 245, 160, 0.1) !important;
+  border-color: var(--color-accent) !important;
+}
+
+#interactive-divider {
+  touch-action: none;
+}
+
+/* ==========================================================================
+   WORKFLOW NODES ARCHITECTURE
+   ========================================================================== */
+.workflow-node {
+  border-radius: 1.25rem;
+  background: rgba(255, 255, 255, 0.04);
+  box-shadow: 0 10px 25px -10px rgba(0, 0, 0, 0.7);
+  transition: transform 0.2s var(--ease-spring), box-shadow 0.2s ease;
+  user-select: none;
+}
+
+.workflow-node:hover {
+  transform: translateY(-2px);
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: 0 15px 35px -10px rgba(0, 0, 0, 0.8), 0 0 20px rgba(0, 245, 160, 0.15);
+}
+
+.workflow-node.active-pulse {
+  background: rgba(0, 245, 160, 0.3);
+  box-shadow: 0 0 30px rgba(0, 245, 160, 0.35);
+  animation: pulse-node 1.2s infinite alternate;
+}
+
+@keyframes pulse-node {
+  0% { transform: scale(1); }
+  100% { transform: scale(1.02); }
+}
+
+.node-inner {
+  border-radius: 1.25rem;
+}
+
+.node-port {
+  box-shadow: 0 0 8px rgba(0, 0, 0, 0.6);
+  transition: transform 0.2s ease;
+}
+
+.node-port:hover {
+  transform: translateY(-50%) scale(1.25);
+}
+
+/* SVG Wires */
+.wire-path {
+  transition: stroke 0.3s ease, stroke-width 0.3s ease;
+}
+
+.wire-path.active {
+  stroke: var(--color-accent) !important;
+  stroke-width: 3px !important;
+  stroke-dasharray: 8, 8;
+  animation: dash-travel 0.75s linear infinite;
+  filter: drop-shadow(0 0 6px var(--color-accent));
+}
+
+@keyframes dash-travel {
+  from { stroke-dashoffset: 32; }
+  to { stroke-dashoffset: 0; }
+}
+
+#wf-inspector-sidebar.open {
+  transform: translateX(0);
+}
+
+/* Scrollbars */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
