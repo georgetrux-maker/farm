@@ -6,6 +6,7 @@ import { formatDateTime, formatNumber, formatVnd } from '../../lib/format'
 import type { View } from '../../lib/navigation'
 import { ColumnChart, type ColumnPoint } from '../ui/ColumnChart'
 import { HangerArt } from '../ui/GarmentArt'
+import { StatStrip } from '../ui/StatStrip'
 import { StatusBadge } from '../ui/StatusBadge'
 
 interface HomeViewProps {
@@ -39,26 +40,6 @@ function weeklyPoints(stats: DashboardStats): ColumnPoint[] {
   })
 }
 
-const StatTile: React.FC<{
-  icon: React.ElementType
-  label: string
-  value: React.ReactNode
-  sub?: React.ReactNode
-  action?: React.ReactNode
-}> = ({ icon: Icon, label, value, sub, action }) => (
-  <div className="card p-4 sm:p-5 flex flex-col">
-    <div className="flex items-center justify-between gap-2">
-      <span className="text-sm text-[var(--text-muted)]">{label}</span>
-      <span className="w-9 h-9 rounded-xl bg-[var(--accent-soft)] text-[var(--accent-text)] flex items-center justify-center shrink-0">
-        <Icon className="w-[18px] h-[18px]" />
-      </span>
-    </div>
-    <div className="text-2xl sm:text-3xl font-semibold mt-2">{value}</div>
-    {sub && <div className="text-xs sm:text-sm text-[var(--text-muted)] mt-1">{sub}</div>}
-    {action && <div className="mt-auto pt-3">{action}</div>}
-  </div>
-)
-
 /** Trang chủ của shop: lời chào, 3 bước tạo video, số liệu nhanh, video gần đây, hoạt động 7 ngày. */
 export const HomeView: React.FC<HomeViewProps> = ({ user, credits, onNavigate, onOpenDeposit }) => {
   const [stats, setStats] = useState<DashboardStats | null>(null)
@@ -90,15 +71,15 @@ export const HomeView: React.FC<HomeViewProps> = ({ user, credits, onNavigate, o
     <div className="flex-1 h-full overflow-y-auto">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-5 sm:py-8 space-y-5 sm:space-y-6">
         {/* Lời chào + 3 bước */}
-        <section className="relative overflow-hidden rounded-[1.5rem] border border-[var(--accent-border)] bg-[linear-gradient(135deg,var(--accent-soft),var(--bg-card)_60%,var(--gold-soft))] p-5 sm:p-8 animate-fade-up">
+        <section className="relative overflow-hidden rounded-[1.5rem] border border-[var(--border-subtle)] bg-[radial-gradient(70%_120%_at_0%_0%,var(--accent-soft),transparent_60%),radial-gradient(50%_80%_at_100%_100%,var(--accent-soft),transparent_70%)] bg-[var(--bg-card)] shadow-[var(--shadow-card)] p-5 sm:p-8 animate-fade-up">
           <div className="grid lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] gap-6 lg:gap-10 items-center">
             <div>
-              <p className="eyebrow">Xin chào, {user.name}</p>
-              <h1 className="display text-[1.75rem] leading-tight sm:text-4xl mt-2">
+              <p className="text-sm font-medium text-[var(--accent-text)]">Xin chào, {user.name}</p>
+              <h1 className="display text-[1.75rem] leading-[1.1] sm:text-[2.6rem] mt-2">
                 Tạo video thời trang chỉ trong 3 bước
               </h1>
               <p className="text-[var(--text-sub)] mt-3 max-w-lg">
-                Từ một tấm ảnh sản phẩm thành video review có người mẫu, lời thoại và phụ đề, sẵn sàng đăng bán.
+                Từ một tấm ảnh sản phẩm thành video review có người mẫu, lời thoại và phụ đề.
               </p>
               <div className="flex flex-wrap gap-2.5 mt-5">
                 <button onClick={() => onNavigate('create')} className="btn btn-primary btn-lg">
@@ -109,13 +90,14 @@ export const HomeView: React.FC<HomeViewProps> = ({ user, credits, onNavigate, o
                 </button>
               </div>
             </div>
-            <ol className="grid gap-2.5">
+            <ol className="divide-y divide-[var(--border-subtle)] rounded-2xl bg-[color-mix(in_srgb,var(--bg-card)_70%,transparent)] border border-[var(--border-subtle)] backdrop-blur-sm">
               {STEPS.map((s, i) => (
                 <li
                   key={s.title}
-                  className="flex items-start gap-3.5 p-3.5 rounded-2xl bg-[color-mix(in_srgb,var(--bg-card)_80%,transparent)] border border-[var(--border-subtle)]"
+                  className="flex items-start gap-3.5 p-4 animate-fade-up"
+                  style={{ animationDelay: `${120 + i * 80}ms` }}
                 >
-                  <span className="w-8 h-8 rounded-full bg-[var(--ink)] text-[var(--on-ink)] text-sm font-semibold flex items-center justify-center shrink-0">
+                  <span className="w-8 h-8 rounded-[10px] bg-[var(--ink)] text-[var(--on-ink)] text-sm font-semibold flex items-center justify-center shrink-0">
                     {i + 1}
                   </span>
                   <div className="min-w-0">
@@ -137,51 +119,43 @@ export const HomeView: React.FC<HomeViewProps> = ({ user, credits, onNavigate, o
           </p>
         )}
 
-        {/* Số liệu nhanh */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-          <StatTile
-            icon={Film}
-            label="Video đã tạo"
-            value={stats ? formatNumber(stats.completed_renders) : '…'}
-            sub={stats && (stats.total_renders > stats.completed_renders
-              ? `${formatNumber(stats.total_renders - stats.completed_renders)} video đang tạo hoặc lỗi`
-              : 'video hoàn tất')}
-          />
-          <StatTile
-            icon={Package}
-            label="Sản phẩm"
-            value={stats ? formatNumber(stats.products_count ?? 0) : '…'}
-            sub="đã thêm vào kho"
-          />
-          <StatTile
-            icon={Coins}
-            label="Credits"
-            value={formatNumber(credits)}
-            sub={
-              <>
-                ≈ {formatVnd(credits * VND_PER_CREDIT)}
-                {videoCost ? ` · đủ ${formatNumber(Math.floor(credits / videoCost))} video` : ''}
-              </>
-            }
-            action={
-              <button onClick={onOpenDeposit} className="text-sm font-semibold text-[var(--accent-text)] inline-flex items-center gap-1">
-                Nạp thêm <ArrowRight className="w-3.5 h-3.5" />
-              </button>
-            }
-          />
-          <StatTile
-            icon={Send}
-            label="Đã đăng"
-            value={stats ? formatNumber(stats.published_videos) : '…'}
-            sub="video trên TikTok, Facebook"
-          />
-        </div>
+        {/* Số liệu nhanh: một khung, ngăn bằng vạch mảnh */}
+        <StatStrip
+          items={[
+            {
+              icon: Film,
+              label: 'Video đã tạo',
+              value: stats ? formatNumber(stats.completed_renders) : '…',
+              sub: stats && (stats.total_renders > stats.completed_renders
+                ? `${formatNumber(stats.total_renders - stats.completed_renders)} video đang tạo hoặc lỗi`
+                : 'video hoàn tất'),
+            },
+            { icon: Package, label: 'Sản phẩm', value: stats ? formatNumber(stats.products_count ?? 0) : '…', sub: 'đã thêm vào kho' },
+            {
+              icon: Coins,
+              label: 'Credits',
+              value: formatNumber(credits),
+              sub: (
+                <>
+                  ≈ {formatVnd(credits * VND_PER_CREDIT)}
+                  {videoCost ? `, đủ ${formatNumber(Math.floor(credits / videoCost))} video` : ''}
+                </>
+              ),
+              action: (
+                <button onClick={onOpenDeposit} className="text-sm font-semibold text-[var(--accent-text)] inline-flex items-center gap-1 group">
+                  Nạp thêm <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5" />
+                </button>
+              ),
+            },
+            { icon: Send, label: 'Đã đăng', value: stats ? formatNumber(stats.published_videos) : '…', sub: 'video trên TikTok, Facebook' },
+          ]}
+        />
 
         <div className="grid lg:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)] gap-5 sm:gap-6">
           {/* Video gần đây */}
           <section className="card p-4 sm:p-6">
             <div className="flex items-center justify-between gap-3 mb-4">
-              <h2 className="display text-xl">Video gần đây</h2>
+              <h2 className="title text-lg">Video gần đây</h2>
               <button
                 onClick={() => onNavigate('videos')}
                 className="text-sm font-semibold text-[var(--accent-text)] inline-flex items-center gap-1"
@@ -205,13 +179,14 @@ export const HomeView: React.FC<HomeViewProps> = ({ user, credits, onNavigate, o
               </div>
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                {recent.map((v) => {
+                {recent.map((v, i) => {
                   const thumb = v.output_image_url || v.product_image_url
                   return (
                     <button
                       key={v.job_id}
                       onClick={() => onNavigate('videos')}
-                      className="group text-left rounded-2xl overflow-hidden border border-[var(--border-subtle)] bg-[var(--bg-surface)] hover:border-[var(--border-strong)] transition-colors"
+                      style={{ animationDelay: `${i * 70}ms` }}
+                      className="group text-left rounded-2xl overflow-hidden border border-[var(--border-subtle)] bg-[var(--bg-surface)] hover:border-[var(--border-strong)] hover:-translate-y-0.5 transition-[transform,border-color] duration-300 animate-fade-up"
                     >
                       <div className="relative aspect-[3/4] overflow-hidden">
                         {thumb ? (
@@ -221,9 +196,6 @@ export const HomeView: React.FC<HomeViewProps> = ({ user, credits, onNavigate, o
                             <Film className="w-8 h-8" />
                           </div>
                         )}
-                        <span className="absolute top-2 left-2">
-                          <StatusBadge status={v.status} glass />
-                        </span>
                         {v.status === 'completed' && v.output_video_url && (
                           <span className="absolute inset-0 flex items-center justify-center">
                             <span className="w-10 h-10 rounded-full bg-black/45 text-white flex items-center justify-center backdrop-blur-sm">
@@ -234,7 +206,10 @@ export const HomeView: React.FC<HomeViewProps> = ({ user, credits, onNavigate, o
                       </div>
                       <div className="p-2.5">
                         <p className="text-sm font-medium truncate">{v.product_title || 'Sản phẩm chưa đặt tên'}</p>
-                        <p className="text-xs text-[var(--text-muted)]">{formatDateTime(v.created_at)}</p>
+                        <div className="flex items-center justify-between gap-2 mt-1">
+                          <span className="text-xs text-[var(--text-muted)] truncate">{formatDateTime(v.created_at)}</span>
+                          <StatusBadge status={v.status} />
+                        </div>
                       </div>
                     </button>
                   )
@@ -246,7 +221,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ user, credits, onNavigate, o
           {/* Hoạt động 7 ngày */}
           <section className="card p-4 sm:p-6">
             <div className="flex items-baseline justify-between gap-3">
-              <h2 className="display text-xl">Video tạo 7 ngày qua</h2>
+              <h2 className="title text-lg">Video tạo 7 ngày qua</h2>
               <span className="text-sm text-[var(--text-muted)] whitespace-nowrap">{formatNumber(weekTotal)} video</span>
             </div>
             <div className="mt-3">

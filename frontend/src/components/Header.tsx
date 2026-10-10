@@ -89,7 +89,7 @@ export const Header: React.FC<HeaderProps> = ({
         <Wordmark className="text-xl" />
       </button>
       <div className="hidden lg:flex items-center gap-3 min-w-0">
-        <span className="w-9 h-9 rounded-full bg-[var(--accent-soft)] text-[var(--accent-text)] font-semibold flex items-center justify-center shrink-0">
+        <span className="w-9 h-9 rounded-[10px] bg-[var(--accent-soft)] text-[var(--accent-text)] font-semibold flex items-center justify-center shrink-0">
           {initial}
         </span>
         <div className="min-w-0">
@@ -106,7 +106,7 @@ export const Header: React.FC<HeaderProps> = ({
           aria-label={`Số dư ${formatNumber(walletCredits)} credit, bấm để nạp`}
           className="flex items-center gap-2 h-10 pl-1.5 pr-1.5 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-card)] hover:border-[var(--border-strong)] transition-colors"
         >
-          <span className="w-7 h-7 rounded-full bg-[var(--gold-soft)] text-[var(--gold)] flex items-center justify-center">
+          <span className="w-7 h-7 rounded-full bg-[var(--accent-soft)] text-[var(--accent-text)] flex items-center justify-center">
             <Wallet className="w-4 h-4" />
           </span>
           <span className="text-sm font-semibold tabular-nums whitespace-nowrap">
@@ -129,7 +129,7 @@ export const Header: React.FC<HeaderProps> = ({
             className={`lg:hidden h-10 w-10 rounded-full flex items-center justify-center border transition-colors ${
               activeView === 'admin'
                 ? 'bg-[var(--ink)] text-[var(--on-ink)] border-[var(--ink)]'
-                : 'bg-[var(--bg-card)] text-[var(--gold)] border-[var(--border-subtle)]'
+                : 'bg-[var(--bg-card)] text-[var(--accent-text)] border-[var(--border-subtle)]'
             }`}
           >
             <ShieldCheck className="w-4 h-4" />
@@ -142,7 +142,7 @@ export const Header: React.FC<HeaderProps> = ({
             onClick={() => setMenuOpen((v) => !v)}
             aria-label="Tài khoản và giao diện"
             aria-expanded={menuOpen}
-            className="w-10 h-10 rounded-full bg-[var(--accent-soft)] text-[var(--accent-text)] font-display text-lg font-semibold flex items-center justify-center ring-1 ring-[var(--accent-border)] hover:ring-[var(--accent-color)] transition"
+            className="w-10 h-10 rounded-xl bg-[var(--accent-soft)] text-[var(--accent-text)] text-base font-semibold flex items-center justify-center ring-1 ring-[var(--accent-border)] hover:ring-[var(--accent-color)] transition"
           >
             {initial}
           </button>
@@ -187,7 +187,7 @@ export const Header: React.FC<HeaderProps> = ({
               </button>
               {isAdmin && (
                 <button className={menuItem} onClick={() => go('admin')}>
-                  <ShieldCheck className="w-4 h-4 text-[var(--gold)]" /> Quản trị hệ thống
+                  <ShieldCheck className="w-4 h-4" /> Quản trị hệ thống
                 </button>
               )}
               {onOpenAudit && (

@@ -194,8 +194,8 @@ export const AvatarManager: React.FC = () => {
         </div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-5 gap-y-7">
-          {shown.map((a) => (
-            <article key={a.id} className="group">
+          {shown.map((a, i) => (
+            <article key={a.id} className="group animate-fade-up" style={{ animationDelay: `${Math.min(i, 8) * 50}ms` }}>
               <div
                 className={`relative rounded-2xl overflow-hidden ring-2 ring-offset-2 ring-offset-[var(--bg-app)] ${
                   a.is_default ? 'ring-[var(--accent-color)]' : 'ring-transparent'
@@ -206,25 +206,27 @@ export const AvatarManager: React.FC = () => {
                   name={a.name}
                   className="w-full aspect-[3/4] transition-transform duration-700 group-hover:scale-[1.04]"
                 />
-                {a.is_default ? (
-                  <span className="absolute top-2.5 left-2.5 glass rounded-full px-2.5 py-1 text-xs font-semibold flex items-center gap-1">
-                    <Check className="w-3.5 h-3.5" /> Mặc định
-                  </span>
-                ) : null}
-                <span className="absolute top-2.5 right-2.5 glass rounded-full px-2.5 py-1 text-xs font-semibold">
-                  {genderOf(a) === 'male' ? 'Nam' : 'Nữ'}
-                </span>
               </div>
               <div className="pt-3">
                 <div className="flex items-start justify-between gap-2">
-                  <h3 className="display text-lg">{a.name}</h3>
+                  <h3 className="title text-base">{a.name}</h3>
                   <button onClick={() => openEdit(a)} className="icon-btn w-8 h-8 -mr-1.5" aria-label={`Sửa ${a.name}`}>
                     <Pencil className="w-3.5 h-3.5" />
                   </button>
                 </div>
+                <div className="flex items-center gap-1.5 mt-0.5 mb-1">
+                  <span className="inline-flex px-1.5 py-0.5 rounded-md border border-[var(--border-subtle)] text-[11px] font-semibold text-[var(--text-sub)]">
+                    {genderOf(a) === 'male' ? 'Nam' : 'Nữ'}
+                  </span>
+                  {a.is_default ? (
+                    <span className="tag">
+                      <Check className="w-3 h-3" /> Mặc định
+                    </span>
+                  ) : null}
+                </div>
                 <p className="text-sm text-[var(--text-muted)] line-clamp-1">{a.style}</p>
                 <p className="text-sm text-[var(--text-muted)]">
-                  {[a.height, a.weight, a.measurements].filter(Boolean).join(' · ')}
+                  {[a.height, a.weight, a.measurements].filter(Boolean).join(', ')}
                 </p>
                 <p className="text-xs text-[var(--text-muted)] mt-0.5">Đã dùng cho {a.renders_count ?? 0} video</p>
                 <div className="flex gap-2 mt-3">

@@ -78,8 +78,11 @@
   --viz-2: #2A78D6;
   --viz-other: #898781;
 
-  --shadow-card: 0 1px 2px rgba(30, 25, 22, 0.04), 0 10px 30px -18px rgba(30, 25, 22, 0.18);
-  --shadow-pop: 0 24px 60px -20px rgba(30, 25, 22, 0.35);
+  --shadow-card: 0 1px 2px rgba(80, 52, 40, 0.035), 0 12px 32px -22px rgba(80, 52, 40, 0.16);
+  --shadow-pop: 0 24px 60px -20px rgba(60, 38, 30, 0.32);
+  --shadow-btn: 0 10px 24px -12px rgba(60, 38, 30, 0.5);
+  --display-tracking: -0.01em;
+  --grain-opacity: 0.035;
   --glow: radial-gradient(900px 520px at 100% -10%, rgba(214, 150, 172, 0.22), transparent 65%),
     radial-gradient(700px 480px at -10% 110%, rgba(214, 186, 150, 0.22), transparent 60%);
   color-scheme: light;
@@ -123,6 +126,8 @@ html.dark {
 
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 30px -18px rgba(0, 0, 0, 0.6);
   --shadow-pop: 0 24px 60px -20px rgba(0, 0, 0, 0.75);
+  --shadow-btn: 0 10px 24px -12px rgba(0, 0, 0, 0.7);
+  --grain-opacity: 0.05;
   --glow: radial-gradient(900px 520px at 100% -10%, rgba(227, 161, 180, 0.08), transparent 65%),
     radial-gradient(700px 480px at -10% 110%, rgba(212, 178, 122, 0.06), transparent 60%);
   color-scheme: dark;
@@ -157,8 +162,11 @@ html[data-palette="violet"] {
   --viz-1: #6D4AFF;
   --viz-2: #EB6834;
 
-  --shadow-card: 0 1px 2px rgba(28, 24, 48, 0.04), 0 10px 30px -18px rgba(60, 40, 160, 0.22);
+  --shadow-card: 0 1px 2px rgba(28, 24, 48, 0.04), 0 12px 32px -22px rgba(60, 40, 160, 0.2);
   --shadow-pop: 0 24px 60px -20px rgba(40, 24, 120, 0.35);
+  --shadow-btn: 0 10px 24px -12px rgba(76, 52, 220, 0.55);
+  --display-tracking: -0.025em;
+  --viz-other: #8A879A;
   --glow: radial-gradient(900px 520px at 100% -10%, rgba(140, 115, 255, 0.16), transparent 65%),
     radial-gradient(700px 480px at -10% 110%, rgba(236, 160, 210, 0.14), transparent 60%);
 }
@@ -187,6 +195,8 @@ html.dark[data-palette="violet"] {
 
   --viz-1: #7A5CFF;
   --viz-2: #D95926;
+  --viz-other: #8A879A;
+  --shadow-btn: 0 10px 24px -12px rgba(0, 0, 0, 0.7);
 
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 30px -18px rgba(0, 0, 0, 0.65);
   --shadow-pop: 0 24px 60px -20px rgba(0, 0, 0, 0.8);
@@ -205,6 +215,49 @@ body {
   height: 100vh;
   height: 100dvh; /* điện thoại: không bị thanh địa chỉ che */
   -webkit-tap-highlight-color: transparent;
+}
+
+/* Lớp hạt mịn cố định phủ toàn trang để nền bớt phẳng (không nhận chuột, không cuộn theo nên không tốn GPU) */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  pointer-events: none;
+  opacity: var(--grain-opacity);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+@media (forced-colors: active) {
+  body::after {
+    display: none;
+  }
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+/* Một độ dày nét cho mọi biểu tượng */
+svg.lucide {
+  stroke-width: 1.75;
+}
+
+/* Link ẩn cho người dùng bàn phím: nhấn Tab đầu tiên để nhảy thẳng vào nội dung */
+.skip-link {
+  position: fixed;
+  left: 1rem;
+  top: -4rem;
+  z-index: 110;
+  padding: 0.6rem 1rem;
+  border-radius: 0.75rem;
+  background: var(--ink);
+  color: var(--on-ink);
+  font-weight: 600;
+  font-size: 0.875rem;
+  transition: top 0.2s;
+}
+.skip-link:focus {
+  top: 1rem;
 }
 
 #root {
@@ -258,8 +311,30 @@ p {
 @layer components {
   .display {
     font-family: var(--font-display);
-    letter-spacing: -0.01em;
+    letter-spacing: var(--display-tracking);
     font-weight: 600;
+  }
+
+  /* Tiêu đề khối, thẻ, hộp thoại: chữ không chân, đậm vừa, siết nhẹ (serif chỉ dành cho tiêu đề trang) */
+  .title {
+    font-family: var(--font-sans);
+    font-weight: 600;
+    letter-spacing: -0.015em;
+    line-height: 1.3;
+  }
+
+  /* Nhãn nhỏ bo góc vuông (thay cho viên thuốc) */
+  .tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    border-radius: 0.375rem;
+    padding: 0.125rem 0.4rem;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    line-height: 1rem;
+    background: var(--ink);
+    color: var(--on-ink);
   }
 
   /* Nhãn nhỏ phía trên tiêu đề, kiểu tạp chí */
@@ -289,7 +364,8 @@ p {
     line-height: 1.25rem;
     padding: 0.7rem 1.25rem;
     white-space: nowrap;
-    transition: background-color 0.2s, color 0.2s, border-color 0.2s, transform 0.15s, box-shadow 0.2s, opacity 0.2s;
+    transition: background-color 0.25s, color 0.25s, border-color 0.25s, transform 0.2s, box-shadow 0.3s, opacity 0.2s;
+    transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
   }
   .btn:active:not(:disabled) {
     transform: scale(0.98);
@@ -311,7 +387,7 @@ p {
   }
   .btn-primary:hover:not(:disabled) {
     background: var(--ink-hover);
-    box-shadow: 0 10px 24px -12px rgba(30, 25, 22, 0.55);
+    box-shadow: var(--shadow-btn);
   }
   .btn-accent {
     background: var(--accent-color);
@@ -396,7 +472,11 @@ p {
     font-size: 0.875rem;
     font-weight: 500;
     padding: 0.55rem 1rem;
-    transition: background-color 0.2s, color 0.2s, border-color 0.2s;
+    transition: background-color 0.25s, color 0.25s, border-color 0.25s, transform 0.2s;
+    transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .chip:active {
+    transform: scale(0.98);
   }
   .chip:hover {
     border-color: var(--text-main);

@@ -48,7 +48,7 @@ const FILTERS: { id: VideoFilter; label: string }[] = [
 const SORTS: { id: VideoSort; label: string }[] = [
   { id: 'newest', label: 'Mới nhất' },
   { id: 'oldest', label: 'Cũ nhất' },
-  { id: 'title', label: 'Tên sản phẩm A–Z' },
+  { id: 'title', label: 'Tên sản phẩm A-Z' },
 ]
 
 const EMPTY_COUNTS: Record<VideoFilter, number> = { all: 0, completed: 0, busy: 0, awaiting_approval: 0, other: 0 }
@@ -220,8 +220,7 @@ export const MyVideosView: React.FC<MyVideosViewProps> = ({ onCreate, onCreditsC
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-10 space-y-6 sm:space-y-8">
         <div className="flex items-end justify-between gap-4 flex-wrap">
           <div>
-            <p className="eyebrow">Thư viện</p>
-            <h1 className="display text-3xl sm:text-4xl mt-1.5">Video của tôi</h1>
+            <h1 className="display text-3xl sm:text-4xl">Video của tôi</h1>
             <p className="text-[var(--text-muted)] mt-2">Xem lại, tải về hoặc đăng các video bạn đã tạo.</p>
           </div>
           {!libraryEmpty && videos && (
@@ -453,7 +452,7 @@ export const MyVideosView: React.FC<MyVideosViewProps> = ({ onCreate, onCreditsC
 /** Các nền tảng đã đăng: logo sáng nếu đã đăng, mờ nếu chưa */
 const PublishedIcons: React.FC<{ video: MyVideo }> = ({ video: v }) => {
   const done = new Set(v.published_platforms ?? [])
-  if (v.status !== 'completed') return <span className="text-sm text-[var(--text-muted)]">—</span>
+  if (v.status !== 'completed') return <span className="text-sm text-[var(--text-muted)]">-</span>
   return (
     <span className="flex items-center gap-2 text-sm">
       <span title={done.has('tiktok') ? 'Đã đăng TikTok' : 'Chưa đăng TikTok'} className={done.has('tiktok') ? '' : 'opacity-30'}>
@@ -599,9 +598,6 @@ const VideoCard: React.FC<{ video: MyVideo; index: number; onOpen: () => void; o
             className="absolute inset-0 w-full h-full object-cover animate-fade-in"
           />
         )}
-        <span className="absolute top-2.5 left-2.5">
-          <StatusBadge status={v.status} glass />
-        </span>
         {done && !hover && (
           <span className="absolute inset-0 flex items-center justify-center">
             <span className="w-12 h-12 rounded-full glass flex items-center justify-center shadow-md">
@@ -611,7 +607,7 @@ const VideoCard: React.FC<{ video: MyVideo; index: number; onOpen: () => void; o
         )}
         {busy && (
           <span className="absolute inset-0 bg-black/45 flex flex-col items-center justify-center gap-3 text-white px-4">
-            <span className="font-display text-3xl font-semibold tabular-nums">{v.progress}%</span>
+            <span className="text-3xl font-semibold tabular-nums">{v.progress}%</span>
             <span className="w-full max-w-[120px] h-1 rounded-full bg-white/25 overflow-hidden">
               <span className="block h-full progress-bar" style={{ width: `${Math.max(4, v.progress)}%` }} />
             </span>
@@ -620,12 +616,15 @@ const VideoCard: React.FC<{ video: MyVideo; index: number; onOpen: () => void; o
       </button>
 
       <div className="pt-3 space-y-1">
-        <h3 className="font-semibold leading-snug line-clamp-1">{titleOf(v)}</h3>
-        <p className="text-sm text-[var(--text-muted)] flex items-center gap-1.5 flex-wrap">
+        <div className="flex items-start justify-between gap-2">
+          <h3 className="font-semibold leading-snug line-clamp-1">{titleOf(v)}</h3>
+          <StatusBadge status={v.status} />
+        </div>
+        <p className="text-sm text-[var(--text-muted)] flex items-center gap-2 flex-wrap">
           {formatDateTime(v.created_at)}
           {done && v.published_count > 0 && (
             <span className="inline-flex items-center gap-1 text-[var(--ok-text)]">
-              · <Send className="w-3.5 h-3.5" /> Đã đăng {v.published_count}
+              <Send className="w-3.5 h-3.5" /> Đã đăng {v.published_count}
             </span>
           )}
         </p>

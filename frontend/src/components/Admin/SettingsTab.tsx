@@ -307,7 +307,7 @@ export const SettingsTab: React.FC = () => {
       {SECTIONS.filter((section) => section.id === tab).map((section) => (
         <section key={section.title} className="card p-5 sm:p-6 space-y-5">
           <div>
-            <h2 className="display text-xl">{section.title}</h2>
+            <h2 className="title text-lg">{section.title}</h2>
             <p className="text-sm text-[var(--text-muted)] mt-0.5">{section.note}</p>
           </div>
           {section.providers.map((p) => {

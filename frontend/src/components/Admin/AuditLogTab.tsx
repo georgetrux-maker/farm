@@ -119,15 +119,15 @@ export const AuditLogTab: React.FC = () => {
                     <td className="px-5 py-3 text-[var(--text-muted)] tabular-nums whitespace-nowrap">{formatDateTime(l.created_at)}</td>
                     <td className="px-3 py-3 font-medium whitespace-nowrap">{l.actor_name}</td>
                     <td className="px-3 py-3">
-                      <span className={`inline-flex px-2.5 py-1 rounded-full border text-xs font-semibold whitespace-nowrap ${tone(l.action)}`}>
+                      <span className={`inline-flex px-2 py-0.5 rounded-md border text-xs font-semibold whitespace-nowrap ${tone(l.action)}`}>
                         {l.action_label}
                       </span>
                     </td>
                     <td className="px-3 py-3 font-mono text-xs max-w-[12rem] truncate" title={l.target ?? ''}>
-                      {l.target || '—'}
+                      {l.target || '-'}
                     </td>
                     <td className="px-5 py-3 text-[var(--text-sub)] max-w-[22rem] truncate" title={l.detail ?? ''}>
-                      {l.detail || '—'}
+                      {l.detail || '-'}
                     </td>
                   </tr>
                 ))}
@@ -138,7 +138,7 @@ export const AuditLogTab: React.FC = () => {
             {items.map((l) => (
               <li key={l.id} className="p-4 space-y-1.5">
                 <div className="flex items-center justify-between gap-3">
-                  <span className={`inline-flex px-2.5 py-1 rounded-full border text-xs font-semibold ${tone(l.action)}`}>{l.action_label}</span>
+                  <span className={`inline-flex px-2 py-0.5 rounded-md border text-xs font-semibold ${tone(l.action)}`}>{l.action_label}</span>
                   <span className="text-xs text-[var(--text-muted)]">{formatDateTime(l.created_at)}</span>
                 </div>
                 <p className="text-sm">

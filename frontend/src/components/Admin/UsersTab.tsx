@@ -17,7 +17,7 @@ const STATUS_TABS: { id: StatusFilter; label: string }[] = [
 
 const StatusPill: React.FC<{ locked: boolean }> = ({ locked }) => (
   <span
-    className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full border text-xs font-semibold whitespace-nowrap ${
+    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-xs font-semibold whitespace-nowrap ${
       locked
         ? 'bg-[var(--danger-bg)] text-[var(--danger-text)] border-[var(--danger-border)]'
         : 'bg-[var(--ok-bg)] text-[var(--ok-text)] border-[var(--ok-border)]'
@@ -221,7 +221,7 @@ export const UsersTab: React.FC<{ currentUserId: string }> = ({ currentUserId })
                   <tr key={u.id}>
                     <td className="px-5 py-3 max-w-[18rem]">
                       <div className="flex items-center gap-3 min-w-0">
-                        <span className="w-9 h-9 rounded-full bg-[var(--accent-soft)] text-[var(--accent-text)] font-semibold flex items-center justify-center shrink-0">
+                        <span className="w-9 h-9 rounded-[10px] bg-[var(--accent-soft)] text-[var(--accent-text)] font-semibold flex items-center justify-center shrink-0">
                           {u.name.charAt(0).toUpperCase()}
                         </span>
                         <div className="min-w-0">
@@ -253,7 +253,7 @@ export const UsersTab: React.FC<{ currentUserId: string }> = ({ currentUserId })
             {items.map((u) => (
               <li key={u.id} className="p-4 space-y-2.5">
                 <div className="flex items-start gap-3">
-                  <span className="w-9 h-9 rounded-full bg-[var(--accent-soft)] text-[var(--accent-text)] font-semibold flex items-center justify-center shrink-0">
+                  <span className="w-9 h-9 rounded-[10px] bg-[var(--accent-soft)] text-[var(--accent-text)] font-semibold flex items-center justify-center shrink-0">
                     {u.name.charAt(0).toUpperCase()}
                   </span>
                   <div className="min-w-0 flex-1">
@@ -263,10 +263,20 @@ export const UsersTab: React.FC<{ currentUserId: string }> = ({ currentUserId })
                   <StatusPill locked={u.disabled} />
                 </div>
                 <div className="flex items-end justify-between gap-3">
-                  <p className="text-sm text-[var(--text-muted)]">
-                    <strong className="text-[var(--text-main)]">{formatNumber(u.credits)}</strong> credit · đã nạp {formatVnd(u.deposited_vnd)} ·{' '}
-                    {formatNumber(u.videos)} video
-                  </p>
+                  <dl className="text-sm grid grid-cols-3 gap-3 min-w-0">
+                    <div>
+                      <dt className="text-xs text-[var(--text-muted)]">Số dư</dt>
+                      <dd className="font-semibold tabular-nums">{formatNumber(u.credits)}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs text-[var(--text-muted)]">Đã nạp</dt>
+                      <dd className="font-semibold tabular-nums truncate">{formatVnd(u.deposited_vnd)}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs text-[var(--text-muted)]">Video</dt>
+                      <dd className="font-semibold tabular-nums">{formatNumber(u.videos)}</dd>
+                    </div>
+                  </dl>
                   {actions(u)}
                 </div>
               </li>
@@ -288,7 +298,7 @@ export const UsersTab: React.FC<{ currentUserId: string }> = ({ currentUserId })
         </div>
       )}
 
-      <Modal open={!!creditUser} onClose={() => !busy && setCreditUser(null)} title="Điều chỉnh credit" icon={<Coins className="w-5 h-5 text-[var(--gold)]" />}>
+      <Modal open={!!creditUser} onClose={() => !busy && setCreditUser(null)} title="Điều chỉnh credit" icon={<Coins className="w-5 h-5 text-[var(--accent-text)]" />}>
         {creditUser && (
           <form onSubmit={submitCredit} className="space-y-4" noValidate>
             <div className="rounded-2xl bg-[var(--bg-surface)] p-4 text-sm flex items-center justify-between gap-3">

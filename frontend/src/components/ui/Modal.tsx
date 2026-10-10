@@ -41,7 +41,7 @@ export const Modal: React.FC<ModalProps> = ({ open, onClose, title, icon, childr
         <div className="flex items-center justify-between gap-3 mb-5">
           <div className="flex items-center gap-2.5 min-w-0">
             {icon}
-            {title && <h3 className="display text-xl truncate">{title}</h3>}
+            {title && <h3 className="title text-lg truncate">{title}</h3>}
           </div>
           <button onClick={onClose} aria-label="Đóng" className="icon-btn -mr-2">
             <X className="w-5 h-5" />

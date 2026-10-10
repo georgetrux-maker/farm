@@ -84,8 +84,8 @@ export default function App() {
       if (isNewAccount) {
         toast(
           u.credits > 0
-            ? `Chào mừng ${u.name}! Bạn có ${formatNumber(u.credits)} credit để bắt đầu tạo video.`
-            : `Chào mừng ${u.name}! Nạp credit (từ 10.000đ) ở trang Ví Credits để bắt đầu tạo video.`,
+            ? `Chào mừng ${u.name}. Bạn có ${formatNumber(u.credits)} credit để bắt đầu tạo video.`
+            : `Chào mừng ${u.name}. Nạp credit (từ 10.000đ) ở trang Ví Credits để bắt đầu tạo video.`,
           'success',
         )
       }
@@ -219,6 +219,12 @@ export default function App() {
 
   return (
     <div className="flex-1 min-h-0 flex text-[var(--text-main)]">
+      <a href="#noi-dung" className="skip-link" onClick={(e) => {
+        e.preventDefault()
+        document.getElementById('noi-dung')?.focus()
+      }}>
+        Bỏ qua menu, tới nội dung
+      </a>
       <Sidebar
         view={view}
         adminSection={route.section}
@@ -244,7 +250,7 @@ export default function App() {
           onLogout={handleLogout}
         />
 
-        <main className="flex-1 min-h-0 flex">
+        <main id="noi-dung" tabIndex={-1} className="flex-1 min-h-0 flex outline-none">
           {/* Giữ trang Tạo video khi chuyển trang để không mất ảnh/thông tin đang nhập hoặc tiến độ */}
           <div className={view === 'create' ? 'flex-1 min-w-0 flex animate-fade-in' : 'hidden'}>
             <CreateVideoView

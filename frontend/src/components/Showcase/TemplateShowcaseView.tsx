@@ -57,8 +57,7 @@ export const TemplateShowcaseView: React.FC<TemplateShowcaseViewProps> = ({ onUs
     <div className="flex-1 h-full overflow-y-auto text-[var(--text-main)]">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-5 sm:py-8 space-y-5 sm:space-y-6">
         <div>
-          <p className="eyebrow">Thư viện mẫu</p>
-          <h1 className="display text-3xl sm:text-4xl mt-1.5">Chọn phong cách, tạo trong một chạm</h1>
+          <h1 className="display text-3xl sm:text-4xl">Chọn phong cách, tạo trong một chạm</h1>
           <p className="text-[var(--text-muted)] mt-2 max-w-2xl">
             Mỗi mẫu đã chọn sẵn góc quay, người mẫu, giọng đọc và lời văn. Bạn chỉ cần tải ảnh sản phẩm của mình.
           </p>
@@ -125,11 +124,11 @@ export const TemplateShowcaseView: React.FC<TemplateShowcaseViewProps> = ({ onUs
           </div>
         ) : (
           <div className="grid grid-cols-1 min-[480px]:grid-cols-2 lg:grid-cols-4 gap-x-5 gap-y-8">
-            {shown.map((t) => {
+            {shown.map((t, i) => {
               const isPlaying = playingId === t.id
               const voicePlaying = voice.playing === t.voice_id
               return (
-                <article key={t.id} className="flex flex-col">
+                <article key={t.id} className="flex flex-col animate-fade-up" style={{ animationDelay: `${i * 70}ms` }}>
                   <div className="relative rounded-3xl overflow-hidden shadow-[var(--shadow-card)]">
                     {t.video_url && isPlaying ? (
                       <video src={t.video_url} autoPlay loop playsInline muted className="w-full aspect-[9/16] object-cover" />
@@ -142,7 +141,6 @@ export const TemplateShowcaseView: React.FC<TemplateShowcaseViewProps> = ({ onUs
                         alt={t.title}
                       />
                     )}
-                    <span className="absolute top-3 left-3 glass rounded-full px-2.5 py-1 text-xs font-semibold">{t.badge}</span>
                     <button
                       onClick={() => setPlayingId(isPlaying ? null : t.id)}
                       aria-label={isPlaying ? `Dừng xem trước ${t.title}` : `Xem trước ${t.title}`}
@@ -153,8 +151,11 @@ export const TemplateShowcaseView: React.FC<TemplateShowcaseViewProps> = ({ onUs
                   </div>
 
                   <div className="pt-4 flex-1 flex flex-col">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">{t.category}</p>
-                    <h2 className="display text-xl mt-1">{t.title}</h2>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="tag shrink-0">{t.badge}</span>
+                      <span className="text-sm text-[var(--text-muted)] truncate">{t.category}</span>
+                    </div>
+                    <h2 className="title text-lg mt-1">{t.title}</h2>
                     <p className="text-sm text-[var(--text-muted)] mt-1.5 leading-relaxed">{t.description}</p>
                     <dl className="text-sm mt-3 space-y-1">
                       <div className="flex gap-2">
@@ -168,12 +169,12 @@ export const TemplateShowcaseView: React.FC<TemplateShowcaseViewProps> = ({ onUs
                     </dl>
                     <button
                       onClick={() => voice.toggle(t.voice_id)}
-                      className="mt-3 self-start inline-flex items-center gap-2 text-sm font-semibold text-[var(--accent-text)]"
+                      className="mt-3 mb-4 self-start inline-flex items-center gap-2 text-sm font-semibold text-[var(--accent-text)]"
                     >
                       {voicePlaying ? <Square className="w-3.5 h-3.5 fill-current" /> : <Volume2 className="w-4 h-4" />}
                       {voicePlaying ? 'Dừng' : `Nghe giọng ${t.voice_label}`}
                     </button>
-                    <button onClick={() => onUseTemplate(t)} className="btn btn-primary w-full mt-4">
+                    <button onClick={() => onUseTemplate(t)} className="btn btn-primary w-full mt-auto">
                       Dùng mẫu này <ArrowRight className="w-4 h-4" />
                     </button>
                   </div>

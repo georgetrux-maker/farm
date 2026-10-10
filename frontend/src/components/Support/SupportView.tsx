@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { ChevronDown, Link2, Mail, MessageCircle, Phone, Wallet, Wand2 } from 'lucide-react'
+import { Link2, Mail, MessageCircle, Phone, Wallet, Wand2 } from 'lucide-react'
 import { fetchStudioOptions, fetchSupportInfo, type SupportInfo } from '../../services/api'
 import { formatNumber, formatVnd } from '../../lib/format'
 import type { View } from '../../lib/navigation'
@@ -53,7 +53,6 @@ function faqs(cost: number | null) {
 export const SupportView: React.FC<SupportViewProps> = ({ onNavigate }) => {
   const [info, setInfo] = useState<SupportInfo | null>(null)
   const [cost, setCost] = useState<number | null>(null)
-  const [open, setOpen] = useState(0)
 
   useEffect(() => {
     fetchSupportInfo()
@@ -82,8 +81,7 @@ export const SupportView: React.FC<SupportViewProps> = ({ onNavigate }) => {
     <div className="flex-1 h-full overflow-y-auto">
       <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-5 sm:py-8 space-y-5 sm:space-y-6">
         <div>
-          <p className="eyebrow">Trợ giúp</p>
-          <h1 className="display text-3xl sm:text-4xl mt-1.5">Hỗ trợ</h1>
+          <h1 className="display text-3xl sm:text-4xl">Hỗ trợ</h1>
           <p className="text-[var(--text-muted)] mt-2">Cần giúp đỡ? Liên hệ trực tiếp hoặc xem các câu hỏi thường gặp bên dưới.</p>
         </div>
 
@@ -125,26 +123,21 @@ export const SupportView: React.FC<SupportViewProps> = ({ onNavigate }) => {
           </p>
         )}
 
-        <section className="card p-2 sm:p-3">
-          <h2 className="display text-xl px-3 sm:px-4 pt-3 pb-2">Câu hỏi thường gặp</h2>
-          <ul>
-            {faqs(cost).map((f, i) => {
-              const expanded = open === i
-              return (
-                <li key={f.q} className="border-t border-[var(--border-subtle)] first:border-0">
-                  <button
-                    onClick={() => setOpen(expanded ? -1 : i)}
-                    aria-expanded={expanded}
-                    className="w-full flex items-center justify-between gap-3 px-3 sm:px-4 py-3.5 text-left font-medium hover:text-[var(--accent-text)]"
-                  >
-                    {f.q}
-                    <ChevronDown className={`w-4 h-4 shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`} />
-                  </button>
-                  {expanded && <p className="px-3 sm:px-4 pb-4 -mt-1 text-sm text-[var(--text-sub)] animate-fade-in">{f.a}</p>}
-                </li>
-              )
-            })}
-          </ul>
+        {/* Câu hỏi thường gặp: hiện sẵn cả câu trả lời (ít câu, ngắn), chia 2 cột thay vì bấm mở từng câu */}
+        <section>
+          <h2 className="title text-lg mb-3">Câu hỏi thường gặp</h2>
+          <dl className="grid md:grid-cols-2 gap-x-10 border-t border-[var(--border-subtle)]">
+            {faqs(cost).map((f, i) => (
+              <div
+                key={f.q}
+                className="py-5 border-b border-[var(--border-subtle)] animate-fade-up"
+                style={{ animationDelay: `${i * 50}ms` }}
+              >
+                <dt className="font-semibold leading-snug">{f.q}</dt>
+                <dd className="text-sm text-[var(--text-sub)] mt-1.5 leading-relaxed max-w-[60ch]">{f.a}</dd>
+              </div>
+            ))}
+          </dl>
         </section>
 
         <div className="grid sm:grid-cols-3 gap-3">

@@ -52,18 +52,14 @@ const productKey = (image: string | null, title: string, price: string, original
   JSON.stringify([image, title.trim(), digits(price), digits(original), category.trim(), fabric.trim()])
 
 /** Một khối lựa chọn có số thứ tự kiểu tạp chí */
-const Section: React.FC<{ n: string; title: string; aside?: React.ReactNode; children: React.ReactNode }> = ({
-  n,
+const Section: React.FC<{ title: string; aside?: React.ReactNode; children: React.ReactNode }> = ({
   title,
   aside,
   children,
 }) => (
   <section className="card p-5 sm:p-6">
-    <div className="flex items-center justify-between gap-3 mb-5 flex-wrap">
-      <h2 className="flex items-baseline gap-3">
-        <span className="font-display italic text-lg text-[var(--accent-text)]">{n}</span>
-        <span className="display text-xl">{title}</span>
-      </h2>
+    <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
+      <h2 className="title text-lg">{title}</h2>
       {aside}
     </div>
     {children}
@@ -487,8 +483,7 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-5 sm:py-8 space-y-5 sm:space-y-6">
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
           <div>
-            <p className="eyebrow">Studio</p>
-            <h1 className="display text-3xl sm:text-4xl mt-1.5">Tạo video AI</h1>
+            <h1 className="display text-3xl sm:text-4xl">Tạo video AI</h1>
             <p className="text-[var(--text-muted)] mt-2 max-w-xl">
               {step === 0
                 ? 'Bước 1: thêm sản phẩm bằng link, ảnh tải lên hoặc ảnh mẫu.'
@@ -590,7 +585,6 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
               </div>
 
               <Section
-                n="01"
                 title="Thông tin sản phẩm"
                 aside={
                   ai && (
@@ -707,11 +701,11 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
 
             <div className="grid lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)] gap-5 lg:gap-6 items-start animate-fade-up">
               <div className="space-y-5">
-                <Section n="01" title="Người mẫu">
+                <Section title="Người mẫu">
                   <ModelPicker avatars={avatars} value={avatarId} onChange={setAvatarId} />
                 </Section>
 
-                <Section n="02" title="Phong cách video">
+                <Section title="Phong cách video">
                   <TemplatePicker templates={options?.templates ?? []} value={template} onChange={setTemplate} image={imageUrl} />
                   {options?.engines.video.startsWith('replicate') && (
                     <div className="mt-5">
@@ -723,7 +717,7 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
               </div>
 
               <div className="space-y-5">
-                <Section n="03" title="Giọng đọc">
+                <Section title="Giọng đọc">
                   <VoicePicker
                     voices={options?.voices ?? []}
                     value={voice}
@@ -741,7 +735,6 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
                 </Section>
 
                 <Section
-                  n="04"
                   title="Kịch bản xem trước"
                   aside={
                     <button
@@ -868,12 +861,7 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
 
         {phase === 'done' && job && (
           <div className="space-y-5 animate-fade-up">
-            <div>
-              <p className="eyebrow flex items-center gap-1.5">
-                <Sparkles className="w-3.5 h-3.5" /> Hoàn tất
-              </p>
-              <h2 className="display text-2xl sm:text-3xl mt-1.5">Video của bạn đã sẵn sàng</h2>
-            </div>
+            <h2 className="display text-2xl sm:text-3xl">Video của bạn đã sẵn sàng</h2>
             <VideoResult
               job={job}
               productTitle={title}

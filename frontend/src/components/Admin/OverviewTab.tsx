@@ -4,6 +4,7 @@ import type { AdminStatsOverview } from '../../services/api'
 import { compactVnd, formatDateTime, formatNumber, formatVnd } from '../../lib/format'
 import { ColumnChart, type ColumnPoint } from '../ui/ColumnChart'
 import { DonutChart } from '../ui/DonutChart'
+import { StatStrip } from '../ui/StatStrip'
 
 interface OverviewTabProps {
   stats: AdminStatsOverview
@@ -53,14 +54,6 @@ const Delta: React.FC<{ now: number; before: number; period: string }> = ({ now,
   )
 }
 
-const Kpi: React.FC<{ label: string; value: string; delta: React.ReactNode }> = ({ label, value, delta }) => (
-  <div className="card p-4 sm:p-5">
-    <p className="text-sm text-[var(--text-muted)]">{label}</p>
-    <p className="text-2xl sm:text-[1.75rem] font-semibold mt-1.5 truncate">{value}</p>
-    <div className="mt-1.5">{delta}</div>
-  </div>
-)
-
 export const OverviewTab: React.FC<OverviewTabProps> = ({
   stats, days, onDaysChange, refreshing, onOpenTransactions, onOpenUsers,
 }) => {
@@ -85,33 +78,45 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
         </button>
       )}
 
-      {/* Số liệu chính, so với kỳ trước (giờ Việt Nam) */}
-      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4">
-        <Kpi
-          label="Doanh thu hôm nay"
-          value={formatVnd(s.revenue_vnd.today)}
-          delta={<Delta now={s.revenue_vnd.today} before={p.revenue_today} period="hôm qua" />}
-        />
-        <Kpi
-          label="Doanh thu tháng này"
-          value={formatVnd(s.revenue_vnd.month)}
-          delta={<Delta now={s.revenue_vnd.month} before={p.revenue_month} period="cùng kỳ tháng trước" />}
-        />
-        <Kpi
-          label="Shop mới tháng này"
-          value={formatNumber(s.new_shops.month)}
-          delta={<Delta now={s.new_shops.month} before={p.new_shops_month} period="cùng kỳ tháng trước" />}
-        />
-        <Kpi
-          label="Video hoàn tất tháng này"
-          value={formatNumber(s.completed_videos.month)}
-          delta={<Delta now={s.completed_videos.month} before={p.completed_videos_month} period="cùng kỳ tháng trước" />}
-        />
-      </div>
-      <p className="text-sm text-[var(--text-muted)]">
-        Tất cả: {formatVnd(s.revenue_vnd.total)} doanh thu · {formatNumber(s.new_shops.total)} shop · {formatNumber(s.total_jobs)} lượt
-        tạo video · {formatNumber(s.credits_in_wallets)} credit đang trong ví khách (≈ {formatVnd(s.credits_in_wallets * 100)}).
-      </p>
+      {/* Số liệu chính, so với kỳ trước (giờ Việt Nam): một khung, ngăn bằng vạch mảnh */}
+      <StatStrip
+        items={[
+          {
+            label: 'Doanh thu hôm nay',
+            value: formatVnd(s.revenue_vnd.today),
+            sub: <Delta now={s.revenue_vnd.today} before={p.revenue_today} period="hôm qua" />,
+          },
+          {
+            label: 'Doanh thu tháng này',
+            value: formatVnd(s.revenue_vnd.month),
+            sub: <Delta now={s.revenue_vnd.month} before={p.revenue_month} period="cùng kỳ tháng trước" />,
+          },
+          {
+            label: 'Shop mới tháng này',
+            value: formatNumber(s.new_shops.month),
+            sub: <Delta now={s.new_shops.month} before={p.new_shops_month} period="cùng kỳ tháng trước" />,
+          },
+          {
+            label: 'Video hoàn tất tháng này',
+            value: formatNumber(s.completed_videos.month),
+            sub: <Delta now={s.completed_videos.month} before={p.completed_videos_month} period="cùng kỳ tháng trước" />,
+          },
+        ]}
+      />
+      {/* Tổng từ trước tới nay: hàng số liệu phụ, không dùng chuỗi dấu chấm giữa */}
+      <dl className="grid grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-3 text-sm px-1">
+        {[
+          ['Tổng doanh thu', formatVnd(s.revenue_vnd.total)],
+          ['Tổng số shop', formatNumber(s.new_shops.total)],
+          ['Lượt tạo video', formatNumber(s.total_jobs)],
+          ['Credit trong ví khách', `${formatNumber(s.credits_in_wallets)} (≈ ${formatVnd(s.credits_in_wallets * 100)})`],
+        ].map(([k, v]) => (
+          <div key={k} className="min-w-0">
+            <dt className="text-xs text-[var(--text-muted)]">{k}</dt>
+            <dd className="font-semibold tabular-nums">{v}</dd>
+          </div>
+        ))}
+      </dl>
 
       {/* Bộ lọc khoảng ngày: áp dụng cho mọi biểu đồ bên dưới */}
       <div className="flex items-center gap-3 flex-wrap">
@@ -136,7 +141,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
         <div className="grid lg:grid-cols-[minmax(0,1.8fr)_minmax(0,1fr)] gap-5 sm:gap-6">
           <section className="card p-5 sm:p-6">
             <div className="flex items-baseline justify-between gap-3">
-              <h2 className="display text-xl">Doanh thu {days} ngày</h2>
+              <h2 className="title text-lg">Doanh thu {days} ngày</h2>
               <span className="text-sm font-semibold">{formatVnd(revenueTotal)}</span>
             </div>
             <div className="mt-3">
@@ -152,7 +157,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
           </section>
 
           <section className="card p-5 sm:p-6">
-            <h2 className="display text-xl">Nguồn doanh thu</h2>
+            <h2 className="title text-lg">Nguồn doanh thu</h2>
             <p className="text-sm text-[var(--text-muted)] mt-0.5">{days} ngày gần nhất</p>
             <div className="mt-4">
               <DonutChart
@@ -172,7 +177,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
         <div className="grid lg:grid-cols-[minmax(0,1.8fr)_minmax(0,1fr)] gap-5 sm:gap-6">
           <section className="card p-5 sm:p-6">
             <div className="flex items-baseline justify-between gap-3">
-              <h2 className="display text-xl">Video hoàn tất {days} ngày</h2>
+              <h2 className="title text-lg">Video hoàn tất {days} ngày</h2>
               <span className="text-sm font-semibold">{formatNumber(videoTotal)} video</span>
             </div>
             <div className="mt-3">
@@ -188,7 +193,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
 
           <section className="card p-5 sm:p-6">
             <div className="flex items-center justify-between gap-3 mb-2">
-              <h2 className="display text-xl">Tài khoản mới</h2>
+              <h2 className="title text-lg">Tài khoản mới</h2>
               <button onClick={onOpenUsers} className="text-sm font-semibold text-[var(--accent-text)] inline-flex items-center gap-1">
                 Tất cả <ArrowRight className="w-3.5 h-3.5" />
               </button>
@@ -196,7 +201,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
             <ul className="divide-y divide-[var(--border-subtle)]">
               {stats.recent_users.slice(0, 6).map((u) => (
                 <li key={u.id} className="py-2.5 flex items-center gap-3">
-                  <span className="w-8 h-8 rounded-full bg-[var(--accent-soft)] text-[var(--accent-text)] flex items-center justify-center text-sm font-semibold shrink-0">
+                  <span className="w-8 h-8 rounded-[9px] bg-[var(--accent-soft)] text-[var(--accent-text)] flex items-center justify-center text-sm font-semibold shrink-0">
                     {u.name.charAt(0).toUpperCase()}
                   </span>
                   <div className="min-w-0 flex-1">

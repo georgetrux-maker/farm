@@ -93,7 +93,7 @@ export const VideoResult: React.FC<VideoResultProps> = ({ job, productTitle, pri
         <section className="card p-5 sm:p-6">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <h3 className="display text-xl sm:text-2xl leading-snug">{productTitle || 'Video review'}</h3>
+              <h3 className="title text-xl sm:text-2xl tracking-tight">{productTitle || 'Video review'}</h3>
               {price ? (
                 <p className="mt-1 flex items-baseline gap-2 flex-wrap">
                   <span className="text-lg font-semibold text-[var(--accent-text)]">{formatVnd(price)}</span>

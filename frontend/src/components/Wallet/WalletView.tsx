@@ -7,6 +7,7 @@ import {
 } from '../../services/api'
 import type { CreditTransaction } from '../../types'
 import { formatDateTime, formatNumber, formatVnd } from '../../lib/format'
+import { StatStrip } from '../ui/StatStrip'
 import { useToast } from '../ui/toastContext'
 
 interface WalletViewProps {
@@ -142,50 +143,46 @@ export const WalletView: React.FC<WalletViewProps> = ({ credits, pending, onCrea
     <div className="flex-1 h-full overflow-y-auto">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-5 sm:py-8 space-y-5 sm:space-y-6">
         <div>
-          <p className="eyebrow">Ví & thanh toán</p>
-          <h1 className="display text-3xl sm:text-4xl mt-1.5">Ví Credits</h1>
+          <h1 className="display text-3xl sm:text-4xl">Ví Credits</h1>
           <p className="text-[var(--text-muted)] mt-2">
             1 credit = {formatVnd(VND_PER_CREDIT)}
             {videoCost ? `, mỗi video ${formatNumber(videoCost)} credit` : ''}. Nạp qua VietQR, credit được cộng tự động.
           </p>
         </div>
 
-        {/* Số dư + tổng */}
-        <div className="grid grid-cols-3 lg:grid-cols-4 gap-2.5 sm:gap-4">
-          <div className="col-span-3 lg:col-span-1 rounded-[1.25rem] p-5 bg-[var(--ink)] text-[var(--on-ink)] shadow-[var(--shadow-pop)]">
-            <div className="flex items-center justify-between">
-              <span className="text-sm opacity-80">Số dư hiện tại</span>
-              <Wallet className="w-5 h-5 opacity-80" />
+        {/* Số dư (con số chính của trang) + các tổng trong một dải */}
+        <div className="grid lg:grid-cols-[minmax(0,1fr)_minmax(0,2.2fr)] gap-3 sm:gap-4">
+          <div className="rounded-[1.25rem] p-5 border border-[var(--accent-border)] bg-[radial-gradient(90%_120%_at_0%_0%,var(--accent-soft),transparent_70%)] bg-[var(--bg-card)] shadow-[var(--shadow-card)]">
+            <span className="text-sm text-[var(--text-muted)] flex items-center gap-1.5">
+              <Wallet className="w-4 h-4" /> Số dư hiện tại
+            </span>
+            <div className="text-5xl font-semibold tracking-tight mt-2">
+              {formatNumber(credits)} <span className="text-base font-medium text-[var(--text-muted)] tracking-normal">credit</span>
             </div>
-            <div className="text-4xl font-semibold mt-2">
-              {formatNumber(credits)} <span className="text-base font-normal opacity-80">credit</span>
-            </div>
-            <div className="text-sm opacity-80 mt-1">
+            <div className="text-sm text-[var(--text-muted)] mt-1.5">
               ≈ {formatVnd(credits * VND_PER_CREDIT)}
-              {videosFor(credits) !== null ? ` · đủ ${formatNumber(videosFor(credits)!)} video` : ''}
+              {videosFor(credits) !== null ? `, đủ ${formatNumber(videosFor(credits)!)} video` : ''}
             </div>
           </div>
-          {[
-            { label: 'Đã nạp', value: summary ? formatVnd(summary.deposited_vnd) : '…', sub: summary && `${formatNumber(summary.deposited_credits)} credit` },
-            { label: 'Đã dùng', value: summary ? `${formatNumber(summary.used_credits)}` : '…', sub: 'credit để tạo video' },
-            {
-              label: 'Được hoàn',
-              value: summary ? `${formatNumber(summary.refunded_credits)}` : '…',
-              sub: summary?.adjusted_credits ? `điều chỉnh ${summary.adjusted_credits > 0 ? '+' : ''}${formatNumber(summary.adjusted_credits)}` : 'credit từ video lỗi/hủy',
-            },
-          ].map((s) => (
-            <div key={s.label} className="card p-3 sm:p-5 min-w-0">
-              <span className="text-xs sm:text-sm text-[var(--text-muted)]">{s.label}</span>
-              <div className="text-lg sm:text-2xl font-semibold mt-1 sm:mt-2 truncate">{s.value}</div>
-              <div className="text-xs sm:text-sm text-[var(--text-muted)] mt-1">{s.sub}</div>
-            </div>
-          ))}
+          <StatStrip
+            items={[
+              { label: 'Đã nạp', value: summary ? formatVnd(summary.deposited_vnd) : '…', sub: summary ? `${formatNumber(summary.deposited_credits)} credit` : undefined },
+              { label: 'Đã dùng', value: summary ? formatNumber(summary.used_credits) : '…', sub: 'credit để tạo video' },
+              {
+                label: 'Được hoàn',
+                value: summary ? formatNumber(summary.refunded_credits) : '…',
+                sub: summary?.adjusted_credits
+                  ? `điều chỉnh ${summary.adjusted_credits > 0 ? '+' : ''}${formatNumber(summary.adjusted_credits)}`
+                  : 'credit từ video lỗi/hủy',
+              },
+            ]}
+          />
         </div>
 
         <div className="grid lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)] gap-5 sm:gap-6 items-start">
           {/* Chọn gói */}
           <section className="card p-4 sm:p-6 space-y-4">
-            <h2 className="display text-xl">Chọn gói nạp</h2>
+            <h2 className="title text-lg">Chọn gói nạp</h2>
             <div className="grid grid-cols-2 gap-3">
               {PACKAGES.map((c) => {
                 const active = !custom && pkg === c
@@ -205,7 +202,7 @@ export const WalletView: React.FC<WalletViewProps> = ({ credits, pending, onCrea
                     }`}
                   >
                     {c === SUGGESTED && (
-                      <span className="absolute -top-2.5 right-3 px-2 py-0.5 rounded-full bg-[var(--ink)] text-[var(--on-ink)] text-[10px] font-semibold">
+                      <span className="tag absolute -top-2.5 right-3">
                         Gợi ý
                       </span>
                     )}
@@ -252,7 +249,7 @@ export const WalletView: React.FC<WalletViewProps> = ({ credits, pending, onCrea
 
           {/* Mã QR */}
           <section className="card p-4 sm:p-6 lg:sticky lg:top-0">
-            <h2 className="display text-xl mb-4">Thanh toán VietQR</h2>
+            <h2 className="title text-lg mb-4">Thanh toán VietQR</h2>
             {!pending ? (
               <div className="flex flex-col items-center text-center gap-3 py-6 px-2">
                 <span className="w-16 h-16 rounded-2xl bg-[var(--accent-soft)] text-[var(--accent-text)] flex items-center justify-center">
@@ -304,7 +301,7 @@ export const WalletView: React.FC<WalletViewProps> = ({ credits, pending, onCrea
 
         {/* Lịch sử */}
         <section className="card p-4 sm:p-6">
-          <h2 className="display text-xl mb-3">Lịch sử giao dịch</h2>
+          <h2 className="title text-lg mb-3">Lịch sử giao dịch</h2>
           {!history ? (
             <div className="space-y-3">
               {[0, 1, 2].map((i) => (
@@ -338,7 +335,7 @@ export const WalletView: React.FC<WalletViewProps> = ({ credits, pending, onCrea
                       <td className="py-3 pr-3 font-mono text-xs text-[var(--text-muted)]">{t.id}</td>
                       <td className="py-3 pr-3 text-[var(--text-muted)] tabular-nums whitespace-nowrap">{formatDateTime(t.created_at)}</td>
                       <td className="py-3 pr-3">
-                        <span className={`inline-flex px-2.5 py-1 rounded-full border text-xs font-semibold ${TX_STATUS[t.status].cls}`}>
+                        <span className={`inline-flex px-2 py-0.5 rounded-md border text-xs font-semibold ${TX_STATUS[t.status].cls}`}>
                           {TX_STATUS[t.status].label}
                         </span>
                       </td>

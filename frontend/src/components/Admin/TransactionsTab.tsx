@@ -25,7 +25,7 @@ const STATUS: Record<AdminDepositStatus, { label: string; cls: string }> = {
 function sourceText(d: AdminDeposit): string {
   const by = d.confirmed_by
   if (d.status === 'pending') return 'Chờ tiền về'
-  if (!by) return '—'
+  if (!by) return '-'
   if (by === 'sepay') return 'SePay tự động'
   if (d.status === 'cancelled') return 'Quản trị viên hủy'
   if (by.startsWith('admin')) return 'Quản trị viên duyệt'
@@ -34,7 +34,7 @@ function sourceText(d: AdminDeposit): string {
 }
 
 const StatusPill: React.FC<{ status: AdminDepositStatus }> = ({ status }) => (
-  <span className={`inline-flex px-2.5 py-1 rounded-full border text-xs font-semibold whitespace-nowrap ${STATUS[status].cls}`}>
+  <span className={`inline-flex px-2 py-0.5 rounded-md border text-xs font-semibold whitespace-nowrap ${STATUS[status].cls}`}>
     {STATUS[status].label}
   </span>
 )
@@ -197,7 +197,7 @@ export const TransactionsTab: React.FC<{ onChanged: () => void }> = ({ onChanged
                       <p className="text-xs text-[var(--text-muted)] truncate">{d.user_email}</p>
                     </td>
                     <td className="px-3 py-3.5 text-right tabular-nums">
-                      <p className="font-semibold">{d.amount_vnd ? formatVnd(d.amount_vnd) : '—'}</p>
+                      <p className="font-semibold">{d.amount_vnd ? formatVnd(d.amount_vnd) : '-'}</p>
                       <p className="text-xs text-[var(--text-muted)]">{formatNumber(d.amount_credits)} credit</p>
                     </td>
                     <td className="px-3 py-3.5 text-[var(--text-muted)] tabular-nums whitespace-nowrap">
@@ -229,7 +229,7 @@ export const TransactionsTab: React.FC<{ onChanged: () => void }> = ({ onChanged
                 <div className="flex items-end justify-between gap-3">
                   <div className="text-sm">
                     <p className="font-semibold">
-                      {d.amount_vnd ? formatVnd(d.amount_vnd) : '—'}{' '}
+                      {d.amount_vnd ? formatVnd(d.amount_vnd) : '-'}{' '}
                       <span className="font-normal text-[var(--text-muted)]">· {formatNumber(d.amount_credits)} credit</span>
                     </p>
                     <p className="text-xs text-[var(--text-muted)] font-mono mt-0.5">{d.transfer_content || d.id}</p>
@@ -272,7 +272,7 @@ export const TransactionsTab: React.FC<{ onChanged: () => void }> = ({ onChanged
                 {action.deposit.user_name} · {action.deposit.user_email}
               </dd>
               <dt className="text-[var(--text-muted)]">Số tiền</dt>
-              <dd className="font-semibold">{action.deposit.amount_vnd ? formatVnd(action.deposit.amount_vnd) : '—'}</dd>
+              <dd className="font-semibold">{action.deposit.amount_vnd ? formatVnd(action.deposit.amount_vnd) : '-'}</dd>
               <dt className="text-[var(--text-muted)]">Credit</dt>
               <dd className="font-semibold">{formatNumber(action.deposit.amount_credits)}</dd>
               <dt className="text-[var(--text-muted)]">Nội dung CK</dt>

@@ -74,12 +74,10 @@ export const ModelPicker: React.FC<{ avatars: BrandAvatar[]; value: string; onCh
                     <Check className="w-3.5 h-3.5" />
                   </span>
                 )}
-                {a.badge && (
-                  <span className="absolute bottom-2 left-2 glass rounded-full px-2 py-0.5 text-[10px] font-semibold">{a.badge}</span>
-                )}
               </div>
               <div className="mt-2 text-sm font-semibold truncate">{a.name}</div>
               <div className="text-xs text-[var(--text-muted)] truncate">{[a.height, a.style].filter(Boolean).join(' · ')}</div>
+              {a.badge && <div className="text-xs font-medium text-[var(--accent-text)] truncate mt-0.5">{a.badge}</div>}
             </button>
           )
         })}

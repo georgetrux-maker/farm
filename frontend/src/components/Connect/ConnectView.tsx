@@ -94,15 +94,14 @@ export const ConnectView: React.FC<ConnectViewProps> = ({ isAdmin }) => {
     <div className="flex-1 h-full overflow-y-auto text-[var(--text-main)]">
       <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-5 sm:py-8 space-y-5 sm:space-y-6">
         <div>
-          <p className="eyebrow">Kênh bán hàng</p>
-          <h1 className="display text-3xl sm:text-4xl mt-1.5">Kênh liên kết</h1>
+          <h1 className="display text-3xl sm:text-4xl">Kênh liên kết</h1>
           <p className="text-[var(--text-muted)] mt-2">
             Kết nối một lần, sau đó đăng video lên TikTok hoặc Facebook ngay trong Aura.
           </p>
         </div>
 
         <section className="card p-5 sm:p-6">
-          <h2 className="display text-xl">Kết nối trong 3 bước</h2>
+          <h2 className="title text-lg">Kết nối trong 3 bước</h2>
           <ol className="grid sm:grid-cols-3 gap-3 sm:gap-4 mt-4">
             {GUIDE.map((g, i) => (
               <li key={g.title} className="flex sm:flex-col gap-3 p-4 rounded-2xl bg-[var(--bg-surface)]">
@@ -211,7 +210,7 @@ export const ConnectView: React.FC<ConnectViewProps> = ({ isAdmin }) => {
 
         {pubs.length > 0 && (
           <section className="card p-5 sm:p-6">
-            <h2 className="display text-xl mb-2">Lịch sử đăng video</h2>
+            <h2 className="title text-lg mb-2">Lịch sử đăng video</h2>
             <ul className="divide-y divide-[var(--border-subtle)]">
               {pubs.map((p) => (
                 <li key={p.id} className="py-3.5 flex items-start justify-between gap-3">

@@ -79,8 +79,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ section,
 
         <div className="flex items-end justify-between gap-4 flex-wrap">
           <div className="min-w-0">
-            <p className="eyebrow">Admin Panel</p>
-            <h1 className="display text-3xl sm:text-4xl mt-1.5">{current.label}</h1>
+            <h1 className="title text-2xl sm:text-3xl tracking-tight">{current.label}</h1>
             <p className="text-[var(--text-muted)] mt-2">{SUBTITLES[section]}</p>
           </div>
           {section === 'overview' && (
