@@ -55,9 +55,11 @@ export const VideoResult: React.FC<VideoResultProps> = ({ job, productTitle, pri
   if (!job.output_video_url) return null
 
   const params = job.params ?? {}
+  const multi = params.scenes && params.scenes.length > 1 ? params.scenes : null
   const details = [
     ['Người mẫu', labels.model(params.avatar_id)],
-    ['Kiểu video', labels.template(params.template)],
+    ['Kiểu video', multi ? `Pro Studio, ${multi.length} cảnh` : labels.template(params.template)],
+    ['Bối cảnh', multi ? [...new Set(multi.map((x) => labels.scene(x.scene)))].join(', ') : labels.scene(params.scene)],
     ['Giọng đọc', labels.voice(params.voice)],
     ['Lời review', labels.style(params.script_style)],
     ['Khung hình', script?.video_resolution ? `${script.video_resolution} (9:16)` : '9:16 dọc'],

@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react'
 import { fetchAvatars, fetchStudioOptions } from '../services/api'
-import { STYLE_LABELS, TEMPLATE_SHORT_LABELS } from './labels'
+import { SCENE_LABELS, STYLE_LABELS, TEMPLATE_SHORT_LABELS } from './labels'
 
 export interface StudioLabels {
   model: (id?: string | null) => string | null
   template: (id?: string | null) => string | null
   voice: (id?: string | null) => string | null
   style: (id?: string | null) => string | null
+  scene: (id?: string | null) => string | null
 }
 
 let cache: Promise<{ models: Record<string, string>; voices: Record<string, string> }> | null = null
@@ -46,5 +47,6 @@ export function useStudioLabels(): StudioLabels {
     template: (id) => (id ? (TEMPLATE_SHORT_LABELS[id] ?? id) : null),
     voice: (id) => (id ? (maps?.voices[id] ?? null) : null),
     style: (id) => (id ? (STYLE_LABELS[id] ?? id) : null),
+    scene: (id) => (id ? (SCENE_LABELS[id] ?? id) : null),
   }
 }

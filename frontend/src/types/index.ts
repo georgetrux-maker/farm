@@ -38,6 +38,9 @@ export interface AIJob {
     custom_script?: string | null
     duration_sec?: number
     require_approval?: boolean
+    scene?: string
+    scenes?: SceneSpec[]
+    effects?: VideoEffects
   }
   script?: JobScript | null
   created_at?: string
@@ -153,4 +156,17 @@ export interface ProductLibraryPage {
   has_more: boolean
   all: number
   categories: { category: string | null; count: number }[]
+}
+
+/** Một cảnh của Pro Studio */
+export interface SceneSpec {
+  template: string
+  scene: string
+  duration_sec: number
+}
+
+export interface VideoEffects {
+  transition: 'fade' | 'slide' | 'zoom' | 'cut'
+  subtitles: boolean
+  title_card: boolean
 }

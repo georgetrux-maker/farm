@@ -7,6 +7,7 @@ import { Wordmark } from './components/ui/Wordmark'
 import { LoginView } from './components/Auth/LoginView'
 import { HomeView } from './components/Home/HomeView'
 import { CreateVideoView } from './components/Create/CreateVideoView'
+import { ProStudioView } from './components/Studio/ProStudioView'
 import { seedFromVideo, type CreateRequest } from './lib/createRequest'
 import { ProductsView } from './components/Products/ProductsView'
 import { ModelsView } from './components/Models/ModelsView'
@@ -52,10 +53,15 @@ export default function App() {
   const [auditOpen, setAuditOpen] = useState(false)
   const [selectedTemplate, setSelectedTemplate] = useState<ShowcaseTemplate | null>(null)
   const [createRequest, setCreateRequest] = useState<CreateRequest | null>(null)
+  const [studioRequest, setStudioRequest] = useState<CreateRequest | null>(null)
+  const [autoRequest, setAutoRequest] = useState<number | null>(null)
 
   const isAdmin = user?.role === 'admin'
   // Trang Quản trị chỉ dành cho quản trị viên: tài khoản thường gõ #admin thì về Trang chủ
   const view: View = route.view === 'admin' && !isAdmin ? 'home' : route.view
+  // Pro Studio giữ nguyên trạng thái khi chuyển trang (giống Tạo video), nhưng chỉ tải khi mở lần đầu
+  const [studioOpened, setStudioOpened] = useState(false)
+  if (view === 'studio' && !studioOpened) setStudioOpened(true)
   const authRef = useRef(authState)
   useEffect(() => {
     authRef.current = authState
@@ -178,6 +184,11 @@ export default function App() {
   const openWallet = useCallback(() => navigate('wallet'), [navigate])
   const openVideos = useCallback(() => navigate('videos'), [navigate])
   const openCreate = useCallback(() => navigate('create'), [navigate])
+  const openStudio = useCallback(() => navigate('studio'), [navigate])
+  const startAuto = useCallback(() => {
+    setAutoRequest(Date.now())
+    navigate('create')
+  }, [navigate])
   const handleUseTemplate = useCallback(
     (tmpl: ShowcaseTemplate) => {
       setSelectedTemplate(tmpl)
@@ -208,8 +219,14 @@ export default function App() {
     },
     [navigate],
   )
+  // Video nhiều cảnh thì mở lại ở Pro Studio
   const handleRemake = useCallback(
     (video: MyVideo) => {
+      if ((video.params?.scenes?.length ?? 0) > 1) {
+        setStudioRequest(seedFromVideo(video))
+        navigate('studio')
+        return
+      }
       setCreateRequest(seedFromVideo(video))
       navigate('create')
     },
@@ -284,15 +301,34 @@ export default function App() {
               onCreditsChange={setWalletCredits}
               onOpenDeposit={openWallet}
               onOpenVideos={openVideos}
+              onOpenStudio={openStudio}
               initialTemplate={selectedTemplate}
               onClearInitialTemplate={() => setSelectedTemplate(null)}
               request={createRequest}
+              autoRequest={autoRequest}
             />
           </div>
-          {view !== 'create' && (
+          {studioOpened && (
+            <div className={view === 'studio' ? 'flex-1 min-w-0 flex animate-fade-in' : 'hidden'}>
+              <ProStudioView
+                credits={walletCredits}
+                onCreditsChange={setWalletCredits}
+                onOpenDeposit={openWallet}
+                onOpenVideos={openVideos}
+                request={studioRequest}
+              />
+            </div>
+          )}
+          {view !== 'create' && view !== 'studio' && (
             <div key={view} className="flex-1 min-w-0 flex animate-fade-in">
               {view === 'home' && (
-                <HomeView user={user} credits={walletCredits} onNavigate={setActiveView} onOpenDeposit={openWallet} />
+                <HomeView
+                  user={user}
+                  credits={walletCredits}
+                  onNavigate={setActiveView}
+                  onOpenDeposit={openWallet}
+                  onStartAuto={startAuto}
+                />
               )}
               {view === 'showcase' && <TemplateShowcaseView onUseTemplate={handleUseTemplate} />}
               {view === 'products' && (

@@ -1,11 +1,11 @@
 import type React from 'react'
 import {
-  Film, Home, KeyRound, LayoutDashboard, LayoutGrid, LifeBuoy, Link2, Package, Receipt, ScrollText, Shirt, UserRound, Users,
+  Clapperboard, Film, Home, KeyRound, LayoutDashboard, LayoutGrid, LifeBuoy, Link2, Package, Receipt, ScrollText, Shirt, UserRound, Users,
   Wallet, Wand2,
 } from 'lucide-react'
 
 export type View =
-  | 'home' | 'create' | 'products' | 'models' | 'showcase' | 'videos' | 'connect' | 'wallet' | 'support' | 'admin'
+  | 'home' | 'create' | 'studio' | 'products' | 'models' | 'showcase' | 'videos' | 'connect' | 'wallet' | 'support' | 'admin'
 export type AdminSection = 'overview' | 'users' | 'transactions' | 'models' | 'settings' | 'logs'
 
 export interface NavItem<T extends string = View> {
@@ -18,6 +18,7 @@ export interface NavItem<T extends string = View> {
 export const NAV_ITEMS: NavItem[] = [
   { id: 'home', label: 'Trang chủ', icon: Home },
   { id: 'create', label: 'Tạo video AI', icon: Wand2 },
+  { id: 'studio', label: 'Pro Studio', icon: Clapperboard },
   { id: 'products', label: 'Sản phẩm của tôi', icon: Shirt },
   { id: 'models', label: 'Người mẫu AI', icon: UserRound },
   { id: 'videos', label: 'Video của tôi', icon: Film },
@@ -45,7 +46,7 @@ export const ADMIN_SECTIONS: NavItem<AdminSection>[] = [
   { id: 'logs', label: 'Nhật ký hệ thống', icon: ScrollText },
 ]
 
-const VIEWS: View[] = ['home', 'create', 'products', 'models', 'showcase', 'videos', 'connect', 'wallet', 'support', 'admin']
+const VIEWS: View[] = ['home', 'create', 'studio', 'products', 'models', 'showcase', 'videos', 'connect', 'wallet', 'support', 'admin']
 const ADMIN_IDS = ADMIN_SECTIONS.map((s) => s.id)
 
 /** "#admin/users" -> { view: 'admin', section: 'users' }; tên cũ "#stats" -> trang Ví */

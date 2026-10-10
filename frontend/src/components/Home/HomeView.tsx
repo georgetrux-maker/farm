@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react'
-import { ArrowDownRight, ArrowRight, ArrowUpRight, Coins, Film, LayoutGrid, Package, Play, UserRound, Wand2 } from 'lucide-react'
+import { ArrowDownRight, ArrowRight, ArrowUpRight, Clapperboard, Coins, Film, LayoutGrid, Package, Play, UserRound, Wand2, Zap } from 'lucide-react'
 import { fetchDashboardStats, fetchMyVideos, fetchStudioOptions, type UserProfile } from '../../services/api'
 import type { DashboardStats, MyVideo } from '../../types'
 import { formatDateTime, formatNumber, formatVnd } from '../../lib/format'
@@ -14,15 +14,12 @@ interface HomeViewProps {
   credits: number
   onNavigate: (view: View) => void
   onOpenDeposit: () => void
+  /** Mở Tạo video ở chế độ Tự động */
+  onStartAuto: () => void
 }
 
 const VND_PER_CREDIT = 100
 
-const STEPS = [
-  { title: 'Thêm sản phẩm', text: 'Dán link Shopee, TikTok Shop hoặc tải ảnh sản phẩm lên' },
-  { title: 'Chọn người mẫu & giọng đọc', text: 'Chọn phong cách, sửa kịch bản AI viết sẵn nếu muốn' },
-  { title: 'Nhận video & đăng bán', text: 'Tải về hoặc đăng thẳng lên TikTok, Facebook' },
-]
 
 /** Thay đổi 7 ngày gần nhất so với 7 ngày trước đó: mũi tên + phần trăm (không chỉ dựa vào màu) */
 const WeekTrend: React.FC<{ trend?: { week: number; prev_week: number }; unit: string }> = ({ trend, unit }) => {
@@ -60,7 +57,7 @@ function weeklyPoints(stats: DashboardStats): ColumnPoint[] {
 }
 
 /** Trang chủ của shop: lời chào, 3 bước tạo video, số liệu nhanh, video gần đây, hoạt động 7 ngày. */
-export const HomeView: React.FC<HomeViewProps> = ({ user, credits, onNavigate, onOpenDeposit }) => {
+export const HomeView: React.FC<HomeViewProps> = ({ user, credits, onNavigate, onOpenDeposit, onStartAuto }) => {
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [recent, setRecent] = useState<MyVideo[] | null>(null)
   const [videoCost, setVideoCost] = useState<number | null>(null)
@@ -89,43 +86,61 @@ export const HomeView: React.FC<HomeViewProps> = ({ user, credits, onNavigate, o
   return (
     <div className="flex-1 h-full overflow-y-auto">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-5 sm:py-8 space-y-5 sm:space-y-6">
-        {/* Lời chào + 3 bước */}
+        {/* Lời chào + hai cách tạo video */}
         <section className="relative overflow-hidden rounded-[1.5rem] border border-[var(--border-subtle)] bg-[radial-gradient(70%_120%_at_0%_0%,var(--accent-soft),transparent_60%),radial-gradient(50%_80%_at_100%_100%,var(--accent-soft),transparent_70%)] bg-[var(--bg-card)] shadow-[var(--shadow-card)] p-5 sm:p-8 animate-fade-up">
-          <div className="grid lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] gap-6 lg:gap-10 items-center">
+          <div className="grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)] gap-6 lg:gap-10 items-center">
             <div>
               <p className="text-sm font-medium text-[var(--accent-text)]">Xin chào, {user.name}</p>
-              <h1 className="display text-[1.75rem] leading-[1.1] sm:text-[2.6rem] mt-2">
-                Tạo video thời trang chỉ trong 3 bước
-              </h1>
+              <h1 className="display text-[1.75rem] leading-[1.1] sm:text-[2.6rem] mt-2">Bắt đầu tạo video</h1>
               <p className="text-[var(--text-sub)] mt-3 max-w-lg">
-                Từ một tấm ảnh sản phẩm thành video review có người mẫu, lời thoại và phụ đề.
+                Từ một tấm ảnh sản phẩm thành video review có người mẫu, bối cảnh, lời thoại và phụ đề.
               </p>
-              <div className="flex flex-wrap gap-2.5 mt-5">
-                <button onClick={() => onNavigate('create')} className="btn btn-primary btn-lg">
-                  <Wand2 className="w-4 h-4" /> Tạo video ngay
-                </button>
-                <button onClick={() => onNavigate('showcase')} className="btn btn-secondary btn-lg">
-                  <LayoutGrid className="w-4 h-4" /> Xem thư viện mẫu
-                </button>
-              </div>
+              <button onClick={() => onNavigate('showcase')} className="btn btn-secondary mt-5">
+                <LayoutGrid className="w-4 h-4" /> Xem thư viện mẫu
+              </button>
             </div>
-            <ol className="divide-y divide-[var(--border-subtle)] rounded-2xl bg-[color-mix(in_srgb,var(--bg-card)_70%,transparent)] border border-[var(--border-subtle)] backdrop-blur-sm">
-              {STEPS.map((s, i) => (
-                <li
-                  key={s.title}
-                  className="flex items-start gap-3.5 p-4 animate-fade-up"
+            <div className="grid sm:grid-cols-2 gap-3">
+              {[
+                {
+                  icon: Zap,
+                  title: 'Auto Mode',
+                  text: 'Tải ảnh hoặc dán link, chọn phong cách và bối cảnh. AI lo người mẫu, lời review, giọng đọc.',
+                  cta: 'Tạo nhanh',
+                  onClick: onStartAuto,
+                  primary: true,
+                },
+                {
+                  icon: Clapperboard,
+                  title: 'Pro Studio',
+                  text: 'Dựng video nhiều cảnh: mỗi cảnh một bối cảnh và chuyển động, thêm hiệu ứng chuyển cảnh.',
+                  cta: 'Mở Pro Studio',
+                  onClick: () => onNavigate('studio'),
+                  primary: false,
+                },
+              ].map((m, i) => (
+                <button
+                  key={m.title}
+                  onClick={m.onClick}
+                  className="group text-left rounded-2xl border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--bg-card)_80%,transparent)] backdrop-blur-sm p-4 sm:p-5 flex flex-col gap-3 hover:border-[var(--border-strong)] hover:-translate-y-0.5 transition animate-fade-up"
                   style={{ animationDelay: `${120 + i * 80}ms` }}
                 >
-                  <span className="w-8 h-8 rounded-[10px] bg-[var(--ink)] text-[var(--on-ink)] text-sm font-semibold flex items-center justify-center shrink-0">
-                    {i + 1}
+                  <span
+                    className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+                      m.primary ? 'bg-[var(--ink)] text-[var(--on-ink)]' : 'bg-[var(--accent-soft)] text-[var(--accent-text)]'
+                    }`}
+                  >
+                    <m.icon className="w-5 h-5" />
                   </span>
-                  <div className="min-w-0">
-                    <p className="font-semibold leading-snug">{s.title}</p>
-                    <p className="text-sm text-[var(--text-muted)]">{s.text}</p>
-                  </div>
-                </li>
+                  <span>
+                    <span className="title text-lg block">{m.title}</span>
+                    <span className="text-sm text-[var(--text-muted)] block mt-1">{m.text}</span>
+                  </span>
+                  <span className="mt-auto text-sm font-semibold text-[var(--accent-text)] inline-flex items-center gap-1">
+                    {m.cta} <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5" />
+                  </span>
+                </button>
               ))}
-            </ol>
+            </div>
           </div>
         </section>
 

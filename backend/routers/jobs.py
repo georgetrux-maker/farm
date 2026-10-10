@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from backend import config
 from backend.ai import motion as motion_engine, tts as tts_engine
 from backend.ai.motion import TEMPLATES
+from backend.ai.scenes import DEFAULT_SCENE, MAX_SCENES, SCENES
 from backend.ai.script import STYLES
 from backend.ai.tts import VOICES
 from backend.auth import get_current_user
@@ -21,6 +22,19 @@ from backend.services.task_queue import QueueUnavailable
 router = APIRouter()
 
 
+class SceneSpec(BaseModel):
+    """Một cảnh của Pro Studio: kiểu chuyển động, bối cảnh, thời lượng."""
+    template: str = motion_engine.DEFAULT_TEMPLATE
+    scene: str = DEFAULT_SCENE
+    duration_sec: int = Field(default=5, ge=3, le=10)
+
+
+class Effects(BaseModel):
+    transition: Literal["fade", "slide", "zoom", "cut"] = "fade"
+    subtitles: bool = Field(default=True, description="In phụ đề lời thoại lên video")
+    title_card: bool = Field(default=True, description="Thẻ tên + giá sản phẩm ở đầu video")
+
+
 class PipelineRunRequest(BaseModel):
     product_id: str = "prod_dam_voan_to"
     avatar_id: Optional[str] = None
@@ -30,11 +44,27 @@ class PipelineRunRequest(BaseModel):
     custom_script: Optional[str] = Field(default=None, max_length=600, description="Kịch bản tự viết, AI đọc đúng nguyên văn")
     duration_sec: int = Field(default=5, ge=3, le=15)
     require_approval: bool = Field(default=False, description="Dừng sau bước thử đồ để người bán duyệt ảnh")
+    scene: str = Field(default=DEFAULT_SCENE, description="Bối cảnh: studio, street, cafe, beach, indoor")
+    scenes: Optional[List[SceneSpec]] = Field(default=None, min_length=1, max_length=MAX_SCENES,
+                                              description="Pro Studio: danh sách cảnh (thay cho template/scene/duration_sec)")
+    effects: Optional[Effects] = None
+
+
+def _check_motion(template: str, scene: str):
+    if template not in TEMPLATES:
+        raise HTTPException(status_code=400, detail=f"Mẫu video phải là một trong: {', '.join(TEMPLATES)}")
+    if scene not in SCENES:
+        raise HTTPException(status_code=400, detail=f"Bối cảnh phải là một trong: {', '.join(SCENES)}")
+
+
+def job_cost(params: dict) -> int:
+    """Giá một video: giá cơ bản + phí mỗi cảnh thêm của Pro Studio."""
+    extra = max(0, len(params.get("scenes") or []) - 1)
+    return config.pipeline_cost_credits() + extra * config.extra_scene_cost_credits()
 
 
 def _pipeline_params(req, user: dict) -> dict:
-    if req.template not in TEMPLATES:
-        raise HTTPException(status_code=400, detail=f"Mẫu video phải là một trong: {', '.join(TEMPLATES)}")
+    _check_motion(req.template, getattr(req, "scene", None) or DEFAULT_SCENE)
     if req.voice not in VOICES:
         raise HTTPException(status_code=400, detail="Giọng đọc không hợp lệ")
     if req.script_style not in STYLES:
@@ -43,10 +73,23 @@ def _pipeline_params(req, user: dict) -> dict:
     # Mẫu riêng của shop khác (hoặc đã xóa) coi như không tồn tại
     if not avatar_usable_by(get_brand_avatar(avatar_id), user["id"]):
         raise HTTPException(status_code=404, detail="Người mẫu không tồn tại")
-    return {"avatar_id": avatar_id, "template": req.template, "voice": req.voice,
-            "script_style": req.script_style, "duration_sec": req.duration_sec,
-            "custom_script": (getattr(req, "custom_script", None) or "").strip() or None,
-            "require_approval": bool(getattr(req, "require_approval", False))}
+    params = {"avatar_id": avatar_id, "template": req.template, "voice": req.voice,
+              "script_style": req.script_style, "duration_sec": req.duration_sec,
+              "scene": getattr(req, "scene", None) or DEFAULT_SCENE,
+              "custom_script": (getattr(req, "custom_script", None) or "").strip() or None,
+              "require_approval": bool(getattr(req, "require_approval", False))}
+    scenes = getattr(req, "scenes", None)
+    if scenes:
+        for spec in scenes:
+            _check_motion(spec.template, spec.scene)
+        params["scenes"] = [spec.model_dump() for spec in scenes]
+        # Cảnh đầu quyết định ảnh thử đồ (duyệt ảnh, ảnh bìa) và các thông số cũ để danh sách video hiển thị đúng
+        first = scenes[0]
+        params.update(template=first.template, scene=first.scene, duration_sec=first.duration_sec)
+    effects = getattr(req, "effects", None)
+    if effects:
+        params["effects"] = effects.model_dump()
+    return params
 
 
 @router.post("/api/pipeline/run")
@@ -55,7 +98,7 @@ def api_run_pipeline(req: PipelineRunRequest, user: dict = Depends(get_current_u
     owned_product(req.product_id, user)
     params = _pipeline_params(req, user)
     try:
-        res = create_ai_job(user["id"], req.product_id, params)
+        res = create_ai_job(user["id"], req.product_id, params, job_cost(params))
     except InsufficientCredits as e:
         raise HTTPException(status_code=402, detail=str(e))
     except QueueUnavailable as e:
@@ -120,6 +163,7 @@ class BatchCreateRequest(BaseModel):
     voice: str = tts_engine.DEFAULT_VOICE
     script_style: str = "genz"
     duration_sec: int = Field(default=5, ge=3, le=15)
+    scene: str = DEFAULT_SCENE
 
 
 @router.post("/api/batch/create")

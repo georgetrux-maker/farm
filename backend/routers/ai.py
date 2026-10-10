@@ -9,7 +9,8 @@ from backend import config
 from backend.ai import motion as motion_engine, script as script_engine, tts as tts_engine, vton as vton_engine
 from backend.ai.http_utils import ProviderError
 from backend.ai.motion import generate_motion, TEMPLATES
-from backend.ai.render import render_final_video
+from backend.ai.render import render_final_video, TRANSITIONS
+from backend.ai.scenes import MAX_SCENES, SCENES
 from backend.ai.script import generate_koc_script, STYLES
 from backend.ai.segmentation import segment_garment
 from backend.ai.tts import generate_speech, VOICES
@@ -94,7 +95,11 @@ def api_templates():
         "templates": [{"id": k, "label": v["label"]} for k, v in TEMPLATES.items()],
         "voices": [{"id": k, "label": v} for k, v in VOICES.items()],
         "script_styles": list(STYLES),
+        "scenes": [{"id": k, "label": v["label"]} for k, v in SCENES.items()],
+        "transitions": list(TRANSITIONS),
+        "max_scenes": MAX_SCENES,
         "pipeline_cost_credits": config.pipeline_cost_credits(),
+        "extra_scene_cost_credits": config.extra_scene_cost_credits(),
         "tryon_preview_cost_credits": config.tryon_preview_cost_credits(),
         "engines": {
             "analysis": script_engine.engine_name(),

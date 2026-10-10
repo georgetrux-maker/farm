@@ -84,6 +84,11 @@ def pipeline_cost_credits() -> int:
     return _admin_int("pipeline_cost_credits", "PIPELINE_COST_CREDITS", 30)
 
 
+def extra_scene_cost_credits() -> int:
+    """Pro Studio: phí mỗi cảnh thêm sau cảnh đầu tiên (mỗi cảnh là một lần tạo chuyển động AI)."""
+    return _admin_int("extra_scene_cost_credits", "EXTRA_SCENE_COST_CREDITS", 20)
+
+
 def max_upload_bytes() -> int:
     return _env_int("MAX_UPLOAD_MB", 10) * 1024 * 1024
 

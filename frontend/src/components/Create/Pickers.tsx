@@ -1,6 +1,7 @@
 import React from 'react'
 import { Check, Clapperboard, Footprints, MapPin, Play, RotateCw, Square, ZoomIn } from 'lucide-react'
 import type { BrandAvatar } from '../../types'
+import { SCENE_BACKDROPS } from '../../lib/labels'
 import { MotionPreview } from '../ui/MotionPreview'
 import { AvatarImage } from '../ui/AvatarImage'
 
@@ -132,6 +133,37 @@ export const TemplatePicker: React.FC<{
             </span>
             {desc && <span className="block text-sm text-[var(--text-muted)] mt-0.5 leading-snug">{desc}</span>}
           </span>
+        </button>
+      )
+    })}
+  </div>
+)
+
+/** Chọn bối cảnh: ô màu phông thu nhỏ + tên, chọn một */
+export const ScenePicker: React.FC<{
+  scenes: { id: string; label: string }[]
+  value: string
+  onChange: (id: string) => void
+  size?: 'sm' | 'md'
+}> = ({ scenes, value, onChange, size = 'md' }) => (
+  <div role="radiogroup" aria-label="Bối cảnh" className={`grid grid-cols-5 ${size === 'sm' ? 'gap-2' : 'gap-2.5 sm:gap-3'}`}>
+    {scenes.map((s) => {
+      const selected = value === s.id
+      return (
+        <button key={s.id} type="button" role="radio" aria-checked={selected} onClick={() => onChange(s.id)} className="group text-center min-w-0">
+          <span
+            className={`relative block rounded-xl ring-2 ring-offset-2 ring-offset-[var(--bg-card)] transition ${
+              size === 'sm' ? 'aspect-square' : 'aspect-[3/4]'
+            } ${selected ? 'ring-[var(--accent-color)]' : 'ring-transparent group-hover:ring-[var(--border-strong)]'}`}
+            style={{ background: SCENE_BACKDROPS[s.id] ?? 'var(--bg-surface)' }}
+          >
+            {selected && (
+              <span className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-[var(--accent-color)] text-[var(--on-accent)] flex items-center justify-center animate-scale-in">
+                <Check className="w-3 h-3" />
+              </span>
+            )}
+          </span>
+          <span className={`block mt-1.5 text-xs sm:text-sm truncate ${selected ? 'font-semibold' : 'text-[var(--text-sub)]'}`}>{s.label}</span>
         </button>
       )
     })}

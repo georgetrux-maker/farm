@@ -1,18 +1,20 @@
 import json
 import logging
+import os
 import uuid
 
 from backend import config
 from backend.ai.motion import DEFAULT_TEMPLATE, generate_motion
-from backend.ai.render import extract_keyframes, render_final_video
+from backend.ai.render import TRANSITION_SEC, concat_scenes, extract_keyframes, render_final_video
+from backend.ai.scenes import DEFAULT_SCENE
 from backend.ai.script import caption_and_hashtags, generate_koc_script
 from backend.ai.segmentation import segment_garment
 from backend.ai.product_analysis import analyze_product
 from backend.ai.tts import DEFAULT_VOICE, generate_speech
 from backend.ai.vton import engine_name as vton_engine_name
-from backend.ai.vton import generate_tryon
+from backend.ai.vton import generate_tryon, restage_placeholder
 from backend.database import get_brand_avatar, get_db, get_product, save_product_analysis, search_key
-from backend.media_paths import try_resolve_media_ref
+from backend.media_paths import media_path, try_resolve_media_ref
 from backend.services.task_queue import QueueUnavailable, enqueue_job
 from backend.services.wallet import deduct_credits, refund_credits
 
@@ -134,7 +136,8 @@ def _run_tryon_stage(job_id: str, params: dict, product: dict) -> dict:
     return generate_tryon(garment, avatar_id=avatar_id, avatar_row=get_brand_avatar(avatar_id),
                           output_name=f"tryon_{job_id}.jpg",
                           garment_type=analysis.get("garment_type", "auto"),
-                          photo_type=analysis.get("photo_type", "auto"))
+                          photo_type=analysis.get("photo_type", "auto"),
+                          scene=params.get("scene") or DEFAULT_SCENE)
 
 
 def _run_video_stage(job_id: str, params: dict, product: dict, tryon_path: str):
@@ -164,14 +167,24 @@ def _run_video_stage(job_id: str, params: dict, product: dict, tryon_path: str):
     _update_job(job_id, 'processing', 65, 'Bước 5/5: Tạo chuyển động video 9:16 (AI có thể mất vài phút)',
                 audio=tts["audio_url"], script=json.dumps(script, ensure_ascii=False))
 
-    motion = generate_motion(tryon_path, duration_sec=int(params.get("duration_sec") or 5),
-                             template=params.get("template") or DEFAULT_TEMPLATE, output_name=f"motion_{job_id}.mp4",
-                             fill_duration_sec=tts["duration_sec"] + 0.4)
+    scenes = params.get("scenes") or []
+    effects = params.get("effects") or {}
+    min_total = 0.0
+    if len(scenes) > 1:
+        motion, min_total = _render_scenes(job_id, params, tryon_path, scenes, effects.get("transition") or "fade",
+                                           voice_sec=tts["duration_sec"] + 0.4)
+    else:
+        motion = generate_motion(tryon_path, duration_sec=int(params.get("duration_sec") or 5),
+                                 template=params.get("template") or DEFAULT_TEMPLATE, output_name=f"motion_{job_id}.mp4",
+                                 fill_duration_sec=tts["duration_sec"] + 0.4, scene=params.get("scene"))
 
     _update_job(job_id, 'processing', 85, 'Bước 5/5: Ghép video, phụ đề và âm thanh')
-    price_text = f"{int(product['price']):,}đ".replace(",", ".") if product.get("price") else None
+    show_tag = effects.get("title_card", True)
+    price_text = f"{int(product['price']):,}đ".replace(",", ".") if product.get("price") and show_tag else None
     final = render_final_video(motion["video_path"], tts["audio_path"], output_name=f"final_{job_id}.mp4",
-                               subtitle_phrases=tts["phrases"], title=product["title"], price_text=price_text)
+                               subtitle_phrases=tts["phrases"] if effects.get("subtitles", True) else None,
+                               title=product["title"] if show_tag else None, price_text=price_text,
+                               min_total_sec=min_total)
     script.update({"motion_engine": motion["engine"], "video_resolution": final["resolution"],
                    "video_duration_sec": final["duration_sec"], "subtitles_burned": final["subtitles_burned"],
                    "scenes": _scenes(final["output_path"], tts["phrases"], job_id)})
@@ -182,6 +195,42 @@ def _run_video_stage(job_id: str, params: dict, product: dict, tryon_path: str):
     conn.close()
     _update_job(job_id, 'completed', 100, 'Hoàn tất, video sẵn sàng xuất bản', video=final["video_url"],
                 script=json.dumps(script, ensure_ascii=False))
+
+
+def _render_scenes(job_id: str, params: dict, tryon_path: str, scenes: list, transition: str, voice_sec: float):
+    """Pro Studio: mỗi cảnh một đoạn chuyển động (kiểu, bối cảnh, thời lượng riêng) rồi nối bằng hiệu ứng chuyển cảnh.
+
+    Ảnh thử đồ minh họa được dựng lại với phông nền của từng bối cảnh (rẻ, chạy tại chỗ);
+    ảnh thử đồ thật chỉ tạo một lần, bối cảnh của từng cảnh do model video đảm nhận.
+    Lời thoại dài hơn tổng các cảnh: engine FFmpeg kéo dài cảnh cuối cho vừa (AI video thì nối lặp khi ghép).
+    """
+    seg_path = media_path(f"seg_{job_id}.png")
+    images = {params.get("scene") or DEFAULT_SCENE: tryon_path}
+    overlap = 0 if transition == "cut" else TRANSITION_SEC
+    planned = sum(int(spec.get("duration_sec") or 5) for spec in scenes) - overlap * (len(scenes) - 1)
+    clips, engine = [], None
+    for i, spec in enumerate(scenes):
+        _update_job(job_id, 'processing', 65 + round(18 * i / len(scenes)),
+                    f'Bước 5/5: Tạo cảnh {i + 1}/{len(scenes)} (AI có thể mất vài phút mỗi cảnh)')
+        scene = spec.get("scene") or DEFAULT_SCENE
+        if scene not in images:
+            images[scene] = restage_placeholder(seg_path if os.path.exists(seg_path) else None,
+                                                f"tryon_{job_id}_{scene}.jpg", scene) or tryon_path
+        duration = int(spec.get("duration_sec") or 5)
+        last = i == len(scenes) - 1
+        motion = generate_motion(images[scene], duration_sec=duration,
+                                 template=spec.get("template") or DEFAULT_TEMPLATE,
+                                 output_name=f"motion_{job_id}_{i + 1}.mp4", scene=scene,
+                                 fill_duration_sec=duration + max(0.0, voice_sec - planned) if last else None)
+        clips.append(motion["video_path"])
+        engine = motion["engine"]
+    joined = concat_scenes(clips, transition, output_name=f"motion_{job_id}.mp4")
+    for path in clips:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    return {"video_path": joined["video_path"], "engine": engine}, joined["duration_sec"]
 
 
 def _scenes(video_path: str, phrases: list, job_id: str) -> list:

@@ -10,6 +10,7 @@ from typing import Optional
 from backend import config
 from backend.ai import http_utils
 from backend.ai.http_utils import ProviderError
+from backend.ai.scenes import SCENES
 from backend.ffmpeg_utils import probe_duration, run_ffmpeg
 from backend.media_paths import media_path, media_url
 
@@ -21,7 +22,8 @@ WIDTH, HEIGHT = 720, 1280
 MAX_PLACEHOLDER_SEC = 90  # giới hạn Reels
 
 # z/x/y: biểu thức zoompan cho engine FFmpeg (on = số thứ tự khung hình; N được thay bằng tổng số khung hình)
-# prompt: mô tả chuyển động cho model image-to-video
+# prompt: mô tả chuyển động cho model image-to-video (kèm ánh sáng mặc định)
+# motion: chỉ phần chuyển động, ghép với mô tả bối cảnh khi người bán chọn bối cảnh
 TEMPLATES = {
     "catwalk": {
         "label": "Catwalk: người mẫu sải bước về phía máy quay",
@@ -30,6 +32,8 @@ TEMPLATES = {
         "y": "(ih-ih/zoom)*(0.6-0.3*on/N)",
         "prompt": ("The fashion model walks confidently toward the camera like on a runway, natural stride, "
                    "the outfit moves naturally with each step, clean studio lighting, steady camera, full body in frame."),
+        "motion": ("The fashion model walks confidently toward the camera, natural stride, "
+                   "the outfit moves naturally with each step, steady camera, full body in frame."),
     },
     "spin_360": {
         "label": "Xoay tôn dáng: người mẫu xoay một vòng khoe trang phục",
@@ -38,6 +42,8 @@ TEMPLATES = {
         "y": "(ih-ih/zoom)/2",
         "prompt": ("The fashion model slowly turns around in place to show the outfit from the front, side and back, "
                    "then faces the camera again and smiles, steady camera, full body in frame, studio lighting."),
+        "motion": ("The fashion model slowly turns around in place to show the outfit from the front, side and back, "
+                   "then faces the camera again and smiles, steady camera, full body in frame."),
     },
     "street": {
         "label": "Dạo phố: người mẫu đi dạo tự nhiên",
@@ -46,6 +52,8 @@ TEMPLATES = {
         "y": "(ih-ih/zoom)/2",
         "prompt": ("The fashion model strolls casually and naturally, glancing at the camera, relaxed street-style vibe, "
                    "soft daylight, camera slowly tracks backward, full body in frame."),
+        "motion": ("The fashion model strolls casually and naturally, glancing at the camera, relaxed vibe, "
+                   "camera slowly tracks backward, full body in frame."),
     },
     "fabric_closeup": {
         "label": "Cận chất liệu: máy quay tiến sát vào vải",
@@ -54,6 +62,8 @@ TEMPLATES = {
         "y": "(ih-ih/zoom)*0.4",
         "prompt": ("The camera slowly pushes in from a full body shot to a close-up of the garment fabric, "
                    "showing texture, stitching and how the fabric drapes as the model moves gently. Soft studio light."),
+        "motion": ("The camera slowly pushes in from a full body shot to a close-up of the garment fabric, "
+                   "showing texture, stitching and how the fabric drapes as the model moves gently."),
     },
 }
 DEFAULT_TEMPLATE = "catwalk"
@@ -109,11 +119,19 @@ def _replicate_image_input(client, image_path: str) -> str:
     return http_utils.image_data_uri(image_path, max_side=1536)
 
 
-def _replicate_motion(image_path: str, duration_sec: int, template: str, output_name: str) -> str:
+def motion_prompt(template: str, scene: Optional[str] = None) -> str:
+    """Câu mô tả gửi model video: kiểu chuyển động + nơi quay (nếu chọn bối cảnh)."""
+    if scene not in SCENES:
+        return TEMPLATES[template]["prompt"]
+    return f"{TEMPLATES[template]['motion']} Setting: {SCENES[scene]['prompt']}, matching lighting on the model and the outfit."
+
+
+def _replicate_motion(image_path: str, duration_sec: int, template: str, output_name: str,
+                      scene: Optional[str] = None) -> str:
     owner_name = config.replicate_video_model()
     with http_utils.http_client() as client:
         payload = {"input": {
-            "prompt": TEMPLATES[template]["prompt"],
+            "prompt": motion_prompt(template, scene),
             "negative_prompt": NEGATIVE_PROMPT,
             "start_image": _replicate_image_input(client, image_path),
             "duration": duration_sec,
@@ -158,20 +176,22 @@ def _replicate_motion(image_path: str, duration_sec: int, template: str, output_
 
 
 def generate_motion(image_path: Optional[str], duration_sec: float = 5, template: str = DEFAULT_TEMPLATE,
-                    output_name: str = "catwalk_motion.mp4", fill_duration_sec: Optional[float] = None) -> dict:
+                    output_name: str = "catwalk_motion.mp4", fill_duration_sec: Optional[float] = None,
+                    scene: Optional[str] = None) -> dict:
     """
     Task 3: Sinh video dọc 9:16 (720x1280) từ ảnh thử đồ theo mẫu chuyển động đã chọn.
     `image_path` phải là đường dẫn đã kiểm tra trong thư mục media, hoặc None để tạo nền trống.
 
     `duration_sec` là độ dài đoạn AI (3-15 giây, tính phí theo giây). Engine FFmpeg miễn phí thì tạo
     luôn đủ `fill_duration_sec` (thường bằng độ dài lời thoại) để video không phải nối lặp.
+    `scene` (bối cảnh) được thêm vào câu mô tả gửi model video; engine FFmpeg dùng phông nền của ảnh thử đồ.
     """
     if template not in TEMPLATES:
         raise ValueError(f"Mẫu video không hợp lệ: {template}")
     engine = engine_name()
     if engine.startswith("replicate:") and image_path:
         clip_sec = max(3, min(int(round(duration_sec)), 15))
-        output_path = _replicate_motion(image_path, clip_sec, template, output_name)
+        output_path = _replicate_motion(image_path, clip_sec, template, output_name, scene)
     else:
         engine = "placeholder-ffmpeg-camera"
         output_path = media_path(output_name)
@@ -187,5 +207,6 @@ def generate_motion(image_path: Optional[str], duration_sec: float = 5, template
         "resolution": f"{WIDTH}x{HEIGHT}",
         "fps": FPS,
         "template": template,
+        "scene": scene,
         "motion_style": TEMPLATES[template]["label"],
     }

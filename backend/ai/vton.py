@@ -11,6 +11,7 @@ from PIL import Image, ImageDraw, ImageFilter
 from backend import config
 from backend.ai import http_utils
 from backend.ai.http_utils import ProviderError
+from backend.ai.scenes import DEFAULT_SCENE, backdrop_color
 from backend.media_paths import media_path, media_url, try_resolve_media_ref
 
 log = logging.getLogger(__name__)
@@ -110,16 +111,14 @@ def _fashn_tryon(garment_path: str, model_image_ref: str, garment_type: str, pho
     return http_utils.download_to_media(outputs[0], output_name)
 
 
-def _placeholder_tryon(garment_path: Optional[str], output_name: str) -> str:
+def _placeholder_tryon(garment_path: Optional[str], output_name: str, scene: str = DEFAULT_SCENE) -> str:
     output_path = media_path(output_name)
     width, height = 720, 1280
     base = Image.new("RGB", (width, height))
     draw = ImageDraw.Draw(base)
-    # Phông studio màu ngà chuyển dần sang be, như ảnh chụp sản phẩm thời trang
-    top, bottom = (246, 241, 235), (228, 214, 198)
+    # Phông nền theo bối cảnh (mặc định studio màu ngà chuyển dần sang be, như ảnh chụp sản phẩm thời trang)
     for y in range(height):
-        ratio = y / (height - 1)
-        draw.line([(0, y), (width, y)], fill=tuple(int(a + (b - a) * ratio) for a, b in zip(top, bottom)))
+        draw.line([(0, y), (width, y)], fill=backdrop_color(scene, y / (height - 1)))
     if garment_path:
         with Image.open(garment_path) as g:
             garment = g.convert("RGBA")
@@ -135,11 +134,20 @@ def _placeholder_tryon(garment_path: Optional[str], output_name: str) -> str:
     return output_path
 
 
+def restage_placeholder(garment_path: Optional[str], output_name: str, scene: str) -> Optional[str]:
+    """Ảnh minh họa với phông nền của bối cảnh khác (Pro Studio nhiều cảnh).
+    Trả về None khi đang dùng AI thử đồ thật: ảnh đó giữ nguyên, không dựng lại."""
+    if engine_name() == "fashn":
+        return None
+    return _placeholder_tryon(garment_path, output_name, scene)
+
+
 def generate_tryon(garment_path: Optional[str], avatar_id: str = "model_01", avatar_row: Optional[dict] = None,
                    user_measurements: Optional[dict] = None, output_name: str = "tryon_result.jpg",
-                   garment_type: str = "auto", photo_type: str = "auto") -> dict:
+                   garment_type: str = "auto", photo_type: str = "auto", scene: str = DEFAULT_SCENE) -> dict:
     """
     Task 2: Thử đồ ảo. `garment_path` là ảnh sản phẩm (trong thư mục media).
+    `scene` chỉ đổi phông nền của ảnh minh họa; AI thử đồ thật giữ nền ảnh người mẫu, bối cảnh do bước tạo chuyển động lo.
     """
     avatar = avatar_profile(avatar_id, avatar_row)
     engine = engine_name()
@@ -150,7 +158,7 @@ def generate_tryon(garment_path: Optional[str], avatar_id: str = "model_01", ava
             raise ProviderError("Người mẫu chưa có ảnh toàn thân để thử đồ")
         output_path = _fashn_tryon(garment_path, avatar_row["avatar_url"], garment_type, photo_type, output_name)
     else:
-        output_path = _placeholder_tryon(garment_path, output_name)
+        output_path = _placeholder_tryon(garment_path, output_name, scene)
 
     m = user_measurements or {}
     h = float(m.get("height") or avatar["height"])

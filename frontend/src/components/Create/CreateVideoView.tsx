@@ -1,19 +1,21 @@
 import React, { useEffect, useRef, useState } from 'react'
 import {
-  AlertTriangle, ArrowLeft, ArrowRight, Film, Info, Loader2, Pencil, Plus, RefreshCw, RotateCcw, Sparkles, X,
+  AlertTriangle, ArrowLeft, ArrowRight, Check, Clapperboard, Film, Info, Loader2, Pencil, Plus, RefreshCw, RotateCcw,
+  SlidersHorizontal, Sparkles, X, Zap,
 } from 'lucide-react'
 import {
   ApiError, analyzeProduct, createAnalyzedProduct, fetchAvatars, fetchJobStatus, fetchProfile, fetchStudioOptions,
-  previewScript, triggerPipelineRun, uploadImage, type ProductAnalysis, type ProductPrefill, type ShowcaseTemplate,
-  type StudioOptions,
+  fetchTemplateShowcase, previewScript, triggerPipelineRun, uploadImage, type ProductAnalysis, type ProductPrefill,
+  type ShowcaseTemplate, type StudioOptions,
 } from '../../services/api'
 import type { AIJob, BrandAvatar } from '../../types'
 import type { CreateRequest } from '../../lib/createRequest'
 import { formatNumber, formatVnd, suggestTitleFromFileName } from '../../lib/format'
-import { STYLE_LABELS } from '../../lib/labels'
+import { STYLE_LABELS, TEMPLATE_SHORT_LABELS } from '../../lib/labels'
 import { useVoicePreview } from '../../lib/useVoicePreview'
 import { useToast } from '../ui/toastContext'
-import { ChipGroup, ModelPicker, TemplatePicker, Toggle, VoicePicker } from './Pickers'
+import { ChipGroup, ModelPicker, ScenePicker, TemplatePicker, Toggle, VoicePicker } from './Pickers'
+import { CostSummary } from './CostSummary'
 import { JobProgress } from './JobProgress'
 import { Stepper } from './Stepper'
 import { TryOnReview } from './TryOnReview'
@@ -26,13 +28,18 @@ interface CreateVideoViewProps {
   onCreditsChange: (credits: number) => void
   onOpenDeposit: () => void
   onOpenVideos: () => void
+  onOpenStudio: () => void
   initialTemplate?: ShowcaseTemplate | null
   onClearInitialTemplate?: () => void
   request?: CreateRequest | null
+  /** Trang chủ bấm "Auto Mode": chuyển sang chế độ Tự động (at đổi mỗi lần bấm) */
+  autoRequest?: number | null
 }
 
 /** upload/product = bước 1, configure = bước 2, còn lại = bước 3 */
 type Phase = 'upload' | 'product' | 'configure' | 'running' | 'review' | 'done' | 'failed'
+/** auto: một trang (sản phẩm + phong cách + bối cảnh rồi tạo luôn); steps: 3 bước, chỉnh từng thứ */
+type Mode = 'auto' | 'steps'
 
 const DURATIONS = [
   { id: 5, label: '5 giây' },
@@ -104,17 +111,26 @@ const QualityNote: React.FC<{ quality: ProductAnalysis['quality']; warning: stri
 
 const errorText = (e: unknown, fallback: string) => (e instanceof Error ? e.message : fallback)
 
+
 export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
   credits,
   isAdmin,
   onCreditsChange,
   onOpenDeposit,
   onOpenVideos,
+  onOpenStudio,
   initialTemplate,
   onClearInitialTemplate,
   request,
+  autoRequest,
 }) => {
   const toast = useToast()
+  const [mode, setMode] = useState<Mode>('auto')
+  const [appliedAuto, setAppliedAuto] = useState<number | null>(null)
+  if (autoRequest && autoRequest !== appliedAuto) {
+    setAppliedAuto(autoRequest)
+    setMode('auto')
+  }
   const [phase, setPhase] = useState<Phase>('upload')
   const [uploading, setUploading] = useState<'upload' | 'analyze' | null>(null)
   const [uploadError, setUploadError] = useState<string | null>(null)
@@ -140,7 +156,11 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
   const [voice, setVoice] = useState('vi-VN-HoaiMyNeural')
   const [style, setStyle] = useState('genz')
   const [duration, setDuration] = useState(5)
+  const [scene, setScene] = useState('studio')
   const [requireApproval, setRequireApproval] = useState(true)
+  // Phong cách có sẵn của chế độ Tự động (lấy từ Thư viện mẫu). null = chưa chọn, '' = người bán tự chỉnh
+  const [presets, setPresets] = useState<ShowcaseTemplate[]>([])
+  const [presetId, setPresetId] = useState<string | null>(null)
 
   // Kịch bản xem trước: AI viết sẵn khi vào bước 2 (theo sản phẩm + phong cách), người bán sửa thoải mái
   const [script, setScript] = useState('')
@@ -166,17 +186,36 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
   const [appliedTemplateId, setAppliedTemplateId] = useState<string | null>(null)
   if (initialTemplate && initialTemplate.id !== appliedTemplateId) {
     setAppliedTemplateId(initialTemplate.id)
+    setPresetId(initialTemplate.id)
     setTemplate(initialTemplate.motion_template)
     setVoice(initialTemplate.voice_id)
     setStyle(initialTemplate.script_style)
     if (initialTemplate.avatar_id) setAvatarId(initialTemplate.avatar_id)
   }
 
+  const applyPreset = (t: ShowcaseTemplate) => {
+    setPresetId(t.id)
+    setTemplate(t.motion_template)
+    setVoice(t.voice_id)
+    setStyle(t.script_style)
+    if (t.avatar_id) setAvatarId(t.avatar_id)
+  }
+  // Chưa chọn gì: dùng phong cách đầu tiên cho chế độ Tự động
+  if (presetId === null && presets.length > 0) applyPreset(presets[0])
+  /** Người bán tự chỉnh ở bước 2: không còn đúng phong cách có sẵn nào */
+  const custom = <T,>(set: (v: T) => void) => (v: T) => {
+    set(v)
+    setPresetId('')
+  }
+
   // Dữ liệu nạp sẵn từ trang khác (Tạo lại / Tạo video từ sản phẩm / Dùng mẫu này)
   const [appliedRequest, setAppliedRequest] = useState<number | null>(null)
   if (request && request.at !== appliedRequest) {
     setAppliedRequest(request.at)
-    if (request.avatarId) setAvatarId(request.avatarId)
+    if (request.avatarId) {
+      setAvatarId(request.avatarId)
+      setPresetId('')
+    }
     if (request.product) {
       const v = request.product
       const p = request.params ?? {}
@@ -201,7 +240,12 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
       if (p.voice) setVoice(p.voice)
       if (p.script_style) setStyle(p.script_style)
       if (p.duration_sec) setDuration(p.duration_sec)
-      if (request.params) setRequireApproval(!!p.require_approval)
+      setScene(p.scene ?? 'studio')
+      if (request.params) {
+        setRequireApproval(!!p.require_approval)
+        setPresetId('')
+      }
+      setMode('steps')
       setScript(oldScript)
       setScriptEdited(!!oldScript)
       setScriptWarning(null)
@@ -248,6 +292,9 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
         setAvatarId((current) => (current && list.some((a) => a.id === current) ? current : (def?.id ?? '')))
       })
       .catch((e) => toast(e.message, 'error'))
+    fetchTemplateShowcase()
+      .then((res) => setPresets(res.templates))
+      .catch(() => setPresets([]))
     return () => {
       if (pollRef.current) clearInterval(pollRef.current)
     }
@@ -405,11 +452,18 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
 
   const handleCreate = async () => {
     setSubmitError(null)
+    setProductError(null)
     const priceNum = digits(price)
+    const quick = phase === 'product'
     if (!imageUrl) return setSubmitError('Vui lòng tải ảnh sản phẩm trước')
     if (title.trim().length < 2 || !priceNum) {
       setPhase('product')
       return setProductError('Vui lòng nhập tên và giá sản phẩm')
+    }
+    const original = digits(originalPrice)
+    if (original && original <= priceNum) {
+      setPhase('product')
+      return setProductError('Giá gốc phải cao hơn giá bán (hoặc để trống)')
     }
     if (script.length > SCRIPT_MAX) return setSubmitError(`Kịch bản tối đa ${SCRIPT_MAX} ký tự`)
     if (missingCredits > 0) return setSubmitError(`Bạn cần thêm ${formatNumber(missingCredits)} credit để tạo video này.`)
@@ -436,10 +490,12 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
         template,
         voice,
         script_style: style,
-        // Video đọc đúng kịch bản người bán đang thấy ở bước 2
-        custom_script: script.trim() || undefined,
+        scene,
+        // Bước 2: video đọc đúng kịch bản người bán đang thấy. Tạo nhanh: AI tự viết lời
+        custom_script: quick ? undefined : script.trim() || undefined,
         duration_sec: duration,
-        require_approval: requireApproval,
+        // Tạo nhanh thì chạy thẳng tới video, không dừng chờ duyệt ảnh thử đồ
+        require_approval: quick ? false : requireApproval,
       })
       onCreditsChange(run.remaining_credits)
       currentJobRef.current = run.job_id
@@ -486,6 +542,7 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
 
   const placeholderEngines = options && [options.engines.tryon, options.engines.video].some((e) => e.startsWith('placeholder'))
   const step = phase === 'upload' || phase === 'product' ? 0 : phase === 'configure' ? 1 : 2
+  const quickMode = mode === 'auto' && step === 0
   const priceNum = digits(price)
   const originalNum = digits(originalPrice)
 
@@ -496,14 +553,45 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
           <div>
             <h1 className="display text-3xl sm:text-4xl">Tạo video AI</h1>
             <p className="text-[var(--text-muted)] mt-2 max-w-xl">
-              {step === 0
-                ? 'Bước 1: thêm sản phẩm bằng link, ảnh tải lên hoặc ảnh mẫu.'
-                : step === 1
-                  ? 'Bước 2: chọn người mẫu, phong cách, giọng đọc và xem trước lời review.'
-                  : 'Bước 3: xem video, tải về hoặc đăng bán.'}
+              {quickMode
+                ? 'Tải ảnh hoặc dán link sản phẩm, chọn phong cách và bối cảnh. AI lo người mẫu, lời review, giọng đọc và phụ đề.'
+                : step === 0
+                  ? 'Bước 1: thêm sản phẩm bằng link, ảnh tải lên hoặc ảnh mẫu.'
+                  : step === 1
+                    ? 'Bước 2: chọn người mẫu, phong cách, giọng đọc và xem trước lời review.'
+                    : 'Bước 3: xem video, tải về hoặc đăng bán.'}
             </p>
           </div>
-          <Stepper step={step} />
+          <div className="flex flex-col items-start md:items-end gap-3">
+            {step === 0 && (
+              <div className="flex items-center gap-2 flex-wrap">
+                <div role="tablist" aria-label="Cách tạo video" className="flex gap-1 p-1 rounded-full bg-[var(--bg-surface)]">
+                  {(
+                    [
+                      { id: 'auto', label: 'Tự động', icon: Zap },
+                      { id: 'steps', label: 'Từng bước', icon: SlidersHorizontal },
+                    ] as const
+                  ).map((m) => (
+                    <button
+                      key={m.id}
+                      role="tab"
+                      aria-selected={mode === m.id}
+                      onClick={() => setMode(m.id)}
+                      className={`px-3.5 py-1.5 rounded-full text-sm font-semibold flex items-center gap-1.5 transition-colors ${
+                        mode === m.id ? 'bg-[var(--bg-card)] text-[var(--text-main)] shadow-sm' : 'text-[var(--text-muted)]'
+                      }`}
+                    >
+                      <m.icon className="w-3.5 h-3.5" /> {m.label}
+                    </button>
+                  ))}
+                </div>
+                <button onClick={onOpenStudio} className="btn btn-ghost btn-sm">
+                  <Clapperboard className="w-4 h-4" /> Pro Studio
+                </button>
+              </div>
+            )}
+            {!quickMode && <Stepper step={step} />}
+          </div>
         </div>
 
         {placeholderEngines && step < 2 && (
@@ -559,7 +647,7 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
         {/* ------------------------------------------------ Bước 1: thẻ sản phẩm */}
         {phase === 'product' && imageUrl && (
           <div className="space-y-5 animate-fade-up">
-            <div className="grid lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] gap-5 lg:gap-8 items-start">
+            <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] gap-5 lg:gap-8 items-start">
               <div className="card p-3 sm:p-4 lg:sticky lg:top-0">
                 <div
                   className={`relative rounded-2xl overflow-hidden bg-[var(--bg-surface)] aspect-[4/5] max-h-[60vh] w-full ${
@@ -595,6 +683,7 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
                 {analysis && <QualityNote quality={analysis.quality} warning={analysis.warning} />}
               </div>
 
+              <div className="space-y-5 min-w-0">
               <Section
                 title="Thông tin sản phẩm"
                 aside={
@@ -673,6 +762,72 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
                   </div>
                 )}
               </Section>
+
+              {quickMode && (
+                <>
+                  <Section
+                    title="Phong cách"
+                    aside={
+                      <button onClick={goConfigure} className="btn btn-ghost btn-sm">
+                        <SlidersHorizontal className="w-3.5 h-3.5" /> Tùy chỉnh chi tiết
+                      </button>
+                    }
+                  >
+                    {presets.length === 0 ? (
+                      <div className="grid sm:grid-cols-2 gap-3">
+                        {[0, 1].map((i) => (
+                          <div key={i} className="skeleton rounded-2xl h-20" />
+                        ))}
+                      </div>
+                    ) : (
+                      <div role="radiogroup" aria-label="Phong cách video" className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {presets.map((t) => {
+                          const selected = presetId === t.id
+                          return (
+                            <button
+                              key={t.id}
+                              type="button"
+                              role="radio"
+                              aria-checked={selected}
+                              onClick={() => applyPreset(t)}
+                              className={`text-left p-2.5 rounded-2xl border transition-colors flex gap-3 items-center ${
+                                selected
+                                  ? 'border-[var(--ink)] bg-[var(--accent-soft)]'
+                                  : 'border-[var(--border-subtle)] bg-[var(--bg-card)] hover:border-[var(--border-strong)]'
+                              }`}
+                            >
+                              <img
+                                src={t.image_url}
+                                alt=""
+                                loading="lazy"
+                                onError={(e) => (e.currentTarget.style.visibility = 'hidden')}
+                                className="w-12 h-16 rounded-xl object-cover bg-[var(--bg-surface)] shrink-0"
+                              />
+                              <span className="min-w-0 flex-1">
+                                <span className="font-semibold text-sm block truncate">{t.title}</span>
+                                <span className="text-xs text-[var(--text-muted)] block truncate">
+                                  {[TEMPLATE_SHORT_LABELS[t.motion_template], t.voice_label, STYLE_LABELS[t.script_style]]
+                                    .filter(Boolean)
+                                    .join(' · ')}
+                                </span>
+                              </span>
+                              {selected && <Check className="w-4 h-4 shrink-0 text-[var(--accent-text)]" />}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )}
+                    {presetId === '' && (
+                      <p className="text-sm text-[var(--text-muted)] mt-3">Đang dùng cài đặt bạn tự chỉnh ở chế độ Từng bước.</p>
+                    )}
+                  </Section>
+
+                  <Section title="Bối cảnh">
+                    <ScenePicker scenes={options?.scenes ?? []} value={scene} onChange={setScene} />
+                  </Section>
+                </>
+              )}
+              </div>
             </div>
 
             {productError && (
@@ -681,14 +836,44 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
                 <span>{productError}</span>
               </div>
             )}
-            <div className="flex items-center justify-between gap-3">
-              <button onClick={reset} className="btn btn-ghost">
-                <ArrowLeft className="w-4 h-4" /> Chọn sản phẩm khác
-              </button>
-              <button onClick={goConfigure} disabled={uploading === 'upload'} className="btn btn-primary btn-lg">
-                Tiếp tục <ArrowRight className="w-4 h-4" />
-              </button>
-            </div>
+            {quickMode ? (
+              <div className="sticky bottom-3 sm:bottom-5 z-10">
+                <div className="card shadow-[var(--shadow-pop)] p-3 sm:p-4 space-y-3">
+                  {submitError && (
+                    <div className="flex gap-2 items-start text-sm p-3 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-bg)] text-[var(--danger-text)] animate-fade-up">
+                      <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                      <span className="flex-1">{submitError}</span>
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between gap-2 sm:gap-3">
+                    <button onClick={reset} className="btn btn-ghost px-3 sm:px-4" aria-label="Chọn sản phẩm khác">
+                      <ArrowLeft className="w-4 h-4" /> <span className="hidden sm:inline">Sản phẩm khác</span>
+                    </button>
+                    <CostSummary cost={cost} credits={credits} ready={!!options} />
+                    {missingCredits > 0 ? (
+                      <button onClick={onOpenDeposit} className="btn btn-accent btn-lg">
+                        <Plus className="w-4 h-4" /> Nạp<span className="hidden sm:inline"> thêm</span> {formatNumber(missingCredits)}
+                      </button>
+                    ) : (
+                      <button onClick={handleCreate} disabled={submitting || !!uploading || !options} className="btn btn-primary btn-lg">
+                        {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+                        <span className="sm:hidden">Tạo ngay</span>
+                        <span className="hidden sm:inline">Tạo video ngay · {formatNumber(cost)} credit</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between gap-3">
+                <button onClick={reset} className="btn btn-ghost">
+                  <ArrowLeft className="w-4 h-4" /> Chọn sản phẩm khác
+                </button>
+                <button onClick={goConfigure} disabled={uploading === 'upload'} className="btn btn-primary btn-lg">
+                  Tiếp tục <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
+            )}
           </div>
         )}
 
@@ -710,14 +895,16 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
               </button>
             </div>
 
-            <div className="grid lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)] gap-5 lg:gap-6 items-start animate-fade-up">
+            <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)] gap-5 lg:gap-6 items-start animate-fade-up">
               <div className="space-y-5">
                 <Section title="Người mẫu">
-                  <ModelPicker avatars={avatars} value={avatarId} onChange={setAvatarId} />
+                  <ModelPicker avatars={avatars} value={avatarId} onChange={custom(setAvatarId)} />
                 </Section>
 
                 <Section title="Phong cách video">
-                  <TemplatePicker templates={options?.templates ?? []} value={template} onChange={setTemplate} image={imageUrl} />
+                  <TemplatePicker templates={options?.templates ?? []} value={template} onChange={custom(setTemplate)} image={imageUrl} />
+                  <span className="field-label mt-5">Bối cảnh</span>
+                  <ScenePicker scenes={options?.scenes ?? []} value={scene} onChange={setScene} />
                   {options?.engines.video.startsWith('replicate') && (
                     <div className="mt-5">
                       <span className="field-label">Độ dài đoạn AI chuyển động</span>
@@ -732,7 +919,7 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
                   <VoicePicker
                     voices={options?.voices ?? []}
                     value={voice}
-                    onChange={setVoice}
+                    onChange={custom(setVoice)}
                     playing={voicePreview.playing}
                     onPreview={voicePreview.toggle}
                   />
@@ -741,7 +928,7 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
                     label="Phong cách lời review"
                     options={(options?.script_styles ?? []).map((s) => ({ id: s, label: STYLE_LABELS[s] ?? s }))}
                     value={style}
-                    onChange={setStyle}
+                    onChange={custom(setStyle)}
                   />
                 </Section>
 
@@ -816,19 +1003,7 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
                   <button onClick={() => setPhase('product')} className="btn btn-ghost px-3 sm:px-4" aria-label="Quay lại bước 1">
                     <ArrowLeft className="w-4 h-4" /> <span className="hidden sm:inline">Quay lại</span>
                   </button>
-                  <div className="text-sm leading-snug min-w-0 flex-1 text-right sm:text-left">
-                    <div>
-                      <span className="text-[var(--text-muted)]">Chi phí: </span>
-                      <strong>{options ? `${formatNumber(cost)} credit` : '...'}</strong>
-                      {options && <span className="hidden sm:inline text-[var(--text-muted)]"> (≈ {formatVnd(cost * 100)})</span>}
-                    </div>
-                    <div className="text-[var(--text-muted)]">
-                      Số dư:{' '}
-                      <strong className={missingCredits > 0 ? 'text-[var(--danger-text)]' : 'text-[var(--text-main)]'}>
-                        {formatNumber(credits)}
-                      </strong>
-                    </div>
-                  </div>
+                  <CostSummary cost={cost} credits={credits} ready={!!options} />
                   {missingCredits > 0 ? (
                     <button onClick={onOpenDeposit} className="btn btn-accent btn-lg">
                       <Plus className="w-4 h-4" /> Nạp<span className="hidden sm:inline"> thêm</span> {formatNumber(missingCredits)}

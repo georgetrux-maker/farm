@@ -1,6 +1,6 @@
 import type {
-  AIJob, BrandAvatar, CreditTransaction, DashboardStats, LibraryProduct, MyVideosPage, ProductLibraryPage,
-  SystemAuditReport, VideoFilter, VideoSort,
+  AIJob, BrandAvatar, CreditTransaction, DashboardStats, LibraryProduct, MyVideosPage, ProductLibraryPage, SceneSpec,
+  SystemAuditReport, VideoEffects, VideoFilter, VideoSort,
 } from '../types'
 
 const TOKEN_KEY = 'aura_api_token'
@@ -94,6 +94,11 @@ export interface PipelineParams {
   custom_script?: string
   duration_sec?: number
   require_approval?: boolean
+  /** Bối cảnh: studio, street, cafe, beach, indoor */
+  scene?: string
+  /** Pro Studio: các cảnh, mỗi cảnh một kiểu chuyển động, bối cảnh, thời lượng */
+  scenes?: SceneSpec[]
+  effects?: VideoEffects
 }
 
 export interface ScriptPreviewResult {
@@ -219,8 +224,8 @@ export function archiveProduct(id: string): Promise<{ status: string }> {
   return request(`/api/products/${encodeURIComponent(id)}`, { method: 'DELETE' }, 'Không ẩn được sản phẩm')
 }
 
-export function batchCreateVideos(productIds: string[]): Promise<{ total_jobs: number; remaining_credits: number }> {
-  return post('/api/batch/create', { product_ids: productIds }, 'Không tạo được video hàng loạt')
+export function batchCreateVideos(productIds: string[], scene?: string): Promise<{ total_jobs: number; remaining_credits: number }> {
+  return post('/api/batch/create', { product_ids: productIds, scene }, 'Không tạo được video hàng loạt')
 }
 
 // ----------------------------------------------------------------- Người mẫu riêng của shop
@@ -323,7 +328,11 @@ export interface StudioOptions {
   templates: { id: string; label: string }[]
   voices: { id: string; label: string }[]
   script_styles: string[]
+  scenes: { id: string; label: string }[]
+  transitions: VideoEffects['transition'][]
+  max_scenes: number
   pipeline_cost_credits: number
+  extra_scene_cost_credits: number
   tryon_preview_cost_credits: number
   engines: { analysis: string; tryon: string; video: string }
 }
