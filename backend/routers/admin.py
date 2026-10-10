@@ -20,7 +20,8 @@ from backend.database import (
 from backend.ffmpeg_utils import ffmpeg_available, ffmpeg_has_filter
 from backend.media_paths import media_url, resolve_media_ref
 from backend.services import admin_settings, audit, provider_check, task_queue
-from backend.services.wallet import cancel_deposit, verify_and_credit_transaction
+from backend.services.plans import cancel_subscription_payment, confirm_payment
+from backend.services.wallet import cancel_deposit
 
 log = logging.getLogger("aura")
 router = APIRouter()
@@ -262,7 +263,9 @@ def api_admin_stats_overview(days: int = Query(7, ge=7, le=30), user: dict = Dep
     now_local = datetime.now(timezone.utc).replace(tzinfo=None) + VN_TZ
     series_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=days - 1)
     paid_at = "COALESCE(confirmed_at, created_at)"
-    revenue_sql = "SELECT SUM(amount_vnd) FROM wallet_transactions WHERE transaction_type = 'deposit' AND status = 'success'"
+    # Doanh thu = tiền nạp credit + tiền mua gói tháng
+    paid = "transaction_type IN ('deposit', 'subscription') AND status = 'success'"
+    revenue_sql = f"SELECT SUM(amount_vnd) FROM wallet_transactions WHERE {paid}"
     shops_sql = "SELECT COUNT(*) FROM users WHERE role != 'admin'"
     videos_sql = "SELECT COUNT(*) FROM ai_jobs WHERE status = 'completed'"
     done_at = "COALESCE(completed_at, created_at)"
@@ -295,14 +298,17 @@ def api_admin_stats_overview(days: int = Query(7, ge=7, le=30), user: dict = Dep
             "completed_videos_month": between(videos_sql, done_at, windows["prev_month"]),
         }
         series = {
-            "revenue_vnd": _daily_series(conn, "SUM(amount_vnd) FROM wallet_transactions WHERE "
-                                               "transaction_type = 'deposit' AND status = 'success'", paid_at, days),
+            "revenue_vnd": _daily_series(conn, f"SUM(amount_vnd) FROM wallet_transactions WHERE {paid}", paid_at, days),
             "completed_videos": _daily_series(conn, "COUNT(*) FROM ai_jobs WHERE status = 'completed'", done_at, days),
         }
         sources = conn.execute(
             "SELECT CASE WHEN confirmed_by = 'sepay' THEN 'sepay' WHEN confirmed_by LIKE 'admin%' THEN 'manual' "
-            "ELSE 'other' END AS source, SUM(amount_vnd) FROM wallet_transactions WHERE transaction_type = 'deposit' "
-            f"AND status = 'success' AND {paid_at} >= ? GROUP BY source", (_utc(series_start),)).fetchall()
+            "ELSE 'other' END AS source, SUM(amount_vnd) "
+            f"FROM wallet_transactions WHERE {paid} AND {paid_at} >= ? GROUP BY source", (_utc(series_start),)).fetchall()
+        products = conn.execute(
+            "SELECT CASE WHEN transaction_type = 'subscription' THEN 'plan' ELSE 'credits' END AS product, "
+            f"SUM(amount_vnd) FROM wallet_transactions WHERE {paid} AND {paid_at} >= ? GROUP BY product",
+            (_utc(series_start),)).fetchall()
         recent_users = conn.execute("SELECT id, name, email, role, credits, created_at FROM users "
                                     "ORDER BY created_at DESC LIMIT 10").fetchall()
     finally:
@@ -314,6 +320,8 @@ def api_admin_stats_overview(days: int = Query(7, ge=7, le=30), user: dict = Dep
         "series": {"dates": [(first_day + timedelta(days=i)).isoformat() for i in range(days)], **series},
         # Cùng khoảng ngày với biểu đồ doanh thu
         "revenue_sources": {r[0]: r[1] or 0 for r in sources},
+        # Bán gì: nạp credit lẻ hay gói tháng (cùng khoảng ngày)
+        "revenue_products": {r[0]: r[1] or 0 for r in products},
         "recent_users": [dict(r) for r in recent_users],
     }
 
@@ -324,8 +332,8 @@ def api_admin_deposits(status: Literal["pending", "success", "cancelled", "all"]
                        q: Optional[str] = Query(None, max_length=100, description="Tìm theo mã nạp, tên hoặc email"),
                        page: int = Query(1, ge=1, le=10_000), page_size: int = Query(20, ge=1, le=100),
                        user: dict = Depends(require_admin_role)):
-    """Chỉ các lệnh nạp tiền (không lẫn giao dịch trừ/hoàn credit khi tạo video)."""
-    where, args = ["t.transaction_type = 'deposit'"], []
+    """Các lệnh chuyển khoản: nạp credit và mua gói tháng (không lẫn giao dịch trừ/hoàn credit khi tạo video)."""
+    where, args = ["t.transaction_type IN ('deposit', 'subscription')"], []
     if status != "all":
         where.append("t.status = ?")
         args.append(status)
@@ -337,13 +345,14 @@ def api_admin_deposits(status: Literal["pending", "success", "cancelled", "all"]
     sql_where = " AND ".join(where)
     conn = get_db()
     try:
-        counts = dict(conn.execute("SELECT status, COUNT(*) FROM wallet_transactions WHERE transaction_type = 'deposit' "
-                                   "GROUP BY status").fetchall())
+        counts = dict(conn.execute("SELECT status, COUNT(*) FROM wallet_transactions WHERE transaction_type IN "
+                                   "('deposit', 'subscription') GROUP BY status").fetchall())
         counts["all"] = sum(counts.values())
         total = conn.execute(f"SELECT COUNT(*) FROM wallet_transactions t LEFT JOIN users u ON u.id = t.user_id "
                              f"WHERE {sql_where}", args).fetchone()[0]
         rows = conn.execute(
             f"SELECT t.id, t.user_id, u.name AS user_name, u.email AS user_email, t.amount_vnd, t.amount_credits, "
+            f"t.transaction_type, "
             f"t.description AS transfer_content, t.status, t.created_at, t.confirmed_at, t.confirmed_by "
             f"FROM wallet_transactions t LEFT JOIN users u ON u.id = t.user_id WHERE {sql_where} "
             f"ORDER BY t.created_at DESC, t.id DESC LIMIT ? OFFSET ?",
@@ -357,11 +366,13 @@ def api_admin_deposits(status: Literal["pending", "success", "cancelled", "all"]
 @router.post("/api/admin/deposits/{transaction_id}/verify")
 def api_admin_verify_deposit(transaction_id: str, user: dict = Depends(require_admin_role)):
     """Duyệt tay khi khách chuyển sai nội dung (sau khi đã kiểm tra sao kê ngân hàng)."""
-    res = verify_and_credit_transaction(transaction_id, confirmed_by=f"admin:{user['id']}")
+    res = confirm_payment(transaction_id, confirmed_by=f"admin:{user['id']}")
     if res["status"] == "error":
         raise HTTPException(status_code=404, detail=res["message"])
-    log.info("Quản trị viên %s duyệt tay giao dịch nạp %s: %s", user["id"], transaction_id, res["status"])
-    if res["status"] == "success":
+    log.info("Quản trị viên %s duyệt tay giao dịch %s: %s", user["id"], transaction_id, res["status"])
+    if res["status"] == "success" and res.get("subscription_id"):
+        audit.record(user, "plan.verify", transaction_id, f"Gói {res['plan_name']}")
+    elif res["status"] == "success":
         audit.record(user, "deposit.verify", transaction_id, f"+{res['credits_added']} credit")
     return res
 
@@ -369,7 +380,7 @@ def api_admin_verify_deposit(transaction_id: str, user: dict = Depends(require_a
 @router.post("/api/admin/deposits/{transaction_id}/cancel")
 def api_admin_cancel_deposit(transaction_id: str, user: dict = Depends(require_admin_role)):
     """Hủy lệnh nạp chưa thanh toán (mã QR bỏ dở, nạp nhầm). Tiền về sau đó vẫn duyệt lại được."""
-    if not cancel_deposit(transaction_id, user["id"]):
+    if not (cancel_deposit(transaction_id, user["id"]) or cancel_subscription_payment(transaction_id, user["id"])):
         raise HTTPException(status_code=409, detail="Lệnh nạp không còn ở trạng thái chờ")
     audit.record(user, "deposit.cancel", transaction_id)
     return {"status": "cancelled"}

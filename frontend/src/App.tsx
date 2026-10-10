@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Loader2, RefreshCw } from 'lucide-react'
+import { AlertTriangle, Loader2, RefreshCw, X } from 'lucide-react'
 import { Header } from './components/Header'
 import { Sidebar } from './components/Sidebar'
 import { BottomNav } from './components/BottomNav'
@@ -24,7 +24,7 @@ import {
   type DepositInfo, type ShowcaseTemplate, type UserProfile,
 } from './services/api'
 import type { LibraryProduct, MyVideo } from './types'
-import { formatNumber, formatVnd } from './lib/format'
+import { formatDate, formatNumber, formatVnd } from './lib/format'
 import { parseHash, toHash, type AdminSection, type View } from './lib/navigation'
 import { applyTheme, savedMode, savedPalette, type Palette, type ThemeMode } from './lib/theme'
 
@@ -57,6 +57,9 @@ export default function App() {
   const [autoRequest, setAutoRequest] = useState<number | null>(null)
 
   const isAdmin = user?.role === 'admin'
+  const plan = user?.plan
+  // Đã bấm ẩn nhắc gia hạn cho kỳ hết hạn này (gia hạn rồi thì ngày hết hạn đổi, không còn nhắc)
+  const [reminderFor, setReminderFor] = useState<string | null>(null)
   // Trang Quản trị chỉ dành cho quản trị viên: tài khoản thường gõ #admin thì về Trang chủ
   const view: View = route.view === 'admin' && !isAdmin ? 'home' : route.view
   // Pro Studio giữ nguyên trạng thái khi chuyển trang (giống Tạo video), nhưng chỉ tải khi mở lần đầu
@@ -152,7 +155,19 @@ export default function App() {
       }
       try {
         const tx = await fetchDepositStatus(pendingDeposit.transaction_id)
-        if (tx.status === 'success') {
+        if (tx.status === 'success' && pendingDeposit.plan_name) {
+          clearInterval(timer)
+          setWalletCredits(tx.balance)
+          setPendingDeposit(null)
+          toast(`Đã nhận ${formatVnd(pendingDeposit.amount_vnd)}, gói ${pendingDeposit.plan_name} đã được kích hoạt`, 'success')
+          // Lấy lại thông tin gói (ngày hết hạn, credit tháng tới) cho menu và banner
+          fetchProfile()
+            .then((u) => {
+              setUser(u)
+              setWalletCredits(u.credits)
+            })
+            .catch(() => {})
+        } else if (tx.status === 'success') {
           clearInterval(timer)
           setWalletCredits(tx.balance)
           setPendingDeposit(null)
@@ -163,7 +178,10 @@ export default function App() {
         } else if (tx.status === 'cancelled') {
           clearInterval(timer)
           setPendingDeposit(null)
-          toast('Lệnh nạp đã bị hủy. Nếu bạn đã chuyển khoản, vui lòng liên hệ Hỗ trợ.', 'info')
+          toast(
+            `${pendingDeposit.plan_name ? 'Lệnh mua gói' : 'Lệnh nạp'} đã bị hủy. Nếu bạn đã chuyển khoản, vui lòng liên hệ Hỗ trợ.`,
+            'info',
+          )
         }
       } catch {
         // mạng chập chờn: thử lại lần sau
@@ -271,6 +289,7 @@ export default function App() {
         view={view}
         adminSection={route.section}
         isAdmin={isAdmin}
+        plan={user.plan}
         onNavigate={setActiveView}
         onAdminSection={setAdminSection}
       />
@@ -291,6 +310,23 @@ export default function App() {
           isAdmin={isAdmin}
           onLogout={handleLogout}
         />
+
+        {plan?.renew_reminder && !plan.has_upcoming && reminderFor !== plan.active_until && view !== 'wallet' && (
+          <div role="status" className="shrink-0 border-b border-[var(--warn-border)] bg-[var(--warn-bg)] text-[var(--warn-text)] px-4 lg:px-8 py-2.5 flex items-center gap-3 text-sm">
+            <AlertTriangle className="w-4 h-4 shrink-0" />
+            <p className="flex-1 min-w-0">
+              Gói <strong>{plan.plan_name}</strong> hết hạn ngày {formatDate(plan.active_until)}
+              {plan.days_left ? ` (còn ${plan.days_left} ngày)` : ''}.
+              <span className="hidden sm:inline"> Gia hạn để tiếp tục nhận credit hằng tháng.</span>
+            </p>
+            <button onClick={openWallet} className="btn btn-sm btn-primary shrink-0">
+              Gia hạn
+            </button>
+            <button onClick={() => setReminderFor(plan.active_until)} className="icon-btn w-8 h-8 shrink-0" aria-label="Ẩn nhắc gia hạn">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
 
         <main id="noi-dung" tabIndex={-1} className="flex-1 min-h-0 flex outline-none">
           {/* Giữ trang Tạo video khi chuyển trang để không mất ảnh/thông tin đang nhập hoặc tiến độ */}

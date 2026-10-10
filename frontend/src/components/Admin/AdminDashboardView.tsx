@@ -5,6 +5,7 @@ import { ADMIN_SECTIONS, type AdminSection } from '../../lib/navigation'
 import { AuditLogTab } from './AuditLogTab'
 import { AvatarManager } from './AvatarManager'
 import { OverviewTab } from './OverviewTab'
+import { PlansTab } from './PlansTab'
 import { SettingsTab } from './SettingsTab'
 import { TransactionsTab } from './TransactionsTab'
 import { UsersTab } from './UsersTab'
@@ -18,7 +19,8 @@ interface AdminDashboardViewProps {
 const SUBTITLES: Record<AdminSection, string> = {
   overview: 'Doanh thu, shop mới và video, so với kỳ trước. Mốc ngày/tháng theo giờ Việt Nam.',
   users: 'Tìm tài khoản, cộng/trừ credit, khóa tài khoản vi phạm.',
-  transactions: 'Lệnh nạp tiền VietQR: duyệt tay khi khách chuyển sai nội dung, hủy lệnh không thanh toán.',
+  transactions: 'Lệnh nạp credit và mua gói qua VietQR: duyệt tay khi khách chuyển sai nội dung, hủy lệnh không thanh toán.',
+  plans: 'Giá, credit mỗi tháng và người mẫu riêng của 3 gói; giảm giá trả theo năm; các gói đã bán.',
   models: 'Kho người mẫu AI dùng chung cho mọi shop.',
   settings: 'API key, thanh toán, mạng xã hội, giá và thông tin hỗ trợ.',
   logs: 'Mọi thao tác quản trị và giao dịch tự động được ghi lại.',
@@ -111,6 +113,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ section,
           ))}
         {section === 'users' && <UsersTab currentUserId={currentUserId} />}
         {section === 'transactions' && <TransactionsTab onChanged={() => loadStats(days)} />}
+        {section === 'plans' && <PlansTab />}
         {section === 'models' && <AvatarManager />}
         {section === 'settings' && <SettingsTab />}
         {section === 'logs' && <AuditLogTab />}

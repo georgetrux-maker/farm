@@ -22,6 +22,13 @@ const STATUS: Record<AdminDepositStatus, { label: string; cls: string }> = {
   cancelled: { label: 'Đã hủy', cls: 'bg-[var(--bg-surface)] text-[var(--text-muted)] border-[var(--border-subtle)]' },
 }
 
+
+/** Nạp credit: số credit; mua gói: tên gói trong nội dung lệnh ("GOI TX... · Gói Starter 1 tháng") */
+const creditText = (d: AdminDeposit) =>
+  d.transaction_type === 'subscription'
+    ? d.transfer_content?.split('·')[1]?.trim() || 'Gói tháng'
+    : `${formatNumber(d.amount_credits)} credit`
+
 function sourceText(d: AdminDeposit): string {
   const by = d.confirmed_by
   if (d.status === 'pending') return 'Chờ tiền về'
@@ -92,14 +99,16 @@ export const TransactionsTab: React.FC<{ onChanged: () => void }> = ({ onChanged
       if (kind === 'verify') {
         const res = await verifyDeposit(deposit.id)
         toast(
-          res.status === 'success'
-            ? `Đã cộng ${formatNumber(res.credits_added ?? 0)} credit cho ${deposit.user_name || 'khách'}`
-            : 'Giao dịch này đã được ghi nhận trước đó',
+          res.status !== 'success'
+            ? 'Giao dịch này đã được ghi nhận trước đó'
+            : deposit.transaction_type === 'subscription'
+              ? `Đã kích hoạt gói cho ${deposit.user_name || 'khách'}`
+              : `Đã cộng ${formatNumber(res.credits_added ?? 0)} credit cho ${deposit.user_name || 'khách'}`,
           res.status === 'success' ? 'success' : 'info',
         )
       } else {
         await cancelDeposit(deposit.id)
-        toast(`Đã hủy lệnh nạp ${deposit.transfer_content || deposit.id}`, 'success')
+        toast(`Đã hủy lệnh ${deposit.transfer_content || deposit.id}`, 'success')
       }
       setAction(null)
       load(1)
@@ -198,7 +207,7 @@ export const TransactionsTab: React.FC<{ onChanged: () => void }> = ({ onChanged
                     </td>
                     <td className="px-3 py-3.5 text-right tabular-nums">
                       <p className="font-semibold">{d.amount_vnd ? formatVnd(d.amount_vnd) : '-'}</p>
-                      <p className="text-xs text-[var(--text-muted)]">{formatNumber(d.amount_credits)} credit</p>
+                      <p className="text-xs text-[var(--text-muted)]">{creditText(d)}</p>
                     </td>
                     <td className="px-3 py-3.5 text-[var(--text-muted)] tabular-nums whitespace-nowrap">
                       {formatDateTime(d.status === 'pending' ? d.created_at : d.confirmed_at || d.created_at)}
@@ -230,7 +239,7 @@ export const TransactionsTab: React.FC<{ onChanged: () => void }> = ({ onChanged
                   <div className="text-sm">
                     <p className="font-semibold">
                       {d.amount_vnd ? formatVnd(d.amount_vnd) : '-'}{' '}
-                      <span className="font-normal text-[var(--text-muted)]">· {formatNumber(d.amount_credits)} credit</span>
+                      <span className="font-normal text-[var(--text-muted)]">· {creditText(d)}</span>
                     </p>
                     <p className="text-xs text-[var(--text-muted)] font-mono mt-0.5">{d.transfer_content || d.id}</p>
                     <p className="text-xs text-[var(--text-muted)] mt-0.5">
@@ -273,8 +282,8 @@ export const TransactionsTab: React.FC<{ onChanged: () => void }> = ({ onChanged
               </dd>
               <dt className="text-[var(--text-muted)]">Số tiền</dt>
               <dd className="font-semibold">{action.deposit.amount_vnd ? formatVnd(action.deposit.amount_vnd) : '-'}</dd>
-              <dt className="text-[var(--text-muted)]">Credit</dt>
-              <dd className="font-semibold">{formatNumber(action.deposit.amount_credits)}</dd>
+              <dt className="text-[var(--text-muted)]">{action.deposit.transaction_type === 'subscription' ? 'Mua' : 'Credit'}</dt>
+              <dd className="font-semibold">{creditText(action.deposit)}</dd>
               <dt className="text-[var(--text-muted)]">Nội dung CK</dt>
               <dd className="font-mono break-all">{action.deposit.transfer_content}</dd>
             </dl>
@@ -295,7 +304,11 @@ export const TransactionsTab: React.FC<{ onChanged: () => void }> = ({ onChanged
                 ) : (
                   <BadgeCheck className="w-4 h-4" />
                 )}
-                {action.kind === 'cancel' ? 'Hủy lệnh nạp' : 'Đã nhận tiền, cộng credit'}
+                {action.kind === 'cancel'
+                  ? 'Hủy lệnh'
+                  : action.deposit.transaction_type === 'subscription'
+                    ? 'Đã nhận tiền, kích hoạt gói'
+                    : 'Đã nhận tiền, cộng credit'}
               </button>
             </div>
           </div>

@@ -60,6 +60,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
   const s = stats.summary
   const p = stats.previous
   const sources = stats.revenue_sources
+  const products = stats.revenue_products ?? {}
   const revenueTotal = stats.series.revenue_vnd.reduce((a, b) => a + b, 0)
   const videoTotal = stats.series.completed_videos.reduce((a, b) => a + b, 0)
 
@@ -165,12 +166,17 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
                 formatValue={compactVnd}
                 emptyText="Chưa có doanh thu"
                 slices={[
-                  { key: 'sepay', label: 'Tự động (SePay)', value: sources.sepay ?? 0, color: 'var(--viz-1)' },
-                  { key: 'manual', label: 'Duyệt tay', value: sources.manual ?? 0, color: 'var(--viz-2)' },
-                  { key: 'other', label: 'Khác', value: sources.other ?? 0, color: 'var(--viz-other)' },
+                  { key: 'credits', label: 'Nạp credit lẻ', value: products.credits ?? 0, color: 'var(--viz-1)' },
+                  { key: 'plan', label: 'Gói tháng', value: products.plan ?? 0, color: 'var(--viz-2)' },
                 ]}
               />
             </div>
+            {(sources.sepay || sources.manual || sources.other) ? (
+              <p className="text-sm text-[var(--text-muted)] mt-4 pt-3 border-t border-[var(--border-subtle)]">
+                Xác nhận: tự động qua SePay {compactVnd(sources.sepay ?? 0)}, duyệt tay {compactVnd(sources.manual ?? 0)}
+                {sources.other ? `, khác ${compactVnd(sources.other)}` : ''}
+              </p>
+            ) : null}
           </section>
         </div>
 

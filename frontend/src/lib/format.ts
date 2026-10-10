@@ -58,6 +58,15 @@ export function formatDateTime(value?: string | null): string {
   return `${pad(d.getHours())}:${pad(d.getMinutes())} ${pad(d.getDate())}/${pad(d.getMonth() + 1)}${year}`
 }
 
+/** "10/11/2026" theo giờ máy người dùng (thời gian SQLite là UTC dạng "YYYY-MM-DD HH:MM:SS") */
+export function formatDate(value?: string | null): string {
+  if (!value) return ''
+  const d = new Date(value.includes('T') ? value : `${value.replace(' ', 'T')}Z`)
+  if (Number.isNaN(d.getTime())) return value
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`
+}
+
 /** 1.250.000 -> "1,25tr"; 500.000 -> "500k" */
 export function compactVnd(value: number): string {
   const fmt = (n: number) => n.toLocaleString('vi-VN', { maximumFractionDigits: 2 })

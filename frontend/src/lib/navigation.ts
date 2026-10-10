@@ -1,12 +1,12 @@
 import type React from 'react'
 import {
-  Clapperboard, Film, Home, KeyRound, LayoutDashboard, LayoutGrid, LifeBuoy, Link2, Package, Receipt, ScrollText, Shirt, UserRound, Users,
+  BadgeCheck, Clapperboard, Film, Home, KeyRound, LayoutDashboard, LayoutGrid, LifeBuoy, Link2, Package, Receipt, ScrollText, Shirt, UserRound, Users,
   Wallet, Wand2,
 } from 'lucide-react'
 
 export type View =
   | 'home' | 'create' | 'studio' | 'products' | 'models' | 'showcase' | 'videos' | 'connect' | 'wallet' | 'support' | 'admin'
-export type AdminSection = 'overview' | 'users' | 'transactions' | 'models' | 'settings' | 'logs'
+export type AdminSection = 'overview' | 'users' | 'transactions' | 'plans' | 'models' | 'settings' | 'logs'
 
 export interface NavItem<T extends string = View> {
   id: T
@@ -41,6 +41,7 @@ export const ADMIN_SECTIONS: NavItem<AdminSection>[] = [
   { id: 'overview', label: 'Tổng quan', icon: LayoutDashboard },
   { id: 'users', label: 'Người dùng', icon: Users },
   { id: 'transactions', label: 'Giao dịch', icon: Receipt },
+  { id: 'plans', label: 'Gói tháng', icon: BadgeCheck },
   { id: 'models', label: 'Người mẫu AI', icon: UserRound },
   { id: 'settings', label: 'Cài đặt API', icon: KeyRound },
   { id: 'logs', label: 'Nhật ký hệ thống', icon: ScrollText },

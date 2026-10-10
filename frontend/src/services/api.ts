@@ -79,6 +79,78 @@ export interface UserProfile {
   email: string
   role: string
   credits: number
+  /** Gói tháng đang dùng (null các trường khi chưa mua gói) */
+  plan?: UserPlanSummary
+}
+
+export interface UserPlanSummary {
+  plan_id: string | null
+  plan_name: string | null
+  cycle: 'monthly' | 'yearly' | null
+  credits_per_month: number | null
+  next_credit_at: string | null
+  /** Ngày hết hạn cuối cùng (tính cả kỳ đã mua nối tiếp) */
+  active_until: string | null
+  days_left: number | null
+  /** Còn 3 ngày trở xuống và chưa gia hạn */
+  renew_reminder: boolean
+  has_upcoming: boolean
+}
+
+// ----------------------------------------------------------------- Gói tháng
+export interface PlanInfo {
+  id: string
+  name: string
+  price_vnd: number
+  credits_per_month: number
+  private_models: number
+  description: string
+  highlight: boolean
+  active: boolean
+  yearly_price_vnd: number
+  yearly_monthly_vnd: number
+  /** % credit nhiều hơn so với nạp lẻ cùng số tiền */
+  bonus_percent: number
+  videos_per_month: number
+}
+
+export interface SubscriptionPeriod {
+  id: string
+  plan_id: string
+  plan_name: string
+  cycle: 'monthly' | 'yearly'
+  months: number
+  price_vnd: number
+  credits_per_month: number
+  private_models: number
+  starts_at: string
+  expires_at: string
+  grants_done: number
+  next_credit_at?: string | null
+}
+
+export interface PlanStatus {
+  current: SubscriptionPeriod | null
+  upcoming: SubscriptionPeriod[]
+  active_until: string | null
+  days_left: number | null
+  renew_reminder: boolean
+  pending_payments: number
+}
+
+export interface PlansResponse {
+  plans: PlanInfo[]
+  yearly_discount: number
+  remind_days: number
+  status?: PlanStatus
+}
+
+export function fetchPlans(): Promise<PlansResponse> {
+  return request('/api/plans', {}, 'Không tải được bảng giá gói tháng')
+}
+
+export function subscribePlan(planId: string, cycle: 'monthly' | 'yearly'): Promise<DepositInfo> {
+  return post('/api/plans/subscribe', { plan_id: planId, cycle }, 'Không tạo được mã thanh toán gói')
 }
 
 export function fetchProfile(): Promise<UserProfile> {
@@ -154,7 +226,13 @@ export interface DepositInfo {
   status: string
   transaction_id: string
   amount_vnd: number
-  credits_awarded: number
+  /** Nạp credit lẻ */
+  credits_awarded?: number
+  /** Mua gói tháng */
+  plan_name?: string
+  cycle?: 'monthly' | 'yearly'
+  months?: number
+  credits_per_month?: number
   qr_code_url: string
   bank_id: string
   account_number: string
@@ -183,6 +261,8 @@ export interface WalletSummary {
   used_credits: number
   refunded_credits: number
   adjusted_credits: number
+  plan_credits: number
+  plan_paid_vnd: number
 }
 
 export function fetchWalletSummary(): Promise<WalletSummary> {
@@ -571,6 +651,8 @@ export interface AdminStatsOverview {
   series: { dates: string[]; revenue_vnd: number[]; completed_videos: number[] }
   /** Doanh thu trong cùng khoảng ngày của biểu đồ, theo nguồn: sepay = tự động, manual = admin duyệt tay */
   revenue_sources: Partial<Record<'sepay' | 'manual' | 'other', number>>
+  /** Nạp credit lẻ hay mua gói tháng */
+  revenue_products?: Partial<Record<'credits' | 'plan', number>>
   recent_users: Array<{ id: string; name: string; email: string | null; role: string; credits: number; created_at: string }>
 }
 
@@ -585,6 +667,7 @@ export interface AdminDeposit {
   user_email: string | null
   amount_vnd: number | null
   amount_credits: number
+  transaction_type: 'deposit' | 'subscription'
   /** Nội dung chuyển khoản khách phải ghi, ví dụ "NAPTIEN TX1A2B3C" */
   transfer_content: string | null
   status: 'pending' | 'success' | 'cancelled'
@@ -746,3 +829,61 @@ export function fetchTemplateShowcase(): Promise<{ templates: ShowcaseTemplate[]
 
 /** Link nghe thử giọng (file do máy chủ tạo bằng đúng giọng đó) */
 export const voicePreviewUrl = (voiceId: string) => `/api/ai/tts/preview/${encodeURIComponent(voiceId)}`
+
+// ----------------------------------------------------------------- Quản trị: gói tháng
+export interface AdminPlanConfig {
+  id: string
+  name: string
+  price_vnd: number
+  credits_per_month: number
+  private_models: number
+  description: string
+  highlight: boolean
+  active: boolean
+}
+
+export interface AdminPlans {
+  plans: AdminPlanConfig[]
+  yearly_discount: number
+  active_shops: Record<string, number>
+  revenue_month_vnd: number
+}
+
+export function fetchAdminPlans(): Promise<AdminPlans> {
+  return request('/api/admin/plans', {}, 'Không tải được cấu hình gói')
+}
+
+export function saveAdminPlans(plans: AdminPlanConfig[], yearlyDiscount: number): Promise<{ plans: AdminPlanConfig[]; yearly_discount: number }> {
+  return request(
+    '/api/admin/plans',
+    { method: 'PUT', body: JSON.stringify({ plans, yearly_discount: yearlyDiscount }), headers: { 'Content-Type': 'application/json' } },
+    'Không lưu được cấu hình gói',
+  )
+}
+
+export interface AdminSubscription {
+  id: string
+  user_id: string
+  user_name: string | null
+  user_email: string | null
+  plan_id: string
+  plan_name: string
+  cycle: 'monthly' | 'yearly'
+  price_vnd: number
+  credits_per_month: number
+  status: 'pending' | 'active' | 'expired' | 'cancelled'
+  starts_at: string | null
+  expires_at: string | null
+  grants_done: number
+  months: number
+  transaction_id: string
+  created_at: string
+}
+
+export function fetchAdminSubscriptions(status: 'active' | 'pending' | 'expired' | 'all' = 'active', page = 1): Promise<{
+  items: AdminSubscription[]
+  total: number
+  has_more: boolean
+}> {
+  return request(`/api/admin/subscriptions?status=${status}&page=${page}`, {}, 'Không tải được danh sách gói đã bán')
+}

@@ -2,7 +2,8 @@
 
 SePay gửi POST JSON mỗi khi tài khoản có biến động số dư:
 https://developer.sepay.vn/en/sepay-webhooks/tich-hop-webhook
-Ta tìm mã "NAPTIEN TX..." trong nội dung chuyển khoản, đối chiếu số tiền rồi cộng credit.
+Ta tìm mã "NAPTIEN TX..." (nạp credit) hoặc "GOI TX..." (mua gói tháng) trong nội dung chuyển khoản,
+đối chiếu số tiền rồi cộng credit hoặc kích hoạt gói.
 """
 import json
 import logging
@@ -12,12 +13,13 @@ import sqlite3
 from backend import config
 from backend.database import get_db
 from backend.services import audit
-from backend.services.wallet import get_transaction, verify_and_credit_transaction
+from backend.services.plans import confirm_payment
+from backend.services.wallet import get_transaction
 
 log = logging.getLogger(__name__)
 
 # Ngân hàng hay bỏ dấu cách hoặc đổi chữ hoa/thường trong nội dung chuyển khoản
-_TX_PATTERN = re.compile(r"NAPTIEN\s*(TX[0-9A-F]{10})", re.IGNORECASE)
+_TX_PATTERN = re.compile(r"(?:NAPTIEN|GOI)\s*(TX[0-9A-F]{10})", re.IGNORECASE)
 
 
 def _digits(value) -> str:
@@ -49,7 +51,7 @@ def _classify(payload: dict, content: str, amount: int):
         return "no_matching_code", None
     tx_id = match.group(1).upper()
     tx = get_transaction(tx_id)
-    if tx is None or tx["transaction_type"] != "deposit":
+    if tx is None or tx["transaction_type"] not in ("deposit", "subscription"):
         return "unknown_transaction", tx_id
     if tx["status"] == "success":
         return "already_credited", tx_id
@@ -80,9 +82,12 @@ def handle_sepay_event(payload: dict) -> dict:
         conn.close()
 
     if result == "credited":
-        res = verify_and_credit_transaction(tx_id, confirmed_by="sepay")
+        res = confirm_payment(tx_id, confirmed_by="sepay")
         if res["status"] != "success":
             result = res["status"]
+        elif res.get("subscription_id"):
+            result = "plan_activated"
+            audit.record(None, "plan.auto", tx_id, f"Gói {res['plan_name']}")
         else:
             audit.record(None, "deposit.auto", tx_id, f"+{res['credits_added']} credit")
     return {"result": result, "transaction_id": tx_id}

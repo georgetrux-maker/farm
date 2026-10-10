@@ -1,6 +1,6 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  ArrowDownLeft, ArrowUpRight, Check, Copy, Loader2, QrCode, ScanLine, Settings2, Undo2, Wallet, XCircle,
+  ArrowDownLeft, ArrowUpRight, BadgeCheck, Check, Copy, Loader2, QrCode, ScanLine, Settings2, Undo2, Wallet, XCircle,
 } from 'lucide-react'
 import {
   createDeposit, fetchCreditHistory, fetchStudioOptions, fetchWalletSummary, type DepositInfo, type WalletSummary,
@@ -8,6 +8,7 @@ import {
 import type { CreditTransaction } from '../../types'
 import { formatDateTime, formatNumber, formatVnd } from '../../lib/format'
 import { StatStrip } from '../ui/StatStrip'
+import { PlansSection } from './PlansSection'
 import { useToast } from '../ui/toastContext'
 
 interface WalletViewProps {
@@ -58,6 +59,10 @@ const CopyRow: React.FC<{ label: string; value: string; copyValue?: string; high
 
 function txLabel(t: CreditTransaction) {
   if (t.transaction_type === 'deposit') return `Nạp tiền ${t.amount_vnd ? formatVnd(t.amount_vnd) : ''}`.trim()
+  if (t.transaction_type === 'subscription') {
+    const plan = t.description?.split('·')[1]?.trim() || 'Mua gói tháng'
+    return `${plan} ${t.amount_vnd ? formatVnd(t.amount_vnd) : ''}`.trim()
+  }
   if (t.transaction_type === 'refund')
     return t.description?.includes('hủy') ? 'Hoàn credit: bạn hủy ở bước duyệt ảnh' : 'Hoàn credit: video bị lỗi'
   if (t.transaction_type === 'adjust') return t.description || 'Điều chỉnh bởi quản trị viên'
@@ -76,6 +81,7 @@ function TxIcon({ t }: { t: CreditTransaction }) {
     t.status === 'cancelled' ? XCircle
       : t.transaction_type === 'refund' ? Undo2
         : t.transaction_type === 'adjust' ? Settings2
+          : t.transaction_type === 'subscription' || t.transaction_type === 'plan_credit' ? BadgeCheck
           : plus ? ArrowDownLeft : ArrowUpRight
   return (
     <span
@@ -98,6 +104,13 @@ export const WalletView: React.FC<WalletViewProps> = ({ credits, pending, onCrea
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [qrFailed, setQrFailed] = useState<string | null>(null) // mã giao dịch có ảnh QR không tải được
+  const qrRef = useRef<HTMLElement>(null)
+
+  // Vừa tạo mã mua gói (bảng giá nằm phía trên): cuộn tới khung mã QR
+  const pendingPlanTx = pending?.plan_name ? pending.transaction_id : null
+  useEffect(() => {
+    if (pendingPlanTx) qrRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }, [pendingPlanTx])
 
   useEffect(() => {
     fetchStudioOptions()
@@ -146,7 +159,8 @@ export const WalletView: React.FC<WalletViewProps> = ({ credits, pending, onCrea
           <h1 className="display text-3xl sm:text-4xl">Ví Credits</h1>
           <p className="text-[var(--text-muted)] mt-2">
             1 credit = {formatVnd(VND_PER_CREDIT)}
-            {videoCost ? `, mỗi video ${formatNumber(videoCost)} credit` : ''}. Nạp qua VietQR, credit được cộng tự động.
+            {videoCost ? `, mỗi video ${formatNumber(videoCost)} credit` : ''}. Mua gói tháng hoặc nạp lẻ qua VietQR, credit được
+            cộng tự động.
           </p>
         </div>
 
@@ -175,14 +189,19 @@ export const WalletView: React.FC<WalletViewProps> = ({ credits, pending, onCrea
                   ? `điều chỉnh ${summary.adjusted_credits > 0 ? '+' : ''}${formatNumber(summary.adjusted_credits)}`
                   : 'credit từ video lỗi/hủy',
               },
+              ...(summary?.plan_credits
+                ? [{ label: 'Từ gói tháng', value: formatNumber(summary.plan_credits), sub: `đã trả ${formatVnd(summary.plan_paid_vnd)}` }]
+                : []),
             ]}
           />
         </div>
 
+        <PlansSection pending={pending} onCreated={onCreated} credits={credits} />
+
         <div className="grid lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)] gap-5 sm:gap-6 items-start">
           {/* Chọn gói */}
           <section className="card p-4 sm:p-6 space-y-4">
-            <h2 className="title text-lg">Chọn gói nạp</h2>
+            <h2 className="title text-lg">Nạp credit lẻ</h2>
             <div className="grid grid-cols-2 gap-3">
               {PACKAGES.map((c) => {
                 const active = !custom && pkg === c
@@ -248,14 +267,18 @@ export const WalletView: React.FC<WalletViewProps> = ({ credits, pending, onCrea
           </section>
 
           {/* Mã QR */}
-          <section className="card p-4 sm:p-6 lg:sticky lg:top-0">
-            <h2 className="title text-lg mb-4">Thanh toán VietQR</h2>
+          <section ref={qrRef} className="card p-4 sm:p-6 lg:sticky lg:top-0">
+            <h2 className="title text-lg mb-4">
+              {pending?.plan_name
+                ? `Thanh toán gói ${pending.plan_name} (${pending.months === 12 ? '12 tháng' : '1 tháng'})`
+                : 'Thanh toán VietQR'}
+            </h2>
             {!pending ? (
               <div className="flex flex-col items-center text-center gap-3 py-6 px-2">
                 <span className="w-16 h-16 rounded-2xl bg-[var(--accent-soft)] text-[var(--accent-text)] flex items-center justify-center">
                   <ScanLine className="w-8 h-8" />
                 </span>
-                <p className="font-medium">Chọn gói rồi bấm “Tạo mã QR thanh toán”</p>
+                <p className="font-medium">Chọn gói tháng hoặc số credit cần nạp để nhận mã QR</p>
                 <ol className="text-sm text-[var(--text-muted)] text-left space-y-1.5 mt-1">
                   <li>1. Mở app ngân hàng bất kỳ, chọn quét mã QR.</li>
                   <li>2. Giữ nguyên số tiền và nội dung chuyển khoản.</li>
@@ -292,7 +315,11 @@ export const WalletView: React.FC<WalletViewProps> = ({ credits, pending, onCrea
                 </div>
                 <div className="flex items-start gap-2 text-sm text-[var(--text-muted)] px-4 py-3 rounded-2xl border border-[var(--border-subtle)]">
                   <Loader2 className="w-4 h-4 animate-spin text-[var(--accent-text)] shrink-0 mt-0.5" />
-                  <span>Đang chờ tiền về. Bạn có thể rời trang này, credit vẫn được cộng tự động.</span>
+                  <span>
+                    {pending.plan_name
+                      ? 'Đang chờ tiền về. Bạn có thể rời trang này, gói được kích hoạt tự động.'
+                      : 'Đang chờ tiền về. Bạn có thể rời trang này, credit vẫn được cộng tự động.'}
+                  </span>
                 </div>
               </div>
             )}
@@ -344,8 +371,7 @@ export const WalletView: React.FC<WalletViewProps> = ({ credits, pending, onCrea
                           t.status !== 'success' ? 'text-[var(--text-muted)]' : t.amount_credits > 0 ? 'text-[var(--ok-text)]' : ''
                         }`}
                       >
-                        {t.amount_credits > 0 ? '+' : ''}
-                        {formatNumber(t.amount_credits)}
+                        {t.transaction_type === 'subscription' ? '—' : `${t.amount_credits > 0 ? '+' : ''}${formatNumber(t.amount_credits)}`}
                       </td>
                     </tr>
                   ))}
@@ -368,8 +394,7 @@ export const WalletView: React.FC<WalletViewProps> = ({ credits, pending, onCrea
                         t.status !== 'success' ? 'text-[var(--text-muted)]' : t.amount_credits > 0 ? 'text-[var(--ok-text)]' : ''
                       }`}
                     >
-                      {t.amount_credits > 0 ? '+' : ''}
-                      {formatNumber(t.amount_credits)}
+                      {t.transaction_type === 'subscription' ? '—' : `${t.amount_credits > 0 ? '+' : ''}${formatNumber(t.amount_credits)}`}
                     </span>
                   </li>
                 ))}

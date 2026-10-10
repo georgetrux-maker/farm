@@ -4,7 +4,6 @@ from typing import List, Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, HttpUrl, field_validator
 
-from backend import config
 from backend.auth import get_current_user
 from backend.database import (
     add_brand_avatar_entry, archive_brand_avatar, archive_product, count_private_avatars, create_product, get_brand_avatar,
@@ -13,6 +12,7 @@ from backend.database import (
 from backend.media_paths import media_url, resolve_media_ref
 from backend.routers.admin import avatar_out
 from backend.routers.common import owned_product, product_out
+from backend.services import plans
 
 router = APIRouter()
 
@@ -186,13 +186,14 @@ def _own_model(avatar_id: str, user: dict) -> dict:
 
 @router.get("/api/my/avatars/quota")
 def api_private_model_quota(user: dict = Depends(get_current_user)):
-    return {"used": count_private_avatars(user["id"]), "limit": config.private_models_limit(), "consent_text": CONSENT_TEXT}
+    return {"used": count_private_avatars(user["id"]), "limit": plans.private_models_limit(user["id"]),
+            "consent_text": CONSENT_TEXT}
 
 
 @router.post("/api/my/avatars")
 def api_create_private_model(req: PrivateModelCreate, user: dict = Depends(get_current_user)):
     """Tạo người mẫu riêng từ ảnh toàn thân của shop. Chỉ shop đó thấy và dùng được."""
-    limit = config.private_models_limit()
+    limit = plans.private_models_limit(user["id"])
     if count_private_avatars(user["id"]) >= limit:
         raise HTTPException(status_code=403, detail=f"Bạn đã dùng hết {limit} người mẫu riêng. Xóa bớt mẫu cũ hoặc nâng cấp gói.")
     url = media_url(resolve_media_ref(req.avatar_url))  # chỉ nhận ảnh đã tải lên máy chủ, không nhận link ngoài

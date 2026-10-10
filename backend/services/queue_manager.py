@@ -15,6 +15,7 @@ from backend.ai.vton import engine_name as vton_engine_name
 from backend.ai.vton import generate_tryon, restage_placeholder
 from backend.database import get_brand_avatar, get_db, get_product, save_product_analysis, search_key
 from backend.media_paths import media_path, try_resolve_media_ref
+from backend.services.plans import sync_user_plan
 from backend.services.task_queue import QueueUnavailable, enqueue_job
 from backend.services.wallet import deduct_credits, refund_credits
 
@@ -28,6 +29,7 @@ def create_ai_jobs(user_id: str, product_ids: list, params: dict, cost_per_job: 
     """Trừ credit và tạo job trong cùng một transaction (đủ tiền cho tất cả thì mới tạo)."""
     total = cost_per_job * len(product_ids)
     job_ids = [f"JOB_{uuid.uuid4().hex[:10]}" for _ in product_ids]
+    sync_user_plan(user_id)  # credit tháng mới của gói (nếu tới mốc) được cộng trước khi trừ
     conn = get_db()
     try:
         conn.execute("BEGIN IMMEDIATE")

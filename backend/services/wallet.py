@@ -95,13 +95,15 @@ def wallet_summary(user_id: str) -> dict:
           COALESCE(SUM(CASE WHEN transaction_type = 'deposit' THEN amount_credits END), 0),
           COALESCE(-SUM(CASE WHEN transaction_type = 'usage' THEN amount_credits END), 0),
           COALESCE(SUM(CASE WHEN transaction_type = 'refund' THEN amount_credits END), 0),
-          COALESCE(SUM(CASE WHEN transaction_type = 'adjust' THEN amount_credits END), 0)
+          COALESCE(SUM(CASE WHEN transaction_type = 'adjust' THEN amount_credits END), 0),
+          COALESCE(SUM(CASE WHEN transaction_type = 'plan_credit' THEN amount_credits END), 0),
+          COALESCE(SUM(CASE WHEN transaction_type = 'subscription' THEN amount_vnd END), 0)
         FROM wallet_transactions WHERE user_id = ? AND status = 'success'
         ''', (user_id,)).fetchone()
     finally:
         conn.close()
     return {"deposited_vnd": row[0], "deposited_credits": row[1], "used_credits": row[2],
-            "refunded_credits": row[3], "adjusted_credits": row[4]}
+            "refunded_credits": row[3], "adjusted_credits": row[4], "plan_credits": row[5], "plan_paid_vnd": row[6]}
 
 
 def verify_and_credit_transaction(transaction_id: str, confirmed_by: str = "admin") -> dict:

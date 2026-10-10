@@ -280,6 +280,29 @@ def init_db():
     _add_column_if_missing(cursor, "wallet_transactions", "confirmed_at", "TIMESTAMP")
     _add_column_if_missing(cursor, "wallet_transactions", "confirmed_by", "TEXT")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_user ON ai_jobs(user_id, created_at)")
+    # Gói tháng: mỗi lần thanh toán là một dòng (gia hạn, đổi gói nối tiếp sau kỳ đang dùng).
+    # Giữ bản chụp giá/credit lúc mua để quản trị viên sửa gói không ảnh hưởng gói đã bán.
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS subscriptions (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        plan_id TEXT NOT NULL,
+        plan_name TEXT NOT NULL,
+        cycle TEXT NOT NULL,                 -- 'monthly' | 'yearly'
+        months INTEGER NOT NULL,
+        price_vnd INTEGER NOT NULL,
+        credits_per_month INTEGER NOT NULL,
+        private_models INTEGER NOT NULL,
+        transaction_id TEXT UNIQUE,
+        status TEXT NOT NULL DEFAULT 'pending', -- 'pending' | 'active' | 'expired' | 'cancelled'
+        starts_at TIMESTAMP,
+        expires_at TIMESTAMP,
+        grants_done INTEGER NOT NULL DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        activated_at TIMESTAMP
+    )
+    ''')
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_subscriptions_user ON subscriptions(user_id, status)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_tx_user ON wallet_transactions(user_id, created_at)")
     cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_token ON users(api_token_hash)")
     # API key không còn lưu trong DB (bản cũ seed sẵn key giả và cho sửa qua giao diện)

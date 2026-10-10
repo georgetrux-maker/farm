@@ -1,5 +1,7 @@
 import React from 'react'
-import { ArrowLeft, ShieldCheck } from 'lucide-react'
+import { ArrowLeft, ArrowRight, BadgeCheck, ShieldCheck } from 'lucide-react'
+import type { UserPlanSummary } from '../services/api'
+import { formatDate } from '../lib/format'
 import { ADMIN_SECTIONS, NAV_ITEMS, type AdminSection, type NavItem, type View } from '../lib/navigation'
 import { Wordmark } from './ui/Wordmark'
 
@@ -7,6 +9,8 @@ interface SidebarProps {
   view: View
   adminSection: AdminSection
   isAdmin: boolean
+  /** Gói tháng đang dùng: hiện ở cuối menu, chưa có thì mời nâng cấp */
+  plan?: UserPlanSummary
   onNavigate: (view: View) => void
   onAdminSection: (section: AdminSection) => void
 }
@@ -30,7 +34,7 @@ function NavButton<T extends string>({ item, active, onClick }: { item: NavItem<
 }
 
 /** Menu bên trái trên máy tính. Trong trang Quản trị đổi sang menu Admin Panel. */
-export const Sidebar: React.FC<SidebarProps> = ({ view, adminSection, isAdmin, onNavigate, onAdminSection }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ view, adminSection, isAdmin, plan, onNavigate, onAdminSection }) => {
   const inAdmin = view === 'admin'
   return (
     <aside className="hidden lg:flex w-64 shrink-0 flex-col border-r border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--bg-card)_80%,transparent)] backdrop-blur-md">
@@ -47,6 +51,35 @@ export const Sidebar: React.FC<SidebarProps> = ({ view, adminSection, isAdmin, o
               <NavButton key={item.id} item={item} active={view === item.id} onClick={() => onNavigate(item.id)} />
             ))}
       </nav>
+      {!inAdmin && (
+        <div className="px-3 pb-3">
+          <button
+            onClick={() => onNavigate('wallet')}
+            className="group w-full text-left rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-3.5 hover:border-[var(--border-strong)] transition-colors"
+          >
+            {plan?.plan_name ? (
+              <>
+                <span className="flex items-center gap-1.5 text-sm font-semibold">
+                  <BadgeCheck className="w-4 h-4 text-[var(--accent-text)]" /> Gói {plan.plan_name}
+                </span>
+                <span className={`block text-xs mt-1 ${plan.renew_reminder && !plan.has_upcoming ? 'text-[var(--warn-text)] font-semibold' : 'text-[var(--text-muted)]'}`}>
+                  {plan.renew_reminder && !plan.has_upcoming ? 'Sắp hết hạn: ' : 'Đến '}
+                  {formatDate(plan.active_until)}
+                </span>
+              </>
+            ) : (
+              <>
+                <span className="block text-sm font-semibold">Nâng cấp gói</span>
+                <span className="block text-xs text-[var(--text-muted)] mt-1">Gói tháng cho nhiều credit hơn nạp lẻ, thêm người mẫu riêng.</span>
+              </>
+            )}
+            <span className="mt-2 text-xs font-semibold text-[var(--accent-text)] inline-flex items-center gap-1">
+              {plan?.plan_name ? 'Quản lý gói' : 'Xem các gói'}
+              <ArrowRight className="w-3 h-3 transition-transform group-hover:translate-x-0.5" />
+            </span>
+          </button>
+        </div>
+      )}
       {isAdmin && (
         <div className="p-3 border-t border-[var(--border-subtle)]">
           {inAdmin ? (

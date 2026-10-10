@@ -91,7 +91,7 @@ SETTINGS = (
             hint="Không lớn hơn giá mỗi video"),
     Setting("private_models_limit", "pricing", "Người mẫu riêng tối đa mỗi shop", "int", "PRIVATE_MODELS_LIMIT",
             config.private_models_limit, minimum=0, maximum=50, default=3,
-            hint="Shop tự tải ảnh để tạo người mẫu của mình; 0 = tắt tính năng"),
+            hint="Mức chung khi chưa mua gói (gói tháng có thể cho nhiều hơn); 0 = tắt tính năng"),
     Setting("signup_bonus_credits", "pricing", "Credit tặng khi đăng ký", "int", "SIGNUP_BONUS_CREDITS",
             config.signup_bonus_credits, minimum=0, maximum=10_000, default=0,
             hint="Chưa có xác minh email nên để 0 nếu sợ bị tạo tài khoản ảo"),

@@ -110,7 +110,7 @@ export interface CreditTransaction {
   id: string
   amount_credits: number
   amount_vnd: number | null
-  transaction_type: 'deposit' | 'usage' | 'refund' | 'adjust'
+  transaction_type: 'deposit' | 'usage' | 'refund' | 'adjust' | 'subscription' | 'plan_credit'
   description: string | null
   status: 'pending' | 'success' | 'cancelled'
   created_at: string

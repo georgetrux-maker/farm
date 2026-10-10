@@ -7,8 +7,9 @@ from backend import config
 from backend.auth import LOCKED_MESSAGE, bearer_token, get_current_user
 from backend.crypto_utils import hash_password, verify_password
 from backend.database import (
-    create_session, delete_session, get_dashboard_summary, get_user_by_email, public_user, register_user,
+    create_session, delete_session, get_dashboard_summary, get_user, get_user_by_email, public_user, register_user,
 )
+from backend.routers.plans import plan_summary
 from backend.services.security import check_rate_limit
 
 router = APIRouter()
@@ -70,8 +71,10 @@ def api_logout(token: str = Depends(bearer_token)):
 
 @router.get("/api/user/profile")
 def api_get_profile(user: dict = Depends(get_current_user)):
-    """Task 7 & 19: Thông tin tài khoản & hồ sơ cơ thể của user đang đăng nhập"""
-    return public_user(user)
+    """Task 7 & 19: Thông tin tài khoản & hồ sơ cơ thể của user đang đăng nhập, kèm gói tháng đang dùng.
+    Credit hằng tháng của gói được cộng ở đây nếu đã tới mốc, nên đọc lại số dư sau đó."""
+    plan = plan_summary(user["id"])
+    return {**public_user(get_user(user["id"]) or user), "plan": plan}
 
 
 @router.get("/api/dashboard/stats")
