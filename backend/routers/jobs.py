@@ -1,8 +1,8 @@
 """Tạo video (pipeline), hàng đợi job, duyệt ảnh thử đồ, xuất bản"""
 
-from typing import List, Optional
+from typing import List, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from backend import config
@@ -64,9 +64,16 @@ def api_run_pipeline(req: PipelineRunRequest, user: dict = Depends(get_current_u
 
 
 @router.get("/api/jobs")
-def api_list_jobs(limit: int = 60, user: dict = Depends(get_current_user)):
-    """Danh sách video của người dùng đang đăng nhập (trang "Video của tôi")"""
-    return list_jobs(user["id"], max(1, min(limit, 200)))
+def api_list_jobs(
+    page: int = Query(1, ge=1, le=10_000),
+    page_size: int = Query(24, ge=1, le=100),
+    q: Optional[str] = Query(None, max_length=100, description="Tìm theo tên sản phẩm, không cần gõ dấu"),
+    status: Optional[Literal["completed", "busy", "awaiting_approval", "other"]] = None,
+    sort: Literal["newest", "oldest", "title"] = "newest",
+    user: dict = Depends(get_current_user),
+):
+    """Danh sách video của người dùng đang đăng nhập (trang "Video của tôi"): phân trang, tìm kiếm, lọc, sắp xếp"""
+    return list_jobs(user["id"], page=page, page_size=page_size, q=q, status=status, sort=sort)
 
 
 @router.get("/api/jobs/{job_id}")

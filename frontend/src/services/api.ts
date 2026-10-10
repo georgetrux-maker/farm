@@ -1,5 +1,5 @@
 import type {
-  AIJob, BrandAvatar, CreditTransaction, DashboardStats, MyVideo, SystemAuditReport,
+  AIJob, BrandAvatar, CreditTransaction, DashboardStats, MyVideosPage, SystemAuditReport, VideoFilter, VideoSort,
 } from '../types'
 
 const TOKEN_KEY = 'aura_api_token'
@@ -100,8 +100,21 @@ export function triggerPipelineRun(
   return post('/api/pipeline/run', params, 'Lỗi khi kích hoạt luồng AI')
 }
 
-export function fetchMyVideos(): Promise<MyVideo[]> {
-  return request('/api/jobs', {}, 'Không thể tải danh sách video')
+export function fetchMyVideos(params: {
+  page?: number
+  pageSize?: number
+  q?: string
+  status?: VideoFilter
+  sort?: VideoSort
+} = {}): Promise<MyVideosPage> {
+  const query = new URLSearchParams()
+  if (params.page) query.set('page', String(params.page))
+  if (params.pageSize) query.set('page_size', String(params.pageSize))
+  if (params.q) query.set('q', params.q)
+  if (params.status && params.status !== 'all') query.set('status', params.status)
+  if (params.sort) query.set('sort', params.sort)
+  const qs = query.toString()
+  return request(`/api/jobs${qs ? `?${qs}` : ''}`, {}, 'Không thể tải danh sách video')
 }
 
 export function fetchJobStatus(jobId: string): Promise<AIJob> {

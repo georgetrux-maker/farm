@@ -12,7 +12,7 @@ from backend.ai.product_analysis import analyze_product
 from backend.ai.tts import DEFAULT_VOICE, generate_speech
 from backend.ai.vton import engine_name as vton_engine_name
 from backend.ai.vton import generate_tryon
-from backend.database import get_brand_avatar, get_db, get_product, save_product_analysis
+from backend.database import get_brand_avatar, get_db, get_product, save_product_analysis, search_key
 from backend.media_paths import try_resolve_media_ref
 from backend.services.wallet import deduct_credits, refund_credits
 
@@ -277,22 +277,59 @@ def get_job_status(job_id: str, user_id: str = None):
     return _job_dict(row)
 
 
-def list_jobs(user_id: str, limit: int = 60) -> list:
-    """Video của một người dùng (mới nhất trước), kèm tên/ảnh sản phẩm và số lần đã đăng."""
+# Nhóm trạng thái dùng cho bộ lọc trên trang "Video của tôi"
+STATUS_GROUPS = {
+    "completed": ("completed",),
+    "busy": ("queued", "pending", "processing"),
+    "awaiting_approval": ("awaiting_approval",),
+    "other": ("failed", "rejected"),
+}
+SORTS = {
+    "newest": "j.created_at DESC, j.rowid DESC",
+    "oldest": "j.created_at ASC, j.rowid ASC",
+    "title": "search_key(p.title) ASC, j.created_at DESC, j.rowid DESC",
+}
+
+
+def list_jobs(user_id: str, page: int = 1, page_size: int = 24, q: str = None, status: str = None,
+              sort: str = "newest") -> dict:
+    """Video của một người dùng, có phân trang, tìm theo tên sản phẩm (không cần gõ dấu),
+    lọc theo nhóm trạng thái và sắp xếp. Kèm số lượng theo từng nhóm để hiện trên bộ lọc."""
+    where, args = ["j.user_id = ?"], [user_id]
+    key = search_key(q)
+    if key:
+        escaped = key.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        where.append("search_key(p.title) LIKE ? ESCAPE '\\'")
+        args.append(f"%{escaped}%")
+    base = "FROM ai_jobs j LEFT JOIN products p ON p.id = j.product_id WHERE " + " AND ".join(where)
+
     conn = get_db()
-    rows = conn.execute('''
-    SELECT j.*, p.title AS product_title, p.image_url AS product_image_url,
-           (SELECT COUNT(*) FROM publications pb WHERE pb.job_id = j.id AND pb.status = 'published') AS published_count
-    FROM ai_jobs j LEFT JOIN products p ON p.id = j.product_id
-    WHERE j.user_id = ?
-    ORDER BY j.created_at DESC, j.rowid DESC
-    LIMIT ?
-    ''', (user_id, limit)).fetchall()
-    conn.close()
-    jobs = []
+    try:
+        by_status = dict(conn.execute(f"SELECT j.status, COUNT(*) {base} GROUP BY j.status", args).fetchall())
+        counts = {group: sum(by_status.get(s, 0) for s in members) for group, members in STATUS_GROUPS.items()}
+        counts["all"] = sum(by_status.values())
+
+        filtered, filter_args = base, list(args)
+        if status in STATUS_GROUPS:
+            members = STATUS_GROUPS[status]
+            filtered += f" AND j.status IN ({','.join('?' * len(members))})"
+            filter_args += list(members)
+        total = conn.execute(f"SELECT COUNT(*) {filtered}", filter_args).fetchone()[0]
+        rows = conn.execute(f'''
+        SELECT j.*, p.title AS product_title, p.image_url AS product_image_url,
+               (SELECT COUNT(*) FROM publications pb WHERE pb.job_id = j.id AND pb.status = 'published') AS published_count
+        {filtered}
+        ORDER BY {SORTS.get(sort, SORTS["newest"])}
+        LIMIT ? OFFSET ?
+        ''', filter_args + [page_size, (page - 1) * page_size]).fetchall()
+    finally:
+        conn.close()
+
+    items = []
     for row in rows:
         job = _job_dict(row)
         job.update({"product_title": row["product_title"], "product_image_url": row["product_image_url"],
                     "published_count": row["published_count"]})
-        jobs.append(job)
-    return jobs
+        items.append(job)
+    return {"items": items, "total": total, "page": page, "page_size": page_size,
+            "has_more": page * page_size < total, "counts": counts}

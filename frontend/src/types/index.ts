@@ -35,6 +35,20 @@ export interface MyVideo extends AIJob {
   published_count: number
 }
 
+export type VideoFilter = 'all' | 'completed' | 'busy' | 'awaiting_approval' | 'other'
+export type VideoSort = 'newest' | 'oldest' | 'title'
+
+/** Một trang kết quả của GET /api/jobs */
+export interface MyVideosPage {
+  items: MyVideo[]
+  total: number
+  page: number
+  page_size: number
+  has_more: boolean
+  /** Số video theo từng nhóm trạng thái (đã áp dụng từ khóa tìm kiếm) */
+  counts: Record<VideoFilter, number>
+}
+
 /** Người mẫu AI trong kho (bảng brand_avatars) */
 export interface BrandAvatar {
   id: string

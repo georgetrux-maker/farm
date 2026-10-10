@@ -420,3 +420,9 @@ p {
     scroll-behavior: auto !important;
   }
 }
+
+/* Ô tìm kiếm đã có nút xóa riêng: ẩn nút xóa mặc định của trình duyệt */
+input[type="search"]::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+}

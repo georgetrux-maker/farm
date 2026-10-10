@@ -1,6 +1,7 @@
 import hashlib
 import json
 import sqlite3
+import unicodedata
 import uuid
 
 from backend import config
@@ -16,10 +17,20 @@ ALLOWED_SETTING_KEYS = {
 }
 
 
+def search_key(text) -> str:
+    """Chuỗi để tìm kiếm không phân biệt hoa thường và dấu: "Áo Sơ Mi Đỏ" -> "ao so mi do"."""
+    if not text:
+        return ""
+    text = str(text).replace("đ", "d").replace("Đ", "D")
+    text = "".join(c for c in unicodedata.normalize("NFD", text) if unicodedata.category(c) != "Mn")
+    return " ".join(text.lower().split())
+
+
 def get_db():
     conn = sqlite3.connect(config.db_path(), timeout=15)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.create_function("search_key", 1, search_key, deterministic=True)
     return conn
 
 

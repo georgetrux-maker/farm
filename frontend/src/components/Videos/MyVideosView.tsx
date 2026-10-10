@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { AlertTriangle, Download, Film, Play, Plus, Send } from 'lucide-react'
-import { fetchMyVideos, fetchProfile, fetchStudioOptions } from '../../services/api'
-import type { MyVideo } from '../../types'
-import { formatDateTime, videoFileName } from '../../lib/format'
+import { AlertTriangle, ArrowUpDown, Download, Film, Loader2, Play, Plus, Search, Send, X } from 'lucide-react'
+import { fetchJobStatus, fetchMyVideos, fetchProfile, fetchStudioOptions } from '../../services/api'
+import type { MyVideo, VideoFilter, VideoSort } from '../../types'
+import { formatDateTime, formatNumber, videoFileName } from '../../lib/format'
 import { isJobBusy } from '../../lib/jobStatus'
 import { HangerArt } from '../ui/GarmentArt'
 import { Modal } from '../ui/Modal'
@@ -16,41 +16,64 @@ interface MyVideosViewProps {
   onCreditsChange: (credits: number) => void
 }
 
-type Filter = 'all' | 'completed' | 'busy' | 'awaiting_approval' | 'other'
+const PAGE_SIZE = 24
 
-const FILTERS: { id: Filter; label: string; match: (v: MyVideo) => boolean }[] = [
-  { id: 'all', label: 'Tất cả', match: () => true },
-  { id: 'completed', label: 'Hoàn tất', match: (v) => v.status === 'completed' },
-  { id: 'busy', label: 'Đang tạo', match: (v) => isJobBusy(v.status) },
-  { id: 'awaiting_approval', label: 'Chờ duyệt', match: (v) => v.status === 'awaiting_approval' },
-  { id: 'other', label: 'Lỗi / đã hủy', match: (v) => v.status === 'failed' || v.status === 'rejected' },
+const FILTERS: { id: VideoFilter; label: string }[] = [
+  { id: 'all', label: 'Tất cả' },
+  { id: 'completed', label: 'Hoàn tất' },
+  { id: 'busy', label: 'Đang tạo' },
+  { id: 'awaiting_approval', label: 'Chờ duyệt' },
+  { id: 'other', label: 'Lỗi / đã hủy' },
 ]
+
+const SORTS: { id: VideoSort; label: string }[] = [
+  { id: 'newest', label: 'Mới nhất' },
+  { id: 'oldest', label: 'Cũ nhất' },
+  { id: 'title', label: 'Tên sản phẩm A–Z' },
+]
+
+const EMPTY_COUNTS: Record<VideoFilter, number> = { all: 0, completed: 0, busy: 0, awaiting_approval: 0, other: 0 }
 
 function titleOf(v: MyVideo) {
   return v.product_title || 'Sản phẩm chưa đặt tên'
 }
 
-/** Thư viện video kiểu lookbook; video đang tạo tự cập nhật tiến độ. */
+/** Thư viện video kiểu lookbook: tìm kiếm, lọc, sắp xếp phía máy chủ, tải thêm từng trang;
+ *  video đang tạo tự cập nhật tiến độ. */
 export const MyVideosView: React.FC<MyVideosViewProps> = ({ onCreate, onCreditsChange }) => {
   const toast = useToast()
   const [videos, setVideos] = useState<MyVideo[] | null>(null)
+  const [total, setTotal] = useState(0)
+  const [counts, setCounts] = useState(EMPTY_COUNTS)
+  const [pages, setPages] = useState(1)
+  const [hasMore, setHasMore] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [openId, setOpenId] = useState<string | null>(null)
-  const [filter, setFilter] = useState<Filter>('all')
+  const [filter, setFilter] = useState<VideoFilter>('all')
+  const [sort, setSort] = useState<VideoSort>('newest')
+  const [search, setSearch] = useState('')
+  const [q, setQ] = useState('')
   const [previewCost, setPreviewCost] = useState(0)
   const lastStatus = useRef<Record<string, string>>({})
+  const requestId = useRef(0)
 
-  const load = useCallback(async () => {
-    try {
-      const list = await fetchMyVideos()
-      setLoadError(null)
-      setVideos(list)
+  // Gõ xong 0,3 giây mới tìm, tránh gọi máy chủ mỗi lần bấm phím
+  useEffect(() => {
+    const t = setTimeout(() => setQ(search.trim()), 300)
+    return () => clearTimeout(t)
+  }, [search])
 
-      // Báo khi một video vừa đổi trạng thái trong lúc người dùng đang xem trang này
+  /** Báo khi video vừa đổi trạng thái trong lúc người dùng đang xem trang; trả về true nếu có thay đổi */
+  const noteTransitions = useCallback(
+    (list: MyVideo[]) => {
+      let changed = false
       let refreshCredits = false
       for (const v of list) {
         const before = lastStatus.current[v.job_id]
         if (before && isJobBusy(before) && !isJobBusy(v.status)) {
+          changed = true
           if (v.status === 'completed') toast(`Video "${titleOf(v)}" đã tạo xong`, 'success')
           else if (v.status === 'awaiting_approval') toast(`Ảnh thử đồ "${titleOf(v)}" đã xong, chờ bạn duyệt`, 'info')
           else if (v.status === 'failed') {
@@ -65,36 +88,104 @@ export const MyVideosView: React.FC<MyVideosViewProps> = ({ onCreate, onCreditsC
           .then((p) => onCreditsChange(p.credits))
           .catch(() => {})
       }
-    } catch (e: any) {
-      setLoadError(e.message)
-    }
-  }, [toast, onCreditsChange])
+      return changed
+    },
+    [toast, onCreditsChange],
+  )
+
+  /** Tải lại các trang đang hiển thị (sau khi đổi bộ lọc, đóng hộp thoại, hoặc có video vừa xong) */
+  const reload = useCallback(
+    async (pageCount: number) => {
+      const id = ++requestId.current
+      setLoading(true)
+      try {
+        const res = await fetchMyVideos({
+          page: 1,
+          pageSize: Math.min(100, PAGE_SIZE * pageCount),
+          q,
+          status: filter,
+          sort,
+        })
+        if (id !== requestId.current) return // đã có yêu cầu mới hơn
+        noteTransitions(res.items)
+        setVideos(res.items)
+        setTotal(res.total)
+        setCounts(res.counts)
+        setHasMore(res.has_more)
+        setPages(Math.max(1, Math.ceil(res.items.length / PAGE_SIZE)))
+        setLoadError(null)
+      } catch (e: any) {
+        if (id === requestId.current) setLoadError(e.message)
+      } finally {
+        if (id === requestId.current) setLoading(false)
+      }
+    },
+    [q, filter, sort, noteTransitions],
+  )
+
+  // Đổi từ khóa, bộ lọc hoặc cách sắp xếp: tải lại từ trang đầu
+  useEffect(() => {
+    const t = setTimeout(() => reload(1), 0)
+    return () => clearTimeout(t)
+  }, [reload])
 
   useEffect(() => {
-    const id = setTimeout(load, 0)
     fetchStudioOptions()
       .then((o) => setPreviewCost(o.tryon_preview_cost_credits))
       .catch(() => {})
-    return () => clearTimeout(id)
-  }, [load])
+  }, [])
 
-  // Còn video đang tạo thì hỏi lại tiến độ định kỳ
-  const hasBusy = videos?.some((v) => isJobBusy(v.status)) ?? false
+  const loadMore = async () => {
+    setLoadingMore(true)
+    const id = requestId.current
+    try {
+      const res = await fetchMyVideos({ page: pages + 1, pageSize: PAGE_SIZE, q, status: filter, sort })
+      if (id !== requestId.current) return
+      noteTransitions(res.items)
+      setVideos((list) => {
+        const seen = new Set((list ?? []).map((v) => v.job_id))
+        return [...(list ?? []), ...res.items.filter((v) => !seen.has(v.job_id))]
+      })
+      setPages((n) => n + 1)
+      setHasMore(res.has_more)
+      setTotal(res.total)
+    } catch (e: any) {
+      toast(e.message, 'error')
+    } finally {
+      setLoadingMore(false)
+    }
+  }
+
+  // Video đang tạo: hỏi tiến độ riêng từng video mỗi 4 giây; có video xong thì tải lại danh sách
+  const busyIds = (videos ?? []).filter((v) => isJobBusy(v.status)).map((v) => v.job_id).join(',')
   useEffect(() => {
-    if (!hasBusy) return
-    const t = setInterval(load, 4000)
+    if (!busyIds) return
+    const t = setInterval(async () => {
+      try {
+        const updates = await Promise.all(busyIds.split(',').map((id) => fetchJobStatus(id)))
+        setVideos((list) =>
+          (list ?? []).map((v) => {
+            const u = updates.find((x) => x.job_id === v.job_id)
+            return u ? { ...v, ...u } : v
+          }),
+        )
+        const merged = (videos ?? []).map((v) => ({ ...v, ...(updates.find((x) => x.job_id === v.job_id) ?? {}) }))
+        if (noteTransitions(merged)) reload(pages)
+      } catch {
+        // mạng chập chờn: thử lại lần sau
+      }
+    }, 4000)
     return () => clearInterval(t)
-  }, [hasBusy, load])
+  }, [busyIds, videos, pages, noteTransitions, reload])
 
   const opened = videos?.find((v) => v.job_id === openId) ?? null
   const closeModal = () => {
     setOpenId(null)
-    load()
+    reload(pages)
   }
 
-  const counts = Object.fromEntries(FILTERS.map((f) => [f.id, videos?.filter(f.match).length ?? 0])) as Record<Filter, number>
-  const activeFilter = FILTERS.find((f) => f.id === filter) ?? FILTERS[0]
-  const shown = videos?.filter(activeFilter.match) ?? []
+  const filtering = q !== '' || filter !== 'all'
+  const libraryEmpty = videos !== null && counts.all === 0 && q === ''
 
   return (
     <div className="flex-1 h-full overflow-y-auto text-[var(--text-main)]">
@@ -105,7 +196,7 @@ export const MyVideosView: React.FC<MyVideosViewProps> = ({ onCreate, onCreditsC
             <h1 className="display text-3xl sm:text-4xl mt-1.5">Video của tôi</h1>
             <p className="text-[var(--text-muted)] mt-2">Xem lại, tải về hoặc đăng các video bạn đã tạo.</p>
           </div>
-          {videos && videos.length > 0 && (
+          {!libraryEmpty && videos && (
             <button onClick={onCreate} className="btn btn-primary">
               <Plus className="w-4 h-4" /> Tạo video mới
             </button>
@@ -116,13 +207,13 @@ export const MyVideosView: React.FC<MyVideosViewProps> = ({ onCreate, onCreditsC
           <div className="flex gap-2 items-center text-sm p-3 rounded-2xl border border-[var(--danger-border)] bg-[var(--danger-bg)] text-[var(--danger-text)]">
             <AlertTriangle className="w-4 h-4 shrink-0" />
             <span className="flex-1">{loadError}</span>
-            <button onClick={load} className="font-semibold underline">
+            <button onClick={() => reload(pages)} className="font-semibold underline">
               Thử lại
             </button>
           </div>
         )}
 
-        {/* Đang tải: khung lấp lánh */}
+        {/* Đang tải lần đầu: khung lấp lánh */}
         {!videos && !loadError && (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-5" aria-label="Đang tải">
             {Array.from({ length: 8 }, (_, i) => (
@@ -135,7 +226,7 @@ export const MyVideosView: React.FC<MyVideosViewProps> = ({ onCreate, onCreditsC
           </div>
         )}
 
-        {videos && videos.length === 0 && (
+        {libraryEmpty && (
           <div className="card text-center py-16 px-6 animate-fade-up">
             <HangerArt className="w-24 mx-auto text-[var(--accent-text)]" />
             <h2 className="display text-2xl mt-5">Tủ video của bạn đang trống</h2>
@@ -148,24 +239,99 @@ export const MyVideosView: React.FC<MyVideosViewProps> = ({ onCreate, onCreditsC
           </div>
         )}
 
-        {videos && videos.length > 0 && (
+        {videos && !libraryEmpty && (
           <>
-            <div className="flex gap-2 overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0 pb-1" role="group" aria-label="Lọc video">
-              {FILTERS.filter((f) => f.id === 'all' || counts[f.id] > 0).map((f) => (
-                <button key={f.id} onClick={() => setFilter(f.id)} aria-pressed={filter === f.id} className="chip shrink-0">
-                  {f.label}
-                  <span className="opacity-70 tabular-nums">{counts[f.id]}</span>
-                </button>
-              ))}
-            </div>
-            {shown.length === 0 ? (
-              <p className="text-[var(--text-muted)]">Không có video nào ở mục này.</p>
-            ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-4 gap-y-7 sm:gap-x-5">
-                {shown.map((v, i) => (
-                  <VideoCard key={v.job_id} video={v} index={i} onOpen={() => setOpenId(v.job_id)} />
+            <div className="space-y-4">
+              <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
+                <div className="relative flex-1 sm:max-w-md">
+                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-muted)] pointer-events-none" />
+                  <input
+                    type="search"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    placeholder="Tìm theo tên sản phẩm (gõ không dấu cũng được)"
+                    aria-label="Tìm video theo tên sản phẩm"
+                    className="field rounded-full pl-11 pr-10"
+                  />
+                  {loading && q !== '' ? (
+                    <Loader2 className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 animate-spin text-[var(--text-muted)]" />
+                  ) : search ? (
+                    <button
+                      onClick={() => setSearch('')}
+                      aria-label="Xóa từ khóa"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 icon-btn w-8 h-8"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  ) : null}
+                </div>
+                <label className="flex items-center gap-2 sm:ml-auto text-sm text-[var(--text-muted)]">
+                  <ArrowUpDown className="w-4 h-4" />
+                  <span className="sr-only">Sắp xếp</span>
+                  <select
+                    value={sort}
+                    onChange={(e) => setSort(e.target.value as VideoSort)}
+                    className="field rounded-full w-auto py-2.5"
+                    aria-label="Sắp xếp video"
+                  >
+                    {SORTS.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className="flex gap-2 overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0 pb-1" role="group" aria-label="Lọc video">
+                {FILTERS.filter((f) => f.id === 'all' || f.id === filter || counts[f.id] > 0).map((f) => (
+                  <button key={f.id} onClick={() => setFilter(f.id)} aria-pressed={filter === f.id} className="chip shrink-0">
+                    {f.label}
+                    <span className="opacity-70 tabular-nums">{formatNumber(counts[f.id])}</span>
+                  </button>
                 ))}
               </div>
+            </div>
+
+            {videos.length === 0 ? (
+              <div className="card text-center py-12 px-6">
+                <Search className="w-8 h-8 mx-auto text-[var(--text-muted)]" />
+                <p className="font-semibold mt-3">Không tìm thấy video phù hợp</p>
+                <p className="text-sm text-[var(--text-muted)] mt-1">Thử từ khóa khác hoặc bỏ bộ lọc.</p>
+                {filtering && (
+                  <button
+                    onClick={() => {
+                      setSearch('')
+                      setFilter('all')
+                    }}
+                    className="btn btn-secondary mt-5"
+                  >
+                    Xóa bộ lọc
+                  </button>
+                )}
+              </div>
+            ) : (
+              <>
+                <div
+                  className={`grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-4 gap-y-7 sm:gap-x-5 transition-opacity ${
+                    loading ? 'opacity-60' : ''
+                  }`}
+                >
+                  {videos.map((v, i) => (
+                    <VideoCard key={v.job_id} video={v} index={i % PAGE_SIZE} onOpen={() => setOpenId(v.job_id)} />
+                  ))}
+                </div>
+                <div className="flex flex-col items-center gap-3 pt-2">
+                  <p className="text-sm text-[var(--text-muted)]">
+                    Đang hiện {formatNumber(videos.length)} / {formatNumber(total)} video
+                  </p>
+                  {hasMore && (
+                    <button onClick={loadMore} disabled={loadingMore} className="btn btn-secondary">
+                      {loadingMore && <Loader2 className="w-4 h-4 animate-spin" />}
+                      Xem thêm
+                    </button>
+                  )}
+                </div>
+              </>
             )}
           </>
         )}
