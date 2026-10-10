@@ -229,7 +229,18 @@ def init_db():
     )
     ''')
 
+
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS admin_api_configs (
+        key TEXT PRIMARY KEY,
+        value_enc TEXT NOT NULL,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    ''')
+
+
     # Migration cho các database tạo bằng phiên bản cũ
+
     _add_column_if_missing(cursor, "users", "password_hash", "TEXT")
     cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email COLLATE NOCASE)")
     _add_column_if_missing(cursor, "users", "api_token_hash", "TEXT")
@@ -406,6 +417,55 @@ def save_system_settings(settings_dict: dict):
     conn.commit()
     conn.close()
     return get_system_settings()
+
+
+def get_admin_api_config(key: str):
+    conn = get_db()
+    row = conn.execute("SELECT value_enc FROM admin_api_configs WHERE key = ?", (key,)).fetchone()
+    conn.close()
+    if not row or not row["value_enc"]:
+        return None
+    from backend import crypto_utils
+    try:
+        return crypto_utils.decrypt(row["value_enc"])
+    except Exception:
+        return None
+
+
+def get_all_admin_api_configs() -> dict:
+    conn = get_db()
+    rows = conn.execute("SELECT key, value_enc FROM admin_api_configs").fetchall()
+    conn.close()
+    from backend import crypto_utils
+    out = {}
+    for r in rows:
+        try:
+            val = crypto_utils.decrypt(r["value_enc"])
+            if val:
+                out[r["key"]] = val
+        except Exception:
+            pass
+    return out
+
+
+def save_admin_api_config(key: str, value: str):
+    from backend import crypto_utils
+    val = (value or "").strip()
+    conn = get_db()
+    if not val:
+        conn.execute("DELETE FROM admin_api_configs WHERE key = ?", (key,))
+    else:
+        enc = crypto_utils.encrypt(val)
+        conn.execute("INSERT OR REPLACE INTO admin_api_configs (key, value_enc, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)", (key, enc))
+    conn.commit()
+    conn.close()
+
+
+def save_admin_api_configs_batch(configs: dict):
+    for k, v in configs.items():
+        if isinstance(v, str):
+            save_admin_api_config(k, v)
+
 
 
 def get_brand_avatars_list():

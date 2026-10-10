@@ -18,8 +18,9 @@ def media_path(name: str) -> str:
 
 
 def media_url(path: str) -> str:
-    rel = os.path.relpath(os.path.abspath(path), config.media_dir())
+    rel = os.path.relpath(os.path.realpath(path), os.path.realpath(config.media_dir()))
     return "/media/" + rel.replace(os.sep, "/")
+
 
 
 def resolve_media_ref(ref: str) -> str:

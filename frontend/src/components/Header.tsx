@@ -15,6 +15,7 @@ interface HeaderProps {
   onOpenAudit?: () => void
   userName: string
   userEmail: string
+  isAdmin?: boolean
   onLogout: () => void
 }
 
@@ -28,6 +29,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenAudit,
   userName,
   userEmail,
+  isAdmin,
   onLogout,
 }) => {
   const [menuOpen, setMenuOpen] = useState(false)
@@ -99,6 +101,21 @@ export const Header: React.FC<HeaderProps> = ({
           </span>
         </button>
 
+        {/* Quản trị hệ thống (chỉ admin thấy) */}
+        {isAdmin && (
+          <button
+            onClick={() => setActiveView('admin')}
+            className={`h-10 px-3 sm:px-3.5 rounded-full text-xs font-semibold flex items-center gap-1.5 transition-colors border ${
+              activeView === 'admin'
+                ? 'bg-rose-600 text-white border-rose-700 shadow-sm'
+                : 'bg-rose-500/10 text-rose-600 border-rose-500/20 hover:bg-rose-500/20'
+            }`}
+          >
+            <ShieldCheck className="w-4 h-4 shrink-0" />
+            <span className="hidden sm:inline">Admin</span>
+          </button>
+        )}
+
         {/* Tài khoản: giao diện sáng/tối, kiểm tra hệ thống, đăng xuất */}
         <div ref={menuRef} className="relative">
           <button
@@ -125,6 +142,17 @@ export const Header: React.FC<HeaderProps> = ({
                 {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
                 {theme === 'dark' ? 'Giao diện sáng' : 'Giao diện tối'}
               </button>
+              {isAdmin && (
+                <button
+                  className={menuItem}
+                  onClick={() => {
+                    setMenuOpen(false)
+                    setActiveView('admin')
+                  }}
+                >
+                  <ShieldCheck className="w-4 h-4 text-rose-500" /> Cài đặt Admin & API
+                </button>
+              )}
               {onOpenAudit && (
                 <button
                   className={menuItem}

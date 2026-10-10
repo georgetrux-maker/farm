@@ -27,6 +27,7 @@ class PipelineRunRequest(BaseModel):
     template: str = motion_engine.DEFAULT_TEMPLATE
     voice: str = tts_engine.DEFAULT_VOICE
     script_style: str = "genz"
+    custom_script: Optional[str] = None
     duration_sec: int = Field(default=5, ge=3, le=15)
     require_approval: bool = Field(default=False, description="Dừng sau bước thử đồ để người bán duyệt ảnh")
 
@@ -43,6 +44,7 @@ def _pipeline_params(req) -> dict:
         raise HTTPException(status_code=404, detail="Người mẫu không tồn tại")
     return {"avatar_id": avatar_id, "template": req.template, "voice": req.voice,
             "script_style": req.script_style, "duration_sec": req.duration_sec,
+            "custom_script": getattr(req, "custom_script", None),
             "require_approval": bool(getattr(req, "require_approval", False))}
 
 

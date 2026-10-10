@@ -1,3 +1,4 @@
+import os
 import shutil
 import subprocess
 
@@ -9,7 +10,7 @@ class FFmpegError(RuntimeError):
 
 
 def ffmpeg_available() -> bool:
-    return shutil.which(config.ffmpeg_bin()) is not None
+    return shutil.which(config.ffmpeg_bin()) is not None or os.path.isfile(config.ffmpeg_bin())
 
 
 def run_ffmpeg(args: list, cwd: str = None) -> None:
@@ -27,7 +28,14 @@ def run_ffmpeg(args: list, cwd: str = None) -> None:
 
 
 def probe_duration(path: str) -> float:
-    probe = shutil.which("ffprobe") or "ffprobe"
+    ffmpeg = config.ffmpeg_bin()
+    probe = None
+    if os.path.isabs(ffmpeg):
+        cand = os.path.join(os.path.dirname(ffmpeg), "ffprobe")
+        if os.path.isfile(cand) and os.access(cand, os.X_OK):
+            probe = cand
+    if not probe:
+        probe = shutil.which("ffprobe") or "ffprobe"
     try:
         out = subprocess.run(
             [probe, "-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", path],
@@ -36,3 +44,14 @@ def probe_duration(path: str) -> float:
         return float(out.stdout.strip())
     except (ValueError, OSError, subprocess.TimeoutExpired):
         return 0.0
+
+
+
+def ffmpeg_has_filter(filter_name: str) -> bool:
+    try:
+        proc = subprocess.run([config.ffmpeg_bin(), "-filters"], capture_output=True, text=True, timeout=5)
+        names = {line.split()[1] for line in proc.stdout.splitlines() if len(line.split()) >= 2}
+        return filter_name in names
+    except Exception:
+        return False
+

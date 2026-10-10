@@ -12,7 +12,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({ activeView, setActiveView 
     className="lg:hidden shrink-0 border-t border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--bg-card)_92%,transparent)] backdrop-blur-md pb-[env(safe-area-inset-bottom)]"
     aria-label="Menu chính"
   >
-    <div className="grid grid-cols-4 h-16">
+    <div className="grid grid-flow-col auto-cols-fr h-16">
       {NAV_ITEMS.map(({ id, label, icon: Icon }) => {
         const active = activeView === id
         return (

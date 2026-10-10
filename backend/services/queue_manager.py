@@ -143,9 +143,20 @@ def _run_video_stage(job_id: str, params: dict, product: dict, tryon_path: str):
 
     # Viết kịch bản và lồng tiếng trước để biết video cần dài bao nhiêu
     _update_job(job_id, 'processing', 50, 'Bước 4/5: Viết kịch bản và lồng tiếng')
-    script = generate_koc_script(product["title"], product["price"], product.get("fabric_type"),
-                                 style=params.get("script_style") or "genz", category=product.get("category"),
-                                 analysis=analysis, image_path=try_resolve_media_ref(product["image_url"]))
+    if params.get("custom_script") and str(params["custom_script"]).strip():
+        custom_txt = str(params["custom_script"]).strip()
+        lines = [line.strip() for line in custom_txt.split("\n") if line.strip()]
+        script = {
+            "hook": lines[0] if lines else "",
+            "body": lines[1] if len(lines) > 1 else "",
+            "cta": lines[2] if len(lines) > 2 else (lines[-1] if len(lines) > 1 else ""),
+            "full_script": custom_txt,
+            "engine": "custom_user_script",
+        }
+    else:
+        script = generate_koc_script(product["title"], product["price"], product.get("fabric_type"),
+                                     style=params.get("script_style") or "genz", category=product.get("category"),
+                                     analysis=analysis, image_path=try_resolve_media_ref(product["image_url"]))
     tts = generate_speech(script["full_script"], params.get("voice") or DEFAULT_VOICE, output_name=f"tts_{job_id}.mp3")
     script.update({"tts_engine": tts["engine"], "tts_warning": tts["warning"], "subtitles_vtt": tts["vtt_url"]})
     _update_job(job_id, 'processing', 65, 'Bước 5/5: Tạo chuyển động video 9:16 (AI có thể mất vài phút)',

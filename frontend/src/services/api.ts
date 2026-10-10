@@ -90,9 +90,29 @@ export interface PipelineParams {
   template?: string
   voice?: string
   script_style?: string
+  custom_script?: string
   duration_sec?: number
   require_approval?: boolean
 }
+
+export interface ScriptPreviewResult {
+  hook: string
+  body: string
+  cta: string
+  full_script: string
+  engine: string
+}
+
+export function previewScript(data: {
+  title: string
+  price: number
+  fabric?: string
+  category?: string
+  style?: string
+}): Promise<ScriptPreviewResult> {
+  return post('/api/ai/script/preview', data, 'Không thể tạo kịch bản xem trước')
+}
+
 
 export function triggerPipelineRun(
   params: PipelineParams,
@@ -169,6 +189,13 @@ export function addNewAvatar(data: {
 
 export function setDefaultAvatar(avatarId: string) {
   return post('/api/avatars/set-default', { avatar_id: avatarId }, 'Không thể cập nhật người mẫu mặc định')
+}
+
+export const addAvatar = addNewAvatar
+export type { BrandAvatar }
+
+export function verifyDepositManually(transactionId: string): Promise<{ ok: boolean; message: string }> {
+  return post('/api/admin/wallet/verify', { transaction_id: transactionId }, 'Không thể xác nhận giao dịch')
 }
 
 export function uploadImage(file: File): Promise<{ media_url: string; width: number; height: number }> {
@@ -333,3 +360,95 @@ export function fetchPublications(jobId?: string): Promise<Publication[]> {
   const q = jobId ? `?job_id=${encodeURIComponent(jobId)}` : ''
   return request(`/api/social/publications${q}`, {}, 'Không thể tải lịch sử đăng')
 }
+
+// ----------------------------------------------------------------- Cào dữ liệu sản phẩm từ link
+export interface ScrapedProduct {
+  status: string
+  platform: string
+  product_url: string
+  title: string | null
+  price: number | null
+  fabric: string | null
+  category: string | null
+  image_url: string | null
+  images: string[]
+  needs_manual_input: boolean
+}
+
+export function scrapeProduct(url: string): Promise<ScrapedProduct> {
+  return post<ScrapedProduct>('/api/scraper/product', { url }, 'Không thể đọc thông tin từ link sản phẩm')
+}
+
+// ----------------------------------------------------------------- Quản trị API Keys & Hệ thống
+export interface AdminApiKeysConfig {
+  anthropic: { is_configured: boolean; masked_key: string; model: string }
+  fashn: { is_configured: boolean; masked_key: string; model_name: string; mode: string }
+  replicate: { is_configured: boolean; masked_key: string; video_model: string; kling_mode: string }
+  vietqr: { bank_id: string; account_no: string; account_name: string; is_configured: boolean }
+  sepay: { is_configured: boolean; masked_key: string }
+  tiktok: { is_configured: boolean; client_key: string; has_secret: boolean }
+  facebook: { is_configured: boolean; app_id: string; has_secret: boolean }
+  pricing: { pipeline_cost_credits: number; tryon_preview_cost_credits: number; signup_bonus_credits: number }
+}
+
+export function fetchAdminApiKeys(): Promise<AdminApiKeysConfig> {
+  return request<AdminApiKeysConfig>('/api/admin/api-keys', {}, 'Không tải được cấu hình API')
+}
+
+export function saveAdminApiKeys(payload: Record<string, any>): Promise<{ status: string; message: string }> {
+  return post('/api/admin/api-keys', payload, 'Không lưu được cài đặt API')
+}
+
+export function testAdminApiKey(provider: string): Promise<{ ok: boolean; message: string }> {
+  return post('/api/admin/api-keys/test', { provider }, 'Lỗi kiểm tra kết nối API')
+}
+
+// ----------------------------------------------------------------- Quản trị Doanh thu & Người dùng
+export interface AdminStatsOverview {
+  summary: {
+    total_users: number
+    total_credits_in_circulation: number
+    total_revenue_vnd: number
+    total_jobs: number
+    completed_jobs: number
+  }
+  recent_users: Array<{ id: string; name: string; email: string; role: string; credits: number; created_at: string }>
+  recent_transactions: Array<CreditTransaction & { user_name?: string; user_email?: string }>
+}
+
+export function fetchAdminStatsOverview(): Promise<AdminStatsOverview> {
+  return request<AdminStatsOverview>('/api/admin/stats-overview', {}, 'Không tải được báo cáo quản trị')
+}
+
+// ----------------------------------------------------------------- Thư viện Video Mẫu & Nghe thử giọng
+export interface ShowcaseTemplate {
+  id: string
+  title: string
+  category: string
+  badge: string
+  video_url: string
+  thumbnail_url: string
+  motion_template: string
+  voice_id: string
+  voice_name: string
+  script_style: string
+  music_name: string
+  description: string
+  tags: string[]
+}
+
+export function fetchTemplateShowcase(): Promise<{ templates: ShowcaseTemplate[] }> {
+  return request<{ templates: ShowcaseTemplate[] }>('/api/templates/showcase', {}, 'Không tải được thư viện mẫu')
+}
+
+export interface VoicePreviewItem {
+  id: string
+  label: string
+  gender: 'female' | 'male'
+  preview_url: string
+}
+
+export function fetchVoicePreviews(): Promise<{ voices: VoicePreviewItem[] }> {
+  return request<{ voices: VoicePreviewItem[] }>('/api/ai/tts/voices-preview', {}, 'Không tải được danh sách mẫu giọng')
+}
+

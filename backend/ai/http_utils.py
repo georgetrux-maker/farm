@@ -43,8 +43,9 @@ def public_media_url(path: str) -> Optional[str]:
     base = config.public_base_url()
     if not base:
         return None
-    rel = os.path.relpath(os.path.abspath(path), config.media_dir()).replace(os.sep, "/")
+    rel = os.path.relpath(os.path.realpath(path), os.path.realpath(config.media_dir())).replace(os.sep, "/")
     return f"{base.rstrip('/')}/media/{rel}"
+
 
 
 def download_to_media(url: str, output_name: str, max_bytes: int = 300 * 1024 * 1024) -> str:
