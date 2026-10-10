@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react'
-import { ArrowRight, Coins, Film, LayoutGrid, Package, Play, Send, Wand2 } from 'lucide-react'
+import { ArrowDownRight, ArrowRight, ArrowUpRight, Coins, Film, LayoutGrid, Package, Play, UserRound, Wand2 } from 'lucide-react'
 import { fetchDashboardStats, fetchMyVideos, fetchStudioOptions, type UserProfile } from '../../services/api'
 import type { DashboardStats, MyVideo } from '../../types'
 import { formatDateTime, formatNumber, formatVnd } from '../../lib/format'
@@ -23,6 +23,25 @@ const STEPS = [
   { title: 'Chọn người mẫu & giọng đọc', text: 'Chọn phong cách, sửa kịch bản AI viết sẵn nếu muốn' },
   { title: 'Nhận video & đăng bán', text: 'Tải về hoặc đăng thẳng lên TikTok, Facebook' },
 ]
+
+/** Thay đổi 7 ngày gần nhất so với 7 ngày trước đó: mũi tên + phần trăm (không chỉ dựa vào màu) */
+const WeekTrend: React.FC<{ trend?: { week: number; prev_week: number }; unit: string }> = ({ trend, unit }) => {
+  if (!trend || (!trend.week && !trend.prev_week)) return <>chưa có {unit} mới tuần này</>
+  if (!trend.prev_week) return <>+{formatNumber(trend.week)} {unit} trong 7 ngày</>
+  const pct = Math.round(((trend.week - trend.prev_week) / trend.prev_week) * 100)
+  const up = pct >= 0
+  const Icon = up ? ArrowUpRight : ArrowDownRight
+  return (
+    <span className="inline-flex items-center gap-1">
+      <span className={`inline-flex items-center font-semibold ${up ? 'text-[var(--ok-text)]' : 'text-[var(--danger-text)]'}`}>
+        <Icon className="w-3.5 h-3.5" />
+        {up ? '+' : ''}
+        {pct}%
+      </span>
+      so với tuần trước
+    </span>
+  )
+}
 
 /** "Th 2" -> "Thứ 2", "CN" -> "Chủ nhật" */
 const fullDay = (short: string) => (short === 'CN' ? 'Chủ nhật' : short.replace('Th ', 'Thứ '))
@@ -126,11 +145,25 @@ export const HomeView: React.FC<HomeViewProps> = ({ user, credits, onNavigate, o
               icon: Film,
               label: 'Video đã tạo',
               value: stats ? formatNumber(stats.completed_renders) : '…',
-              sub: stats && (stats.total_renders > stats.completed_renders
-                ? `${formatNumber(stats.total_renders - stats.completed_renders)} video đang tạo hoặc lỗi`
-                : 'video hoàn tất'),
+              sub: stats && <WeekTrend trend={stats.trends?.videos} unit="video" />,
             },
-            { icon: Package, label: 'Sản phẩm', value: stats ? formatNumber(stats.products_count ?? 0) : '…', sub: 'đã thêm vào kho' },
+            {
+              icon: Package,
+              label: 'Sản phẩm',
+              value: stats ? formatNumber(stats.products_count ?? 0) : '…',
+              sub: stats && <WeekTrend trend={stats.trends?.products} unit="sản phẩm" />,
+            },
+            {
+              icon: UserRound,
+              label: 'Người mẫu AI',
+              value: stats ? formatNumber(stats.models_count ?? 0) : '…',
+              sub: stats && (stats.private_models_count ? `${formatNumber(stats.private_models_count)} mẫu riêng của shop` : 'dùng chung cho mọi shop'),
+              action: (
+                <button onClick={() => onNavigate('models')} className="text-sm font-semibold text-[var(--accent-text)] inline-flex items-center gap-1 group">
+                  Xem kho mẫu <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5" />
+                </button>
+              ),
+            },
             {
               icon: Coins,
               label: 'Credits',
@@ -147,7 +180,6 @@ export const HomeView: React.FC<HomeViewProps> = ({ user, credits, onNavigate, o
                 </button>
               ),
             },
-            { icon: Send, label: 'Đã đăng', value: stats ? formatNumber(stats.published_videos) : '…', sub: 'video trên TikTok, Facebook' },
           ]}
         />
 

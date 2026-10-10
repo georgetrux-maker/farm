@@ -7,7 +7,8 @@ import {
   previewScript, triggerPipelineRun, uploadImage, type ProductAnalysis, type ProductPrefill, type ShowcaseTemplate,
   type StudioOptions,
 } from '../../services/api'
-import type { AIJob, BrandAvatar, MyVideo } from '../../types'
+import type { AIJob, BrandAvatar } from '../../types'
+import type { CreateRequest } from '../../lib/createRequest'
 import { formatNumber, formatVnd, suggestTitleFromFileName } from '../../lib/format'
 import { STYLE_LABELS } from '../../lib/labels'
 import { useVoicePreview } from '../../lib/useVoicePreview'
@@ -19,12 +20,6 @@ import { TryOnReview } from './TryOnReview'
 import { UploadHero } from './UploadHero'
 import { VideoResult } from './VideoResult'
 
-/** "Tạo lại" từ trang Video của tôi; at đổi mỗi lần bấm để bấm lại cùng video vẫn có tác dụng */
-export interface RemakeRequest {
-  video: MyVideo
-  at: number
-}
-
 interface CreateVideoViewProps {
   credits: number
   isAdmin: boolean
@@ -33,7 +28,7 @@ interface CreateVideoViewProps {
   onOpenVideos: () => void
   initialTemplate?: ShowcaseTemplate | null
   onClearInitialTemplate?: () => void
-  remake?: RemakeRequest | null
+  request?: CreateRequest | null
 }
 
 /** upload/product = bước 1, configure = bước 2, còn lại = bước 3 */
@@ -117,7 +112,7 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
   onOpenVideos,
   initialTemplate,
   onClearInitialTemplate,
-  remake,
+  request,
 }) => {
   const toast = useToast()
   const [phase, setPhase] = useState<Phase>('upload')
@@ -177,42 +172,45 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
     if (initialTemplate.avatar_id) setAvatarId(initialTemplate.avatar_id)
   }
 
-  // "Tạo lại" ở Video của tôi: nạp sản phẩm, cài đặt và lời review của video cũ rồi mở bước 2 để sửa
-  const [appliedRemake, setAppliedRemake] = useState<number | null>(null)
-  if (remake && remake.at !== appliedRemake) {
-    const v = remake.video
-    const p = v.params ?? {}
-    const image = v.product_image_url
-    const t = v.product_title ?? ''
-    const pr = v.product_price ? String(v.product_price) : ''
-    const op = v.product_original_price ? String(v.product_original_price) : ''
-    const cat = v.product_category ?? ''
-    const fab = v.product_fabric ?? ''
-    const oldScript = (p.custom_script || v.script?.full_script || '').slice(0, SCRIPT_MAX)
-    setAppliedRemake(remake.at)
-    setImageUrl(image)
-    setAnalysis(null)
-    setTitle(t)
-    setTitleFromFile(false)
-    setPrice(pr)
-    setOriginalPrice(op)
-    setCategory(cat)
-    setFabric(fab)
-    setSavedProduct(v.product_id && image ? { key: productKey(image, t, pr, op, cat, fab), id: v.product_id } : null)
-    if (p.avatar_id) setAvatarId(p.avatar_id)
-    if (p.template) setTemplate(p.template)
-    if (p.voice) setVoice(p.voice)
-    if (p.script_style) setStyle(p.script_style)
-    if (p.duration_sec) setDuration(p.duration_sec)
-    setRequireApproval(!!p.require_approval)
-    setScript(oldScript)
-    setScriptEdited(!!oldScript)
-    setScriptWarning(null)
-    setJob(null)
-    setSubmitError(null)
-    setUploadError(null)
-    setPendingPrefill(null)
-    setPhase(image ? 'configure' : 'upload')
+  // Dữ liệu nạp sẵn từ trang khác (Tạo lại / Tạo video từ sản phẩm / Dùng mẫu này)
+  const [appliedRequest, setAppliedRequest] = useState<number | null>(null)
+  if (request && request.at !== appliedRequest) {
+    setAppliedRequest(request.at)
+    if (request.avatarId) setAvatarId(request.avatarId)
+    if (request.product) {
+      const v = request.product
+      const p = request.params ?? {}
+      const image = v.image_url
+      const t = v.title
+      const pr = v.price ? String(v.price) : ''
+      const op = v.original_price ? String(v.original_price) : ''
+      const cat = v.category ?? ''
+      const fab = v.fabric ?? ''
+      const oldScript = (request.script || '').slice(0, SCRIPT_MAX)
+      setImageUrl(image)
+      setAnalysis(null)
+      setTitle(t)
+      setTitleFromFile(false)
+      setPrice(pr)
+      setOriginalPrice(op)
+      setCategory(cat)
+      setFabric(fab)
+      setSavedProduct(v.id && image ? { key: productKey(image, t, pr, op, cat, fab), id: v.id } : null)
+      if (p.avatar_id) setAvatarId(p.avatar_id)
+      if (p.template) setTemplate(p.template)
+      if (p.voice) setVoice(p.voice)
+      if (p.script_style) setStyle(p.script_style)
+      if (p.duration_sec) setDuration(p.duration_sec)
+      if (request.params) setRequireApproval(!!p.require_approval)
+      setScript(oldScript)
+      setScriptEdited(!!oldScript)
+      setScriptWarning(null)
+      setJob(null)
+      setSubmitError(null)
+      setUploadError(null)
+      setPendingPrefill(null)
+      setPhase(image ? 'configure' : 'upload')
+    }
   }
 
   const voicePreview = useVoicePreview((msg) => toast(msg, 'info'))
@@ -226,6 +224,19 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
   useEffect(() => {
     currentJobRef.current = job?.job_id ?? null
   }, [job?.job_id])
+
+  // Vừa tạo người mẫu riêng hoặc chọn mẫu ở trang khác: tải lại danh sách người mẫu
+  const requestAt = request?.at
+  useEffect(() => {
+    if (!requestAt) return
+    let alive = true
+    fetchAvatars()
+      .then((list) => alive && setAvatars(list))
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [requestAt])
 
   useEffect(() => {
     Promise.all([fetchStudioOptions(), fetchAvatars()])

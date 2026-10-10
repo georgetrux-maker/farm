@@ -11,9 +11,10 @@ from pydantic import BaseModel, Field, StrictBool, StrictInt
 
 from backend import config
 from backend.ai import motion as motion_engine, script as script_engine, segmentation as seg_engine, vton as vton_engine
-from backend.auth import require_admin_role
+from backend.auth import optional_user, require_admin_role
 from backend.database import (
-    add_brand_avatar_entry, get_brand_avatars_list, get_db, get_system_settings, save_system_settings,
+    add_brand_avatar_entry, get_brand_avatar, get_brand_avatars_list, get_db, get_system_settings,
+    save_system_settings,
     set_default_brand_avatar, update_brand_avatar,
 )
 from backend.ffmpeg_utils import ffmpeg_available, ffmpeg_has_filter
@@ -25,10 +26,18 @@ log = logging.getLogger("aura")
 router = APIRouter()
 
 
+def avatar_out(a: dict, user: Optional[dict]) -> dict:
+    """Không lộ shop nào sở hữu mẫu riêng; chỉ báo "mine" cho chính chủ."""
+    out = {k: v for k, v in a.items() if k not in ("owner_id", "consent_at", "archived")}
+    out["mine"] = bool(user and a.get("owner_id") == user["id"])
+    return out
+
+
 @router.get("/api/avatars")
-def api_get_avatars():
-    """Task 14: Kho người mẫu AI"""
-    return get_brand_avatars_list()
+def api_get_avatars(scope: Literal["all", "shared"] = "all", user: Optional[dict] = Depends(optional_user)):
+    """Kho người mẫu AI: mẫu dùng chung + mẫu riêng của shop đang đăng nhập (scope=shared: chỉ mẫu chung)."""
+    owner = user["id"] if user and scope == "all" else None
+    return [avatar_out(a, user) for a in get_brand_avatars_list(owner_id=owner)]
 
 
 class AddAvatarRequest(BaseModel):
@@ -88,9 +97,12 @@ class SetDefaultAvatarRequest(BaseModel):
 
 @router.post("/api/avatars/set-default")
 def api_set_default_avatar(req: SetDefaultAvatarRequest, user: dict = Depends(require_admin_role)):
-    res = set_default_brand_avatar(req.avatar_id)
-    if res is None:
+    avatar = get_brand_avatar(req.avatar_id)
+    if avatar is None or avatar.get("archived"):
         raise HTTPException(status_code=404, detail="Người mẫu không tồn tại")
+    if avatar.get("owner_id"):
+        raise HTTPException(status_code=400, detail="Mẫu riêng của shop không đặt làm mặc định cho mọi shop được")
+    res = set_default_brand_avatar(req.avatar_id)
     audit.record(user, "avatar.default", req.avatar_id)
     return res
 

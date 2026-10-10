@@ -1,5 +1,6 @@
 import type {
-  AIJob, BrandAvatar, CreditTransaction, DashboardStats, MyVideosPage, SystemAuditReport, VideoFilter, VideoSort,
+  AIJob, BrandAvatar, CreditTransaction, DashboardStats, LibraryProduct, MyVideosPage, ProductLibraryPage,
+  SystemAuditReport, VideoFilter, VideoSort,
 } from '../types'
 
 const TOKEN_KEY = 'aura_api_token'
@@ -183,8 +184,74 @@ export function fetchWalletSummary(): Promise<WalletSummary> {
   return request('/api/wallet/summary', {}, 'Không tải được thông tin ví')
 }
 
-export function fetchAvatars(): Promise<BrandAvatar[]> {
-  return request('/api/avatars', {}, 'Không thể tải danh sách người mẫu')
+// ----------------------------------------------------------------- Sản phẩm của tôi
+export function fetchProductLibrary(params: { q?: string; category?: string | null; page?: number; pageSize?: number }): Promise<ProductLibraryPage> {
+  const qs = new URLSearchParams()
+  if (params.q?.trim()) qs.set('q', params.q.trim())
+  if (params.category !== undefined && params.category !== 'all') qs.set('category', params.category ?? '__none__')
+  if (params.page) qs.set('page', String(params.page))
+  if (params.pageSize) qs.set('page_size', String(params.pageSize))
+  return request(`/api/products/library?${qs}`, {}, 'Không tải được danh sách sản phẩm')
+}
+
+export interface ProductInput {
+  title: string
+  price: number
+  image_url: string
+  original_price?: number | null
+  category?: string | null
+  fabric_type?: string | null
+  product_url?: string | null
+  sizes?: string[]
+  tryon_enabled?: boolean
+}
+
+export function createLibraryProduct(data: ProductInput): Promise<LibraryProduct> {
+  return post('/api/products/library', { ...data, product_url: data.product_url || null }, 'Không thêm được sản phẩm')
+}
+
+export function updateProduct(id: string, data: Partial<ProductInput>): Promise<LibraryProduct> {
+  return request(`/api/products/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(data) },
+    'Không lưu được sản phẩm')
+}
+
+export function archiveProduct(id: string): Promise<{ status: string }> {
+  return request(`/api/products/${encodeURIComponent(id)}`, { method: 'DELETE' }, 'Không ẩn được sản phẩm')
+}
+
+export function batchCreateVideos(productIds: string[]): Promise<{ total_jobs: number; remaining_credits: number }> {
+  return post('/api/batch/create', { product_ids: productIds }, 'Không tạo được video hàng loạt')
+}
+
+// ----------------------------------------------------------------- Người mẫu riêng của shop
+export function fetchModelQuota(): Promise<{ used: number; limit: number; consent_text: string }> {
+  return request('/api/my/avatars/quota', {}, 'Không tải được thông tin người mẫu riêng')
+}
+
+export interface PrivateModelInput {
+  name: string
+  style: string
+  gender: 'female' | 'male'
+  height?: string
+  weight?: string
+  measurements?: string
+}
+
+export function createPrivateModel(data: PrivateModelInput & { avatar_url: string; consent: true }): Promise<BrandAvatar> {
+  return post('/api/my/avatars', data, 'Không tạo được người mẫu')
+}
+
+export function updatePrivateModel(id: string, data: Partial<PrivateModelInput>): Promise<BrandAvatar> {
+  return request(`/api/my/avatars/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(data) },
+    'Không lưu được người mẫu')
+}
+
+export function deletePrivateModel(id: string): Promise<{ status: string }> {
+  return request(`/api/my/avatars/${encodeURIComponent(id)}`, { method: 'DELETE' }, 'Không xóa được người mẫu')
+}
+
+export function fetchAvatars(scope: 'all' | 'shared' = 'all'): Promise<BrandAvatar[]> {
+  return request(`/api/avatars?scope=${scope}`, {}, 'Không thể tải danh sách người mẫu')
 }
 
 export function fetchDashboardStats(): Promise<DashboardStats> {

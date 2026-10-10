@@ -12,8 +12,10 @@ def unique_name(prefix: str, ext: str) -> str:
 
 
 def product_out(product: dict) -> dict:
-    out = {k: v for k, v in product.items() if k != "analysis_json"}
+    out = {k: v for k, v in product.items() if k not in ("analysis_json", "archived")}
     out["analysis"] = json.loads(product["analysis_json"]) if product.get("analysis_json") else None
+    out["sizes"] = [x for x in (product.get("sizes") or "").split(",") if x]
+    out["tryon_enabled"] = bool(product.get("tryon_enabled"))
     return out
 
 

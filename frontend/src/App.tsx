@@ -6,7 +6,10 @@ import { BottomNav } from './components/BottomNav'
 import { Wordmark } from './components/ui/Wordmark'
 import { LoginView } from './components/Auth/LoginView'
 import { HomeView } from './components/Home/HomeView'
-import { CreateVideoView, type RemakeRequest } from './components/Create/CreateVideoView'
+import { CreateVideoView } from './components/Create/CreateVideoView'
+import { seedFromVideo, type CreateRequest } from './lib/createRequest'
+import { ProductsView } from './components/Products/ProductsView'
+import { ModelsView } from './components/Models/ModelsView'
 import { MyVideosView } from './components/Videos/MyVideosView'
 import { ConnectView } from './components/Connect/ConnectView'
 import { WalletView } from './components/Wallet/WalletView'
@@ -19,7 +22,7 @@ import {
   UNAUTHORIZED_EVENT, UnauthorizedError, clearApiToken, fetchDepositStatus, fetchProfile, logout,
   type DepositInfo, type ShowcaseTemplate, type UserProfile,
 } from './services/api'
-import type { MyVideo } from './types'
+import type { LibraryProduct, MyVideo } from './types'
 import { formatNumber, formatVnd } from './lib/format'
 import { parseHash, toHash, type AdminSection, type View } from './lib/navigation'
 import { applyTheme, savedMode, savedPalette, type Palette, type ThemeMode } from './lib/theme'
@@ -48,7 +51,7 @@ export default function App() {
   const [pendingDeposit, setPendingDeposit] = useState<DepositInfo | null>(null)
   const [auditOpen, setAuditOpen] = useState(false)
   const [selectedTemplate, setSelectedTemplate] = useState<ShowcaseTemplate | null>(null)
-  const [remake, setRemake] = useState<RemakeRequest | null>(null)
+  const [createRequest, setCreateRequest] = useState<CreateRequest | null>(null)
 
   const isAdmin = user?.role === 'admin'
   // Trang Quản trị chỉ dành cho quản trị viên: tài khoản thường gõ #admin thì về Trang chủ
@@ -183,9 +186,31 @@ export default function App() {
     [navigate],
   )
   // "Tạo lại" ở trang Video của tôi: mở bước 2 với sản phẩm và cài đặt của video cũ để sửa trước khi tạo
+  // "Tạo video" ở Sản phẩm của tôi: mở bước 2 với sản phẩm đó
+  const createFromProduct = useCallback(
+    (p: LibraryProduct) => {
+      setCreateRequest({
+        product: {
+          id: p.id, image_url: p.image_url, title: p.title, price: p.price, original_price: p.original_price,
+          category: p.category, fabric: p.fabric_type,
+        },
+        at: Date.now(),
+      })
+      navigate('create')
+    },
+    [navigate],
+  )
+  // "Dùng mẫu này" ở Người mẫu AI: chọn sẵn người mẫu ở trang Tạo video
+  const pickModel = useCallback(
+    (avatarId: string) => {
+      setCreateRequest({ avatarId, at: Date.now() })
+      navigate('create')
+    },
+    [navigate],
+  )
   const handleRemake = useCallback(
     (video: MyVideo) => {
-      setRemake({ video, at: Date.now() })
+      setCreateRequest(seedFromVideo(video))
       navigate('create')
     },
     [navigate],
@@ -261,7 +286,7 @@ export default function App() {
               onOpenVideos={openVideos}
               initialTemplate={selectedTemplate}
               onClearInitialTemplate={() => setSelectedTemplate(null)}
-              remake={remake}
+              request={createRequest}
             />
           </div>
           {view !== 'create' && (
@@ -270,6 +295,16 @@ export default function App() {
                 <HomeView user={user} credits={walletCredits} onNavigate={setActiveView} onOpenDeposit={openWallet} />
               )}
               {view === 'showcase' && <TemplateShowcaseView onUseTemplate={handleUseTemplate} />}
+              {view === 'products' && (
+                <ProductsView
+                  credits={walletCredits}
+                  onCreateVideo={createFromProduct}
+                  onCreditsChange={setWalletCredits}
+                  onOpenVideos={openVideos}
+                  onOpenDeposit={openWallet}
+                />
+              )}
+              {view === 'models' && <ModelsView onUseModel={pickModel} />}
               {view === 'videos' && (
                 <MyVideosView onCreate={openCreate} onCreditsChange={setWalletCredits} onRemake={handleRemake} />
               )}

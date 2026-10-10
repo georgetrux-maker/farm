@@ -1,9 +1,11 @@
 import type React from 'react'
 import {
-  Film, Home, KeyRound, LayoutDashboard, LayoutGrid, LifeBuoy, Link2, Receipt, ScrollText, UserRound, Users, Wallet, Wand2,
+  Film, Home, KeyRound, LayoutDashboard, LayoutGrid, LifeBuoy, Link2, Package, Receipt, ScrollText, Shirt, UserRound, Users,
+  Wallet, Wand2,
 } from 'lucide-react'
 
-export type View = 'home' | 'create' | 'showcase' | 'videos' | 'connect' | 'wallet' | 'support' | 'admin'
+export type View =
+  | 'home' | 'create' | 'products' | 'models' | 'showcase' | 'videos' | 'connect' | 'wallet' | 'support' | 'admin'
 export type AdminSection = 'overview' | 'users' | 'transactions' | 'models' | 'settings' | 'logs'
 
 export interface NavItem<T extends string = View> {
@@ -16,6 +18,8 @@ export interface NavItem<T extends string = View> {
 export const NAV_ITEMS: NavItem[] = [
   { id: 'home', label: 'Trang chủ', icon: Home },
   { id: 'create', label: 'Tạo video AI', icon: Wand2 },
+  { id: 'products', label: 'Sản phẩm của tôi', icon: Shirt },
+  { id: 'models', label: 'Người mẫu AI', icon: UserRound },
   { id: 'videos', label: 'Video của tôi', icon: Film },
   { id: 'showcase', label: 'Thư viện mẫu', icon: LayoutGrid },
   { id: 'connect', label: 'Kênh liên kết', icon: Link2 },
@@ -27,7 +31,7 @@ export const NAV_ITEMS: NavItem[] = [
 export const MOBILE_NAV: NavItem[] = [
   { id: 'home', label: 'Trang chủ', icon: Home },
   { id: 'create', label: 'Tạo video', icon: Wand2 },
-  { id: 'showcase', label: 'Mẫu', icon: LayoutGrid },
+  { id: 'products', label: 'Sản phẩm', icon: Package },
   { id: 'videos', label: 'Video', icon: Film },
   { id: 'wallet', label: 'Ví', icon: Wallet },
 ]
@@ -41,7 +45,7 @@ export const ADMIN_SECTIONS: NavItem<AdminSection>[] = [
   { id: 'logs', label: 'Nhật ký hệ thống', icon: ScrollText },
 ]
 
-const VIEWS: View[] = ['home', 'create', 'showcase', 'videos', 'connect', 'wallet', 'support', 'admin']
+const VIEWS: View[] = ['home', 'create', 'products', 'models', 'showcase', 'videos', 'connect', 'wallet', 'support', 'admin']
 const ADMIN_IDS = ADMIN_SECTIONS.map((s) => s.id)
 
 /** "#admin/users" -> { view: 'admin', section: 'users' }; tên cũ "#stats" -> trang Ví */

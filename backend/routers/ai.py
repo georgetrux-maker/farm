@@ -15,7 +15,7 @@ from backend.ai.segmentation import segment_garment
 from backend.ai.tts import generate_speech, VOICES
 from backend.ai.vton import generate_tryon
 from backend.auth import get_current_user
-from backend.database import get_brand_avatar
+from backend.database import avatar_usable_by, get_brand_avatar
 from backend.media_paths import resolve_media_ref, try_resolve_media_ref
 from backend.routers.common import owned_product, unique_name
 from backend.services.cache_manager import check_tryon_cache, save_tryon_cache
@@ -47,7 +47,7 @@ def api_tryon(req: TryOnRequest, user: dict = Depends(get_current_user)):
     """Task 2 & 23: Thử đồ ảo có cache tiết kiệm GPU"""
     product = owned_product(req.product_id, user)
     avatar = get_brand_avatar(req.avatar_id)
-    if avatar is None:
+    if not avatar_usable_by(avatar, user["id"]):
         raise HTTPException(status_code=404, detail="Người mẫu không tồn tại")
 
     cache = check_tryon_cache(req.product_id, req.avatar_id, req.body_shape, req.height, req.weight)

@@ -5,6 +5,7 @@ Token là phiên đăng nhập (POST /api/auth/login) hoặc API token cố đ�
 để request không kèm token được coi là user demo.
 """
 import hmac
+from typing import Optional
 
 from fastapi import Depends, Header, HTTPException
 
@@ -33,6 +34,14 @@ def get_current_user(token: str = Depends(bearer_token)) -> dict:
         if user:
             return user
     raise HTTPException(status_code=401, detail="Vui lòng đăng nhập (thiếu token)")
+
+
+def optional_user(token: str = Depends(bearer_token)) -> Optional[dict]:
+    """Người đang đăng nhập nếu có token hợp lệ, không thì None (trang công khai vẫn trả dữ liệu chung)."""
+    if not token:
+        return None
+    user = get_user_by_token(token)
+    return user if user and not user.get("disabled") else None
 
 
 def require_admin_role(user: dict = Depends(get_current_user)) -> dict:

@@ -11,6 +11,11 @@ export interface StudioLabels {
 
 let cache: Promise<{ models: Record<string, string>; voices: Record<string, string> }> | null = null
 
+/** Gọi sau khi thêm/sửa/xóa người mẫu để lần sau tải lại tên */
+export function invalidateStudioLabels() {
+  cache = null
+}
+
 function load() {
   cache ??= Promise.all([fetchStudioOptions(), fetchAvatars()])
     .then(([opts, avatars]) => ({

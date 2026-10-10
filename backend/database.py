@@ -254,6 +254,15 @@ def init_db():
     _add_column_if_missing(cursor, "wallet_transactions", "amount_vnd", "INTEGER")
     _add_column_if_missing(cursor, "users", "disabled", "INTEGER DEFAULT 0")  # 1 = quản trị viên đã khóa
     _add_column_if_missing(cursor, "brand_avatars", "gender", "TEXT DEFAULT 'female'")
+    # Sản phẩm của tôi: link mua, size, cho khách thử đồ (shop trả phí), ẩn thay vì xóa (video cũ vẫn trỏ tới)
+    _add_column_if_missing(cursor, "products", "product_url", "TEXT")
+    _add_column_if_missing(cursor, "products", "sizes", "TEXT")
+    _add_column_if_missing(cursor, "products", "tryon_enabled", "INTEGER DEFAULT 0")
+    _add_column_if_missing(cursor, "products", "archived", "INTEGER DEFAULT 0")
+    # Người mẫu riêng của shop: owner_id NULL = dùng chung; consent_at = lúc shop cam kết có quyền dùng ảnh
+    _add_column_if_missing(cursor, "brand_avatars", "owner_id", "TEXT")
+    _add_column_if_missing(cursor, "brand_avatars", "consent_at", "TIMESTAMP")
+    _add_column_if_missing(cursor, "brand_avatars", "archived", "INTEGER DEFAULT 0")
     # Nhật ký thao tác quản trị và xác nhận thanh toán (ai, làm gì, lúc nào)
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS audit_logs (
@@ -462,11 +471,31 @@ def save_admin_api_configs(changes: dict):
     admin_config.invalidate()
 
 
-def get_brand_avatars_list():
+def get_brand_avatars_list(owner_id: str = None, shared_only: bool = False):
+    """Người mẫu dùng chung + (nếu có owner_id) người mẫu riêng của shop đó. Bỏ qua mẫu đã xóa."""
     conn = get_db()
-    rows = conn.execute("SELECT * FROM brand_avatars ORDER BY is_default DESC, created_at ASC").fetchall()
+    if shared_only or not owner_id:
+        rows = conn.execute("SELECT * FROM brand_avatars WHERE owner_id IS NULL AND COALESCE(archived, 0) = 0 "
+                            "ORDER BY is_default DESC, created_at ASC").fetchall()
+    else:
+        rows = conn.execute("SELECT * FROM brand_avatars WHERE (owner_id IS NULL OR owner_id = ?) "
+                            "AND COALESCE(archived, 0) = 0 ORDER BY is_default DESC, owner_id IS NOT NULL, "
+                            "created_at ASC", (owner_id,)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+def count_private_avatars(owner_id: str) -> int:
+    conn = get_db()
+    n = conn.execute("SELECT COUNT(*) FROM brand_avatars WHERE owner_id = ? AND COALESCE(archived, 0) = 0",
+                     (owner_id,)).fetchone()[0]
+    conn.close()
+    return n
+
+
+def avatar_usable_by(avatar: dict, user_id: str) -> bool:
+    """Mẫu dùng chung hoặc mẫu riêng của chính shop, chưa bị xóa."""
+    return bool(avatar) and not avatar.get("archived") and avatar.get("owner_id") in (None, user_id)
 
 
 def get_brand_avatar(avatar_id: str):
@@ -477,17 +506,24 @@ def get_brand_avatar(avatar_id: str):
 
 
 def add_brand_avatar_entry(name: str, style: str, height: str, weight: str, measurements: str, avatar_url: str,
-                           badge: str = "Tùy Chỉnh", gender: str = "female"):
+                           badge: str = "Tùy Chỉnh", gender: str = "female", owner_id: str = None):
     avatar_id = f"model_{uuid.uuid4().hex[:6]}"
     conn = get_db()
     conn.execute('''
-    INSERT INTO brand_avatars (id, name, style, height, weight, measurements, avatar_url, badge, renders_count, is_default, gender)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?)
-    ''', (avatar_id, name, style, height, weight, measurements, avatar_url, badge, gender))
+    INSERT INTO brand_avatars (id, name, style, height, weight, measurements, avatar_url, badge, renders_count,
+                               is_default, gender, owner_id, consent_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, CASE WHEN ? IS NULL THEN NULL ELSE CURRENT_TIMESTAMP END)
+    ''', (avatar_id, name, style, height, weight, measurements, avatar_url, badge, gender, owner_id, owner_id))
     conn.commit()
     conn.close()
-    return {"id": avatar_id, "name": name, "style": style, "height": height, "weight": weight, "measurements": measurements,
-            "avatar_url": avatar_url, "badge": badge, "renders_count": 0, "is_default": 0, "gender": gender}
+    return get_brand_avatar(avatar_id)
+
+
+def archive_brand_avatar(avatar_id: str):
+    conn = get_db()
+    conn.execute("UPDATE brand_avatars SET archived = 1, is_default = 0 WHERE id = ?", (avatar_id,))
+    conn.commit()
+    conn.close()
 
 
 _AVATAR_FIELDS = ("name", "style", "height", "weight", "measurements", "avatar_url", "badge", "gender")
@@ -514,7 +550,7 @@ def set_default_brand_avatar(avatar_id: str):
     if cursor.execute("SELECT 1 FROM brand_avatars WHERE id = ?", (avatar_id,)).fetchone() is None:
         conn.close()
         return None
-    cursor.execute("UPDATE brand_avatars SET is_default = (id = ?)", (avatar_id,))
+    cursor.execute("UPDATE brand_avatars SET is_default = (id = ?) WHERE owner_id IS NULL", (avatar_id,))
     cursor.execute("INSERT OR REPLACE INTO system_settings (key, value) VALUES ('default_model_id', ?)", (avatar_id,))
     conn.commit()
     conn.close()
@@ -531,15 +567,17 @@ def get_product(product_id: str):
 def create_product(owner_id: str, title: str, price: int, image_url: str, category: str = None,
                    fabric_type: str = None, original_price: int = None,
                    affiliate_shopee_url: str = None, affiliate_tiktok_url: str = None,
-                   analysis: dict = None) -> dict:
+                   analysis: dict = None, product_url: str = None, sizes: str = None,
+                   tryon_enabled: bool = False) -> dict:
     product_id = f"prod_{uuid.uuid4().hex[:10]}"
     conn = get_db()
     conn.execute('''
     INSERT INTO products (id, owner_id, title, price, original_price, category, fabric_type, image_url,
-                          affiliate_shopee_url, affiliate_tiktok_url, analysis_json)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                          affiliate_shopee_url, affiliate_tiktok_url, analysis_json, product_url, sizes, tryon_enabled)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (product_id, owner_id, title, price, original_price, category, fabric_type, image_url,
-          affiliate_shopee_url, affiliate_tiktok_url, json.dumps(analysis, ensure_ascii=False) if analysis else None))
+          affiliate_shopee_url, affiliate_tiktok_url, json.dumps(analysis, ensure_ascii=False) if analysis else None,
+          product_url, sizes, 1 if tryon_enabled else 0))
     conn.commit()
     conn.close()
     return get_product(product_id)
@@ -553,9 +591,35 @@ def save_product_analysis(product_id: str, analysis: dict):
     conn.close()
 
 
+_PRODUCT_FIELDS = ("title", "price", "original_price", "category", "fabric_type", "image_url", "product_url",
+                   "sizes", "tryon_enabled")
+
+
+def update_product(product_id: str, **fields) -> dict:
+    fields = {k: v for k, v in fields.items() if k in _PRODUCT_FIELDS}
+    conn = get_db()
+    try:
+        if fields:
+            sets = ", ".join(f"{k} = ?" for k in fields)
+            conn.execute(f"UPDATE products SET {sets} WHERE id = ?", (*fields.values(), product_id))
+            conn.commit()
+    finally:
+        conn.close()
+    return get_product(product_id)
+
+
+def archive_product(product_id: str):
+    """Ẩn khỏi Sản phẩm của tôi; video đã tạo từ sản phẩm này vẫn giữ nguyên."""
+    conn = get_db()
+    conn.execute("UPDATE products SET archived = 1, tryon_enabled = 0 WHERE id = ?", (product_id,))
+    conn.commit()
+    conn.close()
+
+
 def list_products(owner_id: str):
     conn = get_db()
-    rows = conn.execute("SELECT * FROM products WHERE owner_id = ? ORDER BY created_at DESC", (owner_id,)).fetchall()
+    rows = conn.execute("SELECT * FROM products WHERE owner_id = ? AND COALESCE(archived, 0) = 0 "
+                        "ORDER BY created_at DESC", (owner_id,)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
@@ -627,13 +691,33 @@ def get_dashboard_summary(user_id: str):
         })
 
     conn = get_db()
-    products_count = conn.execute("SELECT COUNT(*) FROM products WHERE owner_id = ?", (user_id,)).fetchone()[0]
+    products_count = conn.execute("SELECT COUNT(*) FROM products WHERE owner_id = ? AND COALESCE(archived, 0) = 0",
+                                  (user_id,)).fetchone()[0]
+    models_count = conn.execute("SELECT COUNT(*) FROM brand_avatars WHERE (owner_id IS NULL OR owner_id = ?) "
+                                "AND COALESCE(archived, 0) = 0", (user_id,)).fetchone()[0]
+    private_models = conn.execute("SELECT COUNT(*) FROM brand_avatars WHERE owner_id = ? AND COALESCE(archived, 0) = 0",
+                                  (user_id,)).fetchone()[0]
+
+    def week_pair(sql: str) -> dict:
+        """7 ngày gần nhất so với 7 ngày trước đó"""
+        now = conn.execute(f"{sql} AND created_at >= datetime('now', '-7 days')", (user_id,)).fetchone()[0]
+        before = conn.execute(f"{sql} AND created_at >= datetime('now', '-14 days') AND created_at < datetime('now', '-7 days')",
+                              (user_id,)).fetchone()[0]
+        return {"week": now, "prev_week": before}
+
+    trends = {
+        "videos": week_pair("SELECT COUNT(*) FROM ai_jobs WHERE user_id = ? AND status = 'completed'"),
+        "products": week_pair("SELECT COUNT(*) FROM products WHERE owner_id = ? AND COALESCE(archived, 0) = 0"),
+    }
     conn.close()
 
     return {
         "total_renders": total_renders,
         "completed_renders": completed_renders,
         "products_count": products_count,
+        "models_count": models_count,
+        "private_models_count": private_models,
+        "trends": trends,
         "published_videos": published_videos,
         "cache_hits": cache_hits,
         "cache_saved_usd": cache_saved_usd,

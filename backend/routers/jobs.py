@@ -11,7 +11,7 @@ from backend.ai.motion import TEMPLATES
 from backend.ai.script import STYLES
 from backend.ai.tts import VOICES
 from backend.auth import get_current_user
-from backend.database import get_brand_avatar, get_system_settings, get_user
+from backend.database import avatar_usable_by, get_brand_avatar, get_system_settings, get_user
 from backend.routers.common import owned_product
 from backend.services.queue_manager import (
     approve_job, create_ai_job, create_ai_jobs, get_job_status, InsufficientCredits, list_jobs, reject_job,
@@ -32,7 +32,7 @@ class PipelineRunRequest(BaseModel):
     require_approval: bool = Field(default=False, description="Dừng sau bước thử đồ để người bán duyệt ảnh")
 
 
-def _pipeline_params(req) -> dict:
+def _pipeline_params(req, user: dict) -> dict:
     if req.template not in TEMPLATES:
         raise HTTPException(status_code=400, detail=f"Mẫu video phải là một trong: {', '.join(TEMPLATES)}")
     if req.voice not in VOICES:
@@ -40,7 +40,8 @@ def _pipeline_params(req) -> dict:
     if req.script_style not in STYLES:
         raise HTTPException(status_code=400, detail="Giọng văn không hợp lệ")
     avatar_id = req.avatar_id or get_system_settings().get("default_model_id") or "model_01"
-    if get_brand_avatar(avatar_id) is None:
+    # Mẫu riêng của shop khác (hoặc đã xóa) coi như không tồn tại
+    if not avatar_usable_by(get_brand_avatar(avatar_id), user["id"]):
         raise HTTPException(status_code=404, detail="Người mẫu không tồn tại")
     return {"avatar_id": avatar_id, "template": req.template, "voice": req.voice,
             "script_style": req.script_style, "duration_sec": req.duration_sec,
@@ -52,7 +53,7 @@ def _pipeline_params(req) -> dict:
 def api_run_pipeline(req: PipelineRunRequest, user: dict = Depends(get_current_user)):
     """Task 8: Trừ credit và đưa pipeline vào hàng đợi"""
     owned_product(req.product_id, user)
-    params = _pipeline_params(req)
+    params = _pipeline_params(req, user)
     try:
         res = create_ai_job(user["id"], req.product_id, params)
     except InsufficientCredits as e:
@@ -126,7 +127,7 @@ def api_batch_create(req: BatchCreateRequest, user: dict = Depends(get_current_u
     """Task 15: Tạo video hàng loạt (trừ credit cho từng video)"""
     for pid in req.product_ids:
         owned_product(pid, user)
-    params = _pipeline_params(req)
+    params = _pipeline_params(req, user)
     try:
         res = create_ai_jobs(user["id"], req.product_ids, params, config.pipeline_cost_credits())
     except InsufficientCredits as e:

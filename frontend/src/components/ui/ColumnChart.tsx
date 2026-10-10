@@ -78,7 +78,7 @@ export const ColumnChart: React.FC<ColumnChartProps> = ({
           </tbody>
         </table>
       ) : (
-        <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2">
+        <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 pt-5">
           {/* Trục dọc */}
           <div className="relative" style={{ height: plotHeight }} aria-hidden>
             {ticks.map((t) => (

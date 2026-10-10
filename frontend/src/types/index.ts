@@ -82,6 +82,8 @@ export interface BrandAvatar {
   avatar_url: string
   badge?: string | null
   gender?: 'female' | 'male'
+  /** Người mẫu riêng của shop đang đăng nhập */
+  mine?: boolean
   renders_count?: number
   is_default: number
 }
@@ -90,6 +92,10 @@ export interface DashboardStats {
   total_renders: number
   completed_renders: number
   products_count?: number
+  models_count?: number
+  private_models_count?: number
+  /** 7 ngày gần nhất so với 7 ngày trước đó */
+  trends?: Record<'videos' | 'products', { week: number; prev_week: number }>
   published_videos: number
   wallet_credits: number
   avg_render_time: string | null
@@ -121,4 +127,30 @@ export interface SystemAuditReport {
   total_tasks: number
   accuracy_rate: string
   report: SystemAuditTask[]
+}
+
+/** Một sản phẩm trong "Sản phẩm của tôi" */
+export interface LibraryProduct {
+  id: string
+  title: string
+  price: number
+  original_price: number | null
+  category: string | null
+  fabric_type: string | null
+  image_url: string
+  product_url: string | null
+  sizes: string[]
+  tryon_enabled: boolean
+  created_at: string
+  videos_count?: number
+}
+
+export interface ProductLibraryPage {
+  items: LibraryProduct[]
+  total: number
+  page: number
+  page_size: number
+  has_more: boolean
+  all: number
+  categories: { category: string | null; count: number }[]
 }

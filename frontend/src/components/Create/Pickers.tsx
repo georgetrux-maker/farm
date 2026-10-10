@@ -15,6 +15,7 @@ const GENDERS = [
   { id: 'all', label: 'Tất cả' },
   { id: 'female', label: 'Nữ' },
   { id: 'male', label: 'Nam' },
+  { id: 'mine', label: 'Mẫu của tôi' },
 ] as const
 
 /** Chọn người mẫu: lọc Nữ/Nam, thẻ ảnh chân dung, viền đậm + dấu tích khi được chọn */
@@ -33,13 +34,15 @@ export const ModelPicker: React.FC<{ avatars: BrandAvatar[]; value: string; onCh
       </div>
     )
   }
-  const hasBoth = avatars.some((a) => a.gender === 'male') && avatars.some((a) => (a.gender ?? 'female') === 'female')
-  const shown = gender === 'all' ? avatars : avatars.filter((a) => (a.gender ?? 'female') === gender)
+  const hasMine = avatars.some((a) => a.mine)
+  const hasBoth = (avatars.some((a) => a.gender === 'male') && avatars.some((a) => (a.gender ?? 'female') === 'female')) || hasMine
+  const shown =
+    gender === 'all' ? avatars : gender === 'mine' ? avatars.filter((a) => a.mine) : avatars.filter((a) => (a.gender ?? 'female') === gender)
   return (
     <div>
       {hasBoth && (
         <div role="tablist" aria-label="Lọc người mẫu" className="flex gap-1 p-1 rounded-full bg-[var(--bg-surface)] w-fit mb-4">
-          {GENDERS.map((g) => (
+          {GENDERS.filter((g) => g.id !== 'mine' || hasMine).map((g) => (
             <button
               key={g.id}
               role="tab"

@@ -197,6 +197,11 @@ def public_base_url() -> str:
     return _env("PUBLIC_BASE_URL")
 
 
+def private_models_limit() -> int:
+    """Số người mẫu riêng tối đa mỗi shop được tạo (gói tháng có thể nâng lên)."""
+    return _admin_int("private_models_limit", "PRIVATE_MODELS_LIMIT", 3)
+
+
 def tryon_preview_cost_credits() -> int:
     """Phần credit không hoàn lại khi khách từ chối ảnh thử đồ (đã tốn phí thử đồ)."""
     return _admin_int("tryon_preview_cost_credits", "TRYON_PREVIEW_COST_CREDITS", 5)

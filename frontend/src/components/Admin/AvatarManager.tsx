@@ -33,7 +33,7 @@ export const AvatarManager: React.FC = () => {
   const replaceTarget = useRef<BrandAvatar | null>(null)
 
   const load = useCallback(() => {
-    fetchAvatars()
+    fetchAvatars('shared')
       .then(setAvatars)
       .catch((e) => toast(e.message, 'error'))
   }, [toast])

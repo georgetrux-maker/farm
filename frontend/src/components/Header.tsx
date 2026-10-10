@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { LifeBuoy, Link2, LogOut, Moon, Plus, ShieldCheck, Stethoscope, Sun, Wallet } from 'lucide-react'
+import { LayoutGrid, LifeBuoy, Link2, LogOut, Moon, Plus, ShieldCheck, Stethoscope, Sun, UserRound, Wallet } from 'lucide-react'
 import { useEscapeKey } from '../hooks/useEscapeKey'
 import { formatNumber, formatVnd } from '../lib/format'
 import type { View } from '../lib/navigation'
@@ -179,6 +179,13 @@ export const Header: React.FC<HeaderProps> = ({
                   />
                 </div>
               </div>
+              {/* Điện thoại: các trang không nằm ở thanh tab dưới (máy tính đã có ở menu trái) */}
+              <button className={`${menuItem} lg:hidden`} onClick={() => go('models')}>
+                <UserRound className="w-4 h-4" /> Người mẫu AI
+              </button>
+              <button className={`${menuItem} lg:hidden`} onClick={() => go('showcase')}>
+                <LayoutGrid className="w-4 h-4" /> Thư viện mẫu
+              </button>
               <button className={menuItem} onClick={() => go('connect')}>
                 <Link2 className="w-4 h-4" /> Kênh liên kết
               </button>
