@@ -17,7 +17,8 @@ log = logging.getLogger(__name__)
 
 REPLICATE_BASE_URL = "https://api.replicate.com/v1"
 FPS = 30
-WIDTH, HEIGHT = 540, 960
+WIDTH, HEIGHT = 720, 1280
+MAX_PLACEHOLDER_SEC = 90  # giới hạn Reels
 
 # z/x/y: biểu thức zoompan cho engine FFmpeg (on = số thứ tự khung hình; N được thay bằng tổng số khung hình)
 # prompt: mô tả chuyển động cho model image-to-video
@@ -64,19 +65,21 @@ def engine_name() -> str:
     return "replicate:" + config.replicate_video_model() if config.replicate_api_token() else "placeholder-ffmpeg-camera"
 
 
-def _ffmpeg_motion(image_path: Optional[str], duration_sec: int, template: str, output_path: str) -> None:
-    frames = duration_sec * FPS
+def _ffmpeg_motion(image_path: Optional[str], duration_sec: float, template: str, output_path: str) -> None:
+    frames = max(1, round(duration_sec * FPS))
     tpl = {k: TEMPLATES[template][k].replace("N", str(frames)) for k in ("z", "x", "y")}
+    # Phóng ảnh lớn hơn khung ra 1,5 lần để khi zoom vẫn nét
+    big_w, big_h = WIDTH * 3 // 2, HEIGHT * 3 // 2
     if image_path:
         vf = (
-            f"scale={WIDTH * 2}:{HEIGHT * 2}:force_original_aspect_ratio=decrease,"
-            f"pad={WIDTH * 2}:{HEIGHT * 2}:(ow-iw)/2:(oh-ih)/2:color=0x12141D,"
+            f"scale={big_w}:{big_h}:force_original_aspect_ratio=decrease,"
+            f"pad={big_w}:{big_h}:(ow-iw)/2:(oh-ih)/2:color=0x12141D,"
             f"zoompan=z='{tpl['z']}':x='{tpl['x']}':y='{tpl['y']}':d={frames}:s={WIDTH}x{HEIGHT}:fps={FPS},"
             "format=yuv420p"
         )
         args = ["-i", image_path, "-vf", vf, "-frames:v", str(frames)]
     else:
-        args = ["-f", "lavfi", "-i", f"color=c=0x12141D:s={WIDTH}x{HEIGHT}:r={FPS}", "-t", str(duration_sec),
+        args = ["-f", "lavfi", "-i", f"color=c=0x12141D:s={WIDTH}x{HEIGHT}:r={FPS}", "-t", f"{duration_sec:.3f}",
                 "-pix_fmt", "yuv420p"]
     run_ffmpeg([*args, "-c:v", "libx264", "-preset", "veryfast", "-r", str(FPS), output_path])
 
@@ -143,36 +146,40 @@ def _replicate_motion(image_path: str, duration_sec: int, template: str, output_
     # Đưa về đúng khung 9:16, 30fps để ghép tiếng ở bước sau
     out = media_path(output_name)
     run_ffmpeg(["-i", raw_path, "-an",
-                "-vf", f"scale={WIDTH * 2}:{HEIGHT * 2}:force_original_aspect_ratio=decrease,"
-                       f"pad={WIDTH * 2}:{HEIGHT * 2}:(ow-iw)/2:(oh-ih)/2:color=0x12141D,fps={FPS},format=yuv420p",
+                "-vf", f"scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=decrease,"
+                       f"pad={WIDTH}:{HEIGHT}:(ow-iw)/2:(oh-ih)/2:color=0x12141D,fps={FPS},format=yuv420p",
                 "-c:v", "libx264", "-preset", "veryfast", out])
     return out
 
 
-def generate_motion(image_path: Optional[str], duration_sec: int = 5, template: str = DEFAULT_TEMPLATE,
-                    output_name: str = "catwalk_motion.mp4") -> dict:
+def generate_motion(image_path: Optional[str], duration_sec: float = 5, template: str = DEFAULT_TEMPLATE,
+                    output_name: str = "catwalk_motion.mp4", fill_duration_sec: Optional[float] = None) -> dict:
     """
-    Task 3: Sinh video dọc 9:16 từ ảnh thử đồ theo mẫu chuyển động đã chọn.
+    Task 3: Sinh video dọc 9:16 (720x1280) từ ảnh thử đồ theo mẫu chuyển động đã chọn.
     `image_path` phải là đường dẫn đã kiểm tra trong thư mục media, hoặc None để tạo nền trống.
+
+    `duration_sec` là độ dài đoạn AI (3-15 giây, tính phí theo giây). Engine FFmpeg miễn phí thì tạo
+    luôn đủ `fill_duration_sec` (thường bằng độ dài lời thoại) để video không phải nối lặp.
     """
     if template not in TEMPLATES:
         raise ValueError(f"Mẫu video không hợp lệ: {template}")
-    duration_sec = max(1, min(int(duration_sec), 15))
     engine = engine_name()
     if engine.startswith("replicate:") and image_path:
-        output_path = _replicate_motion(image_path, max(3, duration_sec), template, output_name)
+        clip_sec = max(3, min(int(round(duration_sec)), 15))
+        output_path = _replicate_motion(image_path, clip_sec, template, output_name)
     else:
         engine = "placeholder-ffmpeg-camera"
         output_path = media_path(output_name)
-        _ffmpeg_motion(image_path, duration_sec, template, output_path)
+        clip_sec = max(1.0, min(max(float(duration_sec), fill_duration_sec or 0), MAX_PLACEHOLDER_SEC))
+        _ffmpeg_motion(image_path, clip_sec, template, output_path)
 
     return {
         "status": "success",
         "engine": engine,
         "video_path": output_path,
         "video_url": media_url(output_path),
-        "duration_sec": round(probe_duration(output_path), 2) or duration_sec,
-        "resolution": "9:16",
+        "duration_sec": round(probe_duration(output_path), 2) or clip_sec,
+        "resolution": f"{WIDTH}x{HEIGHT}",
         "fps": FPS,
         "template": template,
         "motion_style": TEMPLATES[template]["label"],

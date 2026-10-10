@@ -40,6 +40,39 @@ def build_vtt(cues: list) -> str:
     return "\n".join(lines)
 
 
+_PHRASE_END = (".", ",", "!", "?", ";", ":", "…")
+
+
+def group_phrases(cues: list, max_words: int = 6, max_sec: float = 2.8) -> list:
+    """Gom phụ đề theo từng từ thành cụm ngắn dễ đọc trên video (kiểu TikTok).
+
+    Ngắt cụm ở dấu câu, hoặc khi đủ `max_words` từ / dài quá `max_sec` giây.
+    Trả về [(bắt đầu, kết thúc, chữ)], các cụm nối liền nhau để chữ không nhấp nháy.
+    """
+    phrases, words, start = [], [], None
+    for i, (w_start, w_end, word) in enumerate(cues):
+        if start is None:
+            start = w_start
+        words.append(word)
+        last = i == len(cues) - 1
+        if last or word.endswith(_PHRASE_END) or len(words) >= max_words or w_end - start >= max_sec:
+            phrases.append([start, w_end, " ".join(words)])
+            words, start = [], None
+    # Kéo dài cụm tới lúc cụm sau bắt đầu (nếu khoảng nghỉ ngắn) để phụ đề không chớp tắt
+    for cur, nxt in zip(phrases, phrases[1:]):
+        if 0 < nxt[0] - cur[1] < 0.6:
+            cur[1] = nxt[0]
+    return [tuple(p) for p in phrases]
+
+
+def _attach_punctuation(cues: list, text: str) -> list:
+    """edge-tts trả từng từ không kèm dấu câu; nếu số từ khớp với kịch bản thì lấy lại chữ có dấu câu."""
+    tokens = text.split()
+    if len(tokens) != len(cues):
+        return cues
+    return [(start, end, token) for (start, end, _), token in zip(cues, tokens)]
+
+
 def _estimate_cues(text: str, total_sec: float) -> list:
     words = text.split()
     if not words:
@@ -96,7 +129,7 @@ def _silent_audio(text: str, audio_path: str) -> None:
 
 def generate_speech(text: str, voice_key: str = DEFAULT_VOICE, output_name: str = "review_voice.mp3") -> dict:
     """
-    Task 5: Lồng tiếng tiếng Việt và tạo phụ đề WebVTT đồng bộ.
+    Task 5: Lồng tiếng tiếng Việt và tạo phụ đề đồng bộ (WebVTT + danh sách cụm để gắn vào video).
     Thứ tự thử: edge-tts (cần internet) -> giọng offline -> âm thanh im lặng kèm phụ đề,
     để pipeline không bao giờ chết chỉ vì TTS. Kết quả cho biết engine nào đã được dùng.
     """
@@ -123,10 +156,11 @@ def generate_speech(text: str, voice_key: str = DEFAULT_VOICE, output_name: str 
             engine = "silent"
             warning = "Không có dịch vụ lồng tiếng khả dụng, video chỉ có phụ đề"
 
-    if not cues:
-        cues = _estimate_cues(text, probe_duration(audio_path) or len(text.split()) * 0.35)
+    duration = probe_duration(audio_path) or len(text.split()) * 0.35
+    cues = _attach_punctuation(cues, text) if cues else _estimate_cues(text, duration)
+    phrases = group_phrases(cues)
     with open(vtt_path, "w", encoding="utf-8") as f:
-        f.write(build_vtt(cues))
+        f.write(build_vtt(phrases))
 
     return {
         "status": "success",
@@ -139,4 +173,7 @@ def generate_speech(text: str, voice_key: str = DEFAULT_VOICE, output_name: str 
         "voice_used": VOICES[voice] if engine == "edge-tts" else engine,
         "file_size_bytes": os.path.getsize(audio_path),
         "text_length": len(text),
+        "duration_sec": round(duration, 3),
+        # Cụm phụ đề [(bắt đầu, kết thúc, chữ)] để gắn thẳng vào video
+        "phrases": phrases,
     }

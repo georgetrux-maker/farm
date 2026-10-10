@@ -144,28 +144,32 @@ def _run_video_stage(job_id: str, params: dict, product: dict, tryon_path: str):
     avatar_id = params.get("avatar_id") or "model_01"
     analysis = json.loads(product["analysis_json"]) if product.get("analysis_json") else {}
 
-    _update_job(job_id, 'processing', 50, 'Bước 4/5: Tạo video chuyển động 9:16 (có thể mất vài phút)')
-    motion = generate_motion(tryon_path, duration_sec=int(params.get("duration_sec") or 5),
-                             template=params.get("template") or DEFAULT_TEMPLATE, output_name=f"motion_{job_id}.mp4")
-
-    _update_job(job_id, 'processing', 75, 'Bước 5/5: Viết kịch bản và lồng tiếng')
+    # Viết kịch bản và lồng tiếng trước để biết video cần dài bao nhiêu
+    _update_job(job_id, 'processing', 50, 'Bước 4/5: Viết kịch bản và lồng tiếng')
     script = generate_koc_script(product["title"], product["price"], product.get("fabric_type"),
                                  style=params.get("script_style") or "genz", category=product.get("category"),
                                  analysis=analysis, image_path=try_resolve_media_ref(product["image_url"]))
     tts = generate_speech(script["full_script"], params.get("voice") or DEFAULT_VOICE, output_name=f"tts_{job_id}.mp3")
-    script.update({
-        "tts_engine": tts["engine"], "tts_warning": tts["warning"], "subtitles_vtt": tts["vtt_url"],
-        "motion_engine": motion["engine"],
-    })
-    _update_job(job_id, 'processing', 90, 'Bước 5/5: Ghép video và âm thanh', audio=tts["audio_url"],
-                script=json.dumps(script, ensure_ascii=False))
-    final = render_final_video(motion["video_path"], tts["audio_path"], output_name=f"final_{job_id}.mp4")
+    script.update({"tts_engine": tts["engine"], "tts_warning": tts["warning"], "subtitles_vtt": tts["vtt_url"]})
+    _update_job(job_id, 'processing', 65, 'Bước 5/5: Tạo chuyển động video 9:16 (AI có thể mất vài phút)',
+                audio=tts["audio_url"], script=json.dumps(script, ensure_ascii=False))
+
+    motion = generate_motion(tryon_path, duration_sec=int(params.get("duration_sec") or 5),
+                             template=params.get("template") or DEFAULT_TEMPLATE, output_name=f"motion_{job_id}.mp4",
+                             fill_duration_sec=tts["duration_sec"] + 0.4)
+
+    _update_job(job_id, 'processing', 85, 'Bước 5/5: Ghép video, phụ đề và âm thanh')
+    final = render_final_video(motion["video_path"], tts["audio_path"], output_name=f"final_{job_id}.mp4",
+                               subtitle_phrases=tts["phrases"])
+    script.update({"motion_engine": motion["engine"], "video_resolution": final["resolution"],
+                   "video_duration_sec": final["duration_sec"], "subtitles_burned": final["subtitles_burned"]})
 
     conn = get_db()
     conn.execute("UPDATE brand_avatars SET renders_count = renders_count + 1 WHERE id = ?", (avatar_id,))
     conn.commit()
     conn.close()
-    _update_job(job_id, 'completed', 100, 'Hoàn tất, video sẵn sàng xuất bản', video=final["video_url"])
+    _update_job(job_id, 'completed', 100, 'Hoàn tất, video sẵn sàng xuất bản', video=final["video_url"],
+                script=json.dumps(script, ensure_ascii=False))
 
 
 def _process_job_worker(job_id: str, resume_after_approval: bool = False):
@@ -200,7 +204,7 @@ def approve_job(job_id: str, user_id: str) -> bool:
     """Người bán đồng ý ảnh thử đồ: tiếp tục tạo video."""
     conn = get_db()
     cur = conn.execute(
-        "UPDATE ai_jobs SET status = 'queued', current_step = 'Đã duyệt, đang chờ tạo video' "
+        "UPDATE ai_jobs SET status = 'queued', progress = 45, current_step = 'Đã duyệt, đang chờ tạo video' "
         "WHERE id = ? AND user_id = ? AND status = 'awaiting_approval'", (job_id, user_id))
     conn.commit()
     conn.close()
@@ -242,13 +246,7 @@ def recover_stale_jobs() -> int:
     return len(ids)
 
 
-def get_job_status(job_id: str, user_id: str = None):
-    conn = get_db()
-    row = conn.execute("SELECT * FROM ai_jobs WHERE id = ?", (job_id,)).fetchone()
-    conn.close()
-    if not row or (user_id is not None and row["user_id"] != user_id):
-        return None
-
+def _job_dict(row) -> dict:
     return {
         "job_id": row["id"],
         "user_id": row["user_id"],
@@ -261,8 +259,39 @@ def get_job_status(job_id: str, user_id: str = None):
         "output_audio_url": row["output_audio_url"],
         "error_message": row["error_message"],
         "refunded": bool(row["refunded"]),
+        "cost_credits": row["cost_credits"],
         "params": json.loads(row["params_json"] or "{}"),
         "script": json.loads(row["script_json"]) if row["script_json"] else None,
         "created_at": row["created_at"],
         "completed_at": row["completed_at"],
     }
+
+
+def get_job_status(job_id: str, user_id: str = None):
+    conn = get_db()
+    row = conn.execute("SELECT * FROM ai_jobs WHERE id = ?", (job_id,)).fetchone()
+    conn.close()
+    if not row or (user_id is not None and row["user_id"] != user_id):
+        return None
+    return _job_dict(row)
+
+
+def list_jobs(user_id: str, limit: int = 60) -> list:
+    """Video của một người dùng (mới nhất trước), kèm tên/ảnh sản phẩm và số lần đã đăng."""
+    conn = get_db()
+    rows = conn.execute('''
+    SELECT j.*, p.title AS product_title, p.image_url AS product_image_url,
+           (SELECT COUNT(*) FROM publications pb WHERE pb.job_id = j.id AND pb.status = 'published') AS published_count
+    FROM ai_jobs j LEFT JOIN products p ON p.id = j.product_id
+    WHERE j.user_id = ?
+    ORDER BY j.created_at DESC, j.rowid DESC
+    LIMIT ?
+    ''', (user_id, limit)).fetchall()
+    conn.close()
+    jobs = []
+    for row in rows:
+        job = _job_dict(row)
+        job.update({"product_title": row["product_title"], "product_image_url": row["product_image_url"],
+                    "published_count": row["published_count"]})
+        jobs.append(job)
+    return jobs

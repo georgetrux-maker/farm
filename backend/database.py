@@ -485,6 +485,10 @@ def get_dashboard_summary(user_id: str):
     cache_hits = cursor.execute("SELECT COALESCE(SUM(hit_count), 0) FROM tryon_cache").fetchone()[0]
     cache_saved_usd = round(cache_hits * 0.05, 2)
 
+    published_videos = cursor.execute(
+        "SELECT COUNT(DISTINCT job_id) FROM publications WHERE user_id = ? AND status = 'published'",
+        (user_id,)).fetchone()[0]
+
     u_row = cursor.execute("SELECT credits FROM users WHERE id = ?", (user_id,)).fetchone()
     wallet_credits = u_row[0] if u_row else 0
 
@@ -538,6 +542,7 @@ def get_dashboard_summary(user_id: str):
     return {
         "total_renders": total_renders,
         "completed_renders": completed_renders,
+        "published_videos": published_videos,
         "cache_hits": cache_hits,
         "cache_saved_usd": cache_saved_usd,
         "wallet_credits": wallet_credits,

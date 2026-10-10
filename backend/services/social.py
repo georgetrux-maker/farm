@@ -309,8 +309,11 @@ def list_publications(user_id: str, job_id: str = None) -> list:
     conn = get_db()
     sql = '''
     SELECT p.id, p.job_id, p.platform, p.status, p.external_id, p.caption, p.error_message, p.created_at,
-           a.display_name AS account_name
-    FROM publications p LEFT JOIN social_accounts a ON a.id = p.account_id
+           a.display_name AS account_name, pr.title AS product_title
+    FROM publications p
+    LEFT JOIN social_accounts a ON a.id = p.account_id
+    LEFT JOIN ai_jobs j ON j.id = p.job_id
+    LEFT JOIN products pr ON pr.id = j.product_id
     WHERE p.user_id = ?'''
     args = [user_id]
     if job_id:

@@ -46,7 +46,7 @@ from backend.media_paths import MediaPathError, media_path, media_url, resolve_m
 from backend.services.cache_manager import check_tryon_cache, save_tryon_cache
 from backend.services.queue_manager import (
     InsufficientCredits, approve_job, create_ai_job, create_ai_jobs, ensure_product_analysis, get_job_status,
-    recover_stale_jobs, reject_job,
+    list_jobs, recover_stale_jobs, reject_job,
 )
 from backend.services.scraper import scrape_product_url
 from backend.services import social
@@ -54,7 +54,7 @@ from backend.services.bank_webhook import handle_sepay_event
 from backend.services.security import check_rate_limit
 from backend.services.size_advisor import calculate_smart_size
 from backend.services.wallet import (
-    WalletError, generate_vietqr_deposit, get_transaction, verify_and_credit_transaction,
+    WalletError, generate_vietqr_deposit, get_transaction, list_transactions, verify_and_credit_transaction,
 )
 
 log = logging.getLogger("aura")
@@ -383,6 +383,12 @@ def api_run_pipeline(req: PipelineRunRequest, user: dict = Depends(get_current_u
     }
 
 
+@app.get("/api/jobs")
+def api_list_jobs(limit: int = 60, user: dict = Depends(get_current_user)):
+    """Danh sách video của người dùng đang đăng nhập (trang "Video của tôi")"""
+    return list_jobs(user["id"], max(1, min(limit, 200)))
+
+
 @app.get("/api/jobs/{job_id}")
 def api_job_status(job_id: str, user: dict = Depends(get_current_user)):
     """Task 8: Trạng thái và tiến độ % của job"""
@@ -421,6 +427,12 @@ def api_deposit(req: DepositRequest, user: dict = Depends(get_current_user)):
         return generate_vietqr_deposit(user["id"], req.amount_vnd)
     except WalletError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/wallet/transactions")
+def api_list_transactions(user: dict = Depends(get_current_user)):
+    """Lịch sử credit của người dùng đang đăng nhập"""
+    return list_transactions(user["id"])
 
 
 @app.get("/api/wallet/transactions/{transaction_id}")
@@ -672,7 +684,8 @@ def api_health():
 
 
 @app.get("/api/system/audit-25-tasks")
-def api_system_audit():
+def api_system_audit(user: dict = Depends(require_admin_role)):
+    """Tình trạng cấu hình máy chủ: chỉ quản trị viên xem được"""
     report = _health_report()
     passed = sum(1 for r in report if r["status"] == "PASSED")
     failed = any(r["status"] == "FAILED" for r in report)

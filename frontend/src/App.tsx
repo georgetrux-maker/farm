@@ -1,414 +1,248 @@
-import { useState, useEffect } from 'react'
-import { Header } from './components/Header'
-import { NodeCanvas } from './components/Studio/NodeCanvas'
-import { NodeInspector } from './components/Studio/NodeInspector'
-import { StudioControls } from './components/Studio/StudioControls'
-import { ShoppableFeed } from './components/TryOn/ShoppableFeed'
-import { TryOnModal } from './components/TryOn/TryOnModal'
-import { QuickCheckoutDrawer } from './components/TryOn/QuickCheckoutDrawer'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Loader2, RefreshCw } from 'lucide-react'
+import { Header, type View } from './components/Header'
+import { LoginView } from './components/Auth/LoginView'
+import { CreateVideoView } from './components/Create/CreateVideoView'
+import { MyVideosView } from './components/Videos/MyVideosView'
+import { ConnectView } from './components/Connect/ConnectView'
+import { StatsView } from './components/Stats/StatsView'
 import { VietQRModal } from './components/Wallet/VietQRModal'
 import { AuditModal } from './components/SystemAudit/AuditModal'
-import { DashboardView } from './components/Dashboard/DashboardView'
-import { CreateVideoView } from './components/Create/CreateVideoView'
-import type { PipelineNode } from './types'
-import { triggerPipelineRun, fetchJobStatus, fetchProfile, logout, UnauthorizedError, type UserProfile } from './services/api'
-import { LoginView } from './components/Auth/LoginView'
+import { useToast } from './components/ui/toastContext'
+import {
+  UNAUTHORIZED_EVENT, UnauthorizedError, clearApiToken, fetchDepositStatus, fetchProfile, logout,
+  type DepositInfo, type UserProfile,
+} from './services/api'
+import { formatNumber, formatVnd } from './lib/format'
 
-const DEMO_PRODUCT_ID = 'prod_dam_voan_to'
+const VIEWS: View[] = ['create', 'videos', 'connect', 'stats']
+const DEPOSIT_WATCH_MS = 30 * 60 * 1000 // theo dõi tiền về tối đa 30 phút
+
+function viewFromHash(): View {
+  const h = window.location.hash.replace(/^#\/?/, '')
+  return (VIEWS as string[]).includes(h) ? (h as View) : 'create'
+}
+
+/** Vừa quay về từ trang cấp quyền TikTok/Facebook thì mở trang Kết nối */
+function initialView(): View {
+  return new URLSearchParams(window.location.search).has('social') ? 'connect' : viewFromHash()
+}
+
+function savedTheme(): 'dark' | 'light' {
+  try {
+    const saved = localStorage.getItem('aura_theme')
+    if (saved === 'light' || saved === 'dark') return saved
+  } catch {
+    // bỏ qua
+  }
+  return window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
+}
 
 export default function App() {
-  const [activeView, setActiveView] = useState<'create' | 'split' | 'studio' | 'tryon' | 'dashboard'>('create')
-  const [walletCredits, setWalletCredits] = useState<number>(0)
+  const toast = useToast()
+  const [authState, setAuthState] = useState<'loading' | 'in' | 'out' | 'offline'>('loading')
   const [user, setUser] = useState<UserProfile | null>(null)
-  const [authState, setAuthState] = useState<'loading' | 'in' | 'out'>('loading')
-  const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null)
+  const [walletCredits, setWalletCredits] = useState(0)
+  const [activeView, setActiveViewState] = useState<View>(initialView)
+  const [theme, setTheme] = useState<'dark' | 'light'>(savedTheme)
+  const [depositOpen, setDepositOpen] = useState(false)
+  const [pendingDeposit, setPendingDeposit] = useState<DepositInfo | null>(null)
+  const [auditOpen, setAuditOpen] = useState(false)
 
-  const handleLoggedIn = (u: UserProfile) => {
-    setUser(u)
-    setWalletCredits(u.credits)
-    setAuthState('in')
-  }
+  const isAdmin = user?.role === 'admin'
+  const authRef = useRef(authState)
+  useEffect(() => {
+    authRef.current = authState
+  }, [authState])
+
+  const setActiveView = useCallback((view: View) => {
+    setActiveViewState(view)
+    if (viewFromHash() !== view) window.location.hash = view
+  }, [])
+
+  // Nút Back/Forward của trình duyệt đổi trang theo #hash
+  useEffect(() => {
+    const onHash = () => setActiveViewState(viewFromHash())
+    window.addEventListener('hashchange', onHash)
+    return () => window.removeEventListener('hashchange', onHash)
+  }, [])
+
+  const handleLoggedIn = useCallback(
+    (u: UserProfile, isNewAccount = false) => {
+      setUser(u)
+      setWalletCredits(u.credits)
+      setAuthState('in')
+      if (isNewAccount) {
+        toast(
+          u.credits > 0
+            ? `Chào mừng ${u.name}! Bạn có ${formatNumber(u.credits)} credit để bắt đầu tạo video.`
+            : `Chào mừng ${u.name}! Nạp credit (từ 10.000đ) ở nút số dư góc trên để bắt đầu tạo video.`,
+          'success',
+        )
+      }
+    },
+    [toast],
+  )
+
+  const loadProfile = useCallback(() => {
+    setAuthState('loading')
+    fetchProfile()
+      .then((u) => handleLoggedIn(u))
+      .catch((e) => setAuthState(e instanceof UnauthorizedError ? 'out' : 'offline'))
+  }, [handleLoggedIn])
 
   // Kiểm tra phiên đăng nhập và số dư thật từ máy chủ
   useEffect(() => {
-    fetchProfile()
-      .then(handleLoggedIn)
-      .catch((e) => {
-        if (e instanceof UnauthorizedError) setAuthState('out')
-        else {
-          console.error('Không tải được tài khoản:', e)
-          setAuthState('in')
-        }
-      })
-  }, [])
+    const id = setTimeout(loadProfile, 0)
+    return () => clearTimeout(id)
+  }, [loadProfile])
 
-  // Quay về từ trang cấp quyền TikTok/Facebook: hiện kết quả rồi xóa tham số khỏi URL
+  // Phiên hết hạn giữa chừng (máy chủ trả 401): quay về màn đăng nhập
+  useEffect(() => {
+    const onUnauthorized = () => {
+      if (authRef.current !== 'in') return // đang đăng nhập/kiểm tra phiên: nơi gọi tự xử lý lỗi
+      clearApiToken()
+      authRef.current = 'out'
+      setAuthState('out')
+      setPendingDeposit(null)
+      toast('Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại', 'info')
+    }
+    window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized)
+    return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized)
+  }, [toast])
+
+  // Quay về từ trang cấp quyền TikTok/Facebook: báo kết quả rồi xóa tham số khỏi URL
   useEffect(() => {
     const q = new URLSearchParams(window.location.search)
     const platform = q.get('social')
     if (!platform) return
     const name = platform === 'tiktok' ? 'TikTok' : 'Facebook'
-    const result = q.get('result')
     const message = q.get('message') ?? ''
-    const id = setTimeout(() => {
-      setNotice(
-        result === 'connected'
-          ? { ok: true, text: `Đã kết nối ${name}: ${message}` }
-          : { ok: false, text: `Kết nối ${name} không thành công. ${message}` },
-      )
-      setActiveView('dashboard')
-    }, 0)
-    window.history.replaceState(null, '', window.location.pathname)
-    return () => clearTimeout(id)
-  }, [])
+    if (q.get('result') === 'connected') toast(`Đã kết nối ${name}${message ? `: ${message}` : ''}`, 'success')
+    else toast(`Kết nối ${name} không thành công. ${message}`, 'error')
+    window.history.replaceState(null, '', `${window.location.pathname}#connect`)
+  }, [toast])
+
+  // Giao diện sáng / tối
+  useEffect(() => {
+    document.documentElement.classList.toggle('light', theme === 'light')
+    document.documentElement.classList.toggle('dark', theme === 'dark')
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'light' ? '#FFFFFF' : '#0A0B10')
+    try {
+      localStorage.setItem('aura_theme', theme)
+    } catch {
+      // bỏ qua
+    }
+  }, [theme])
+
+  // Có lệnh nạp đang chờ: hỏi máy chủ mỗi 5 giây kể cả khi đã đóng cửa sổ nạp
+  useEffect(() => {
+    if (!pendingDeposit) return
+    const startedAt = Date.now()
+    const timer = setInterval(async () => {
+      if (Date.now() - startedAt > DEPOSIT_WATCH_MS) {
+        clearInterval(timer)
+        return
+      }
+      try {
+        const tx = await fetchDepositStatus(pendingDeposit.transaction_id)
+        if (tx.status === 'success') {
+          clearInterval(timer)
+          setWalletCredits(tx.balance)
+          setPendingDeposit(null)
+          setDepositOpen(false)
+          toast(
+            `Đã nhận ${formatVnd(pendingDeposit.amount_vnd)}, cộng ${formatNumber(tx.credits)} credit vào ví`,
+            'success',
+          )
+        }
+      } catch {
+        // mạng chập chờn: thử lại lần sau
+      }
+    }, 5000)
+    return () => clearInterval(timer)
+  }, [pendingDeposit, toast])
 
   const handleLogout = async () => {
+    authRef.current = 'out' // phiên cũ có thể đã hết hạn: không báo "hết phiên" khi đang đăng xuất
     await logout().catch(() => {})
     setUser(null)
+    setPendingDeposit(null)
     setActiveView('create')
     setAuthState('out')
   }
 
-  // Light / Dark Theme State
-  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
-    const saved = localStorage.getItem('aura_theme')
-    return saved === 'light' || saved === 'dark' ? saved : 'dark'
-  })
-
-  useEffect(() => {
-    if (theme === 'light') {
-      document.documentElement.classList.add('light')
-      document.documentElement.classList.remove('dark')
-    } else {
-      document.documentElement.classList.add('dark')
-      document.documentElement.classList.remove('light')
-    }
-    localStorage.setItem('aura_theme', theme)
-  }, [theme])
-
-  const handleToggleTheme = () => {
-    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'))
-  }
-
-  // Modals state
-  const [isTryOnOpen, setIsTryOnOpen] = useState(false)
-  const [isCheckoutOpen, setIsCheckoutOpen] = useState(false)
-  const [isDepositOpen, setIsDepositOpen] = useState(false)
-  const [isAuditOpen, setIsAuditOpen] = useState(false)
-
-  // Video State
-  const [currentVideoUrl, setCurrentVideoUrl] = useState<string>('/samples/sample_final.mp4')
-  const [completedVideoUrl, setCompletedVideoUrl] = useState<string | null>(null)
-
-  // Pipeline execution state
-  const [isRunning, setIsRunning] = useState(false)
-  const [progress, setProgress] = useState(0)
-  const [currentStep, setCurrentStep] = useState('')
-
-  // 6 Pipeline Nodes
-  const [nodes, setNodes] = useState<PipelineNode[]>([
-    {
-      id: 'node_scraper',
-      title: 'Nhập Sản Phẩm',
-      tag: 'NODE 01: INPUT',
-      type: 'scraper',
-      x: 60,
-      y: 120,
-      status: 'idle',
-      description: 'Cào dữ liệu từ Shopee / TikTok Shop hoặc ảnh trải sàn 4K',
-      metrics: { 'Sản phẩm': 'Đầm Voan', 'Giá niêm yết': '189.000đ' },
-      config: { url: 'https://shopee.vn/dam-voan-to-hoa-nhi-i.128491.99281' },
-    },
-    {
-      id: 'node_sam',
-      title: 'Bóc Tách Vải SAM 2',
-      tag: 'NODE 02: SEGMENT',
-      type: 'sam',
-      x: 420,
-      y: 120,
-      status: 'idle',
-      description: 'Khử nền alpha thông minh, giữ trọn nếp vải và độ rủ mềm mại',
-      metrics: { 'Engine': 'Tách nền sáng', 'Đầu ra': 'PNG trong suốt' },
-      config: { threshold: 0.96 },
-    },
-    {
-      id: 'node_vton',
-      title: 'Mẫu AI IDM-VTON',
-      tag: 'NODE 03: VTON',
-      type: 'vton',
-      x: 780,
-      y: 120,
-      status: 'idle',
-      description: 'Đặt trang phục lên người mẫu đã chọn (ghép AI thật ở Đợt 2)',
-      metrics: { 'Người mẫu': 'Chọn trong cấu hình', 'Engine': 'Tạm (chưa AI)' },
-      config: { avatar: 'model_01' },
-    },
-    {
-      id: 'node_motion',
-      title: 'Kling I2V Catwalk',
-      tag: 'NODE 04: MOTION',
-      type: 'motion',
-      x: 1140,
-      y: 120,
-      status: 'idle',
-      description: 'Tạo video dọc 9:16 theo mẫu chuyển động đã chọn',
-      metrics: { 'Tỉ lệ': '9:16 Dọc', 'Khung hình': '30 FPS' },
-      config: { preset: 'catwalk', duration: 3 },
-    },
-    {
-      id: 'node_tts',
-      title: 'Lồng Tiếng & Sub',
-      tag: 'NODE 05: VOICE',
-      type: 'tts',
-      x: 1500,
-      y: 120,
-      status: 'idle',
-      description: 'Lồng tiếng KOC Hoài My truyền cảm và phụ đề nhảy chữ WebVTT',
-      metrics: { 'Giọng đọc': 'Hoài My', 'Phụ đề': 'Đồng bộ' },
-      config: { voice: 'vi-VN-HoaiMyNeural' },
-    },
-    {
-      id: 'node_publish',
-      title: 'Xuất Bản Tương Tác',
-      tag: 'NODE 06: PUBLISH',
-      type: 'publish',
-      x: 1860,
-      y: 120,
-      status: 'idle',
-      description: 'Tạo video mua sắm kèm điểm ghim hotspot cổ áo và eo',
-      metrics: { 'Caption': 'Tự động', 'Hashtag': 'Theo sản phẩm' },
-      config: { remove_watermark: true },
-    },
-  ])
-
-  const [selectedNode, setSelectedNode] = useState<PipelineNode | null>(null)
-
-  const handleUpdateConfig = (nodeId: string, newConfig: any) => {
-    setNodes((prev) =>
-      prev.map((n) => (n.id === nodeId ? { ...n, config: newConfig } : n))
-    )
-  }
-
-  // Trigger Real AI Pipeline
-  const handleRunPipeline = async () => {
-    try {
-      setIsRunning(true)
-      setProgress(5)
-      setCurrentStep('Khởi tạo tác vụ trong hàng đợi...')
-
-      // Step 1: Call real API to trigger pipeline
-      // Lấy lựa chọn người mẫu, mẫu video, giọng đọc từ cấu hình các node
-      const configOf = (id: string) => nodes.find((n) => n.id === id)?.config ?? {}
-      const runRes = await triggerPipelineRun({
-        product_id: DEMO_PRODUCT_ID,
-        avatar_id: configOf('node_vton').avatar,
-        template: configOf('node_motion').preset,
-        duration_sec: configOf('node_motion').duration,
-        voice: configOf('node_tts').voice,
-      })
-
-      setWalletCredits(runRes.remaining_credits)
-      const jobId = runRes.job_id
-
-      // Step 2: Poll job progress
-      const nodeSequence = [
-        'node_scraper',
-        'node_sam',
-        'node_vton',
-        'node_motion',
-        'node_tts',
-        'node_publish',
-      ]
-
-      let pollErrors = 0
-      const interval = setInterval(async () => {
-        try {
-          const job = await fetchJobStatus(jobId)
-          pollErrors = 0
-          setProgress(job.progress)
-          setCurrentStep(job.current_step)
-
-          // Update active node in UI
-          const activeIndex = Math.min(
-            nodeSequence.length - 1,
-            Math.floor((job.progress / 100) * nodeSequence.length)
-          )
-
-          setNodes((prev) =>
-            prev.map((node, idx) => {
-              if (idx < activeIndex) return { ...node, status: 'completed' }
-              if (idx === activeIndex && job.progress < 100) return { ...node, status: 'running' }
-              if (job.progress === 100) return { ...node, status: 'completed' }
-              return { ...node, status: 'idle' }
-            })
-          )
-
-          if (job.status === 'completed') {
-            clearInterval(interval)
-            setIsRunning(false)
-            if (job.output_video_url) {
-              setCurrentVideoUrl(job.output_video_url)
-              setCompletedVideoUrl(job.output_video_url)
-            }
-          } else if (job.status === 'failed') {
-            clearInterval(interval)
-            setIsRunning(false)
-            setNodes((prev) => prev.map((n) => (n.status === 'running' ? { ...n, status: 'error' } : n)))
-            fetchProfile().then((p) => setWalletCredits(p.credits)).catch(() => {})
-            alert(
-              `Tạo video thất bại: ${job.error_message ?? 'lỗi không xác định'}` +
-                (job.refunded ? '\nCredit đã được hoàn lại.' : ''),
-            )
-          }
-        } catch (e) {
-          console.error('Lỗi khi kiểm tra tiến độ:', e)
-          // Mất kết nối liên tục khoảng 10 giây thì dừng hỏi
-          if (++pollErrors >= 15) {
-            clearInterval(interval)
-            setIsRunning(false)
-            alert('Mất kết nối tới máy chủ khi theo dõi tiến độ. Vào Dashboard để xem kết quả sau.')
-          }
-        }
-      }, 700)
-    } catch (err: any) {
-      console.error(err)
-      setIsRunning(false)
-      alert(err.message || 'Lỗi kết nối máy chủ')
-    }
-  }
-
-  const handleReset = () => {
-    setNodes((prev) => prev.map((n) => ({ ...n, status: 'idle' })))
-    setProgress(0)
-    setCurrentStep('')
-    setCompletedVideoUrl(null)
-  }
+  const openDeposit = useCallback(() => setDepositOpen(true), [])
+  const openVideos = useCallback(() => setActiveView('videos'), [setActiveView])
+  const openCreate = useCallback(() => setActiveView('create'), [setActiveView])
 
   if (authState === 'loading') {
-    return <div className="h-screen w-screen bg-[var(--bg-app)]" />
+    return (
+      <div className="flex-1 flex items-center justify-center bg-[var(--bg-app)]">
+        <Loader2 className="w-6 h-6 animate-spin text-[var(--text-muted)]" />
+      </div>
+    )
   }
-  if (authState === 'out') {
+  if (authState === 'offline') {
+    return (
+      <div className="flex-1 flex items-center justify-center bg-[var(--bg-app)] text-[var(--text-main)] px-4">
+        <div className="max-w-sm text-center space-y-3">
+          <h1 className="font-display font-bold text-lg">Không kết nối được máy chủ</h1>
+          <p className="text-sm text-[var(--text-muted)]">Kiểm tra mạng của bạn rồi thử lại.</p>
+          <button
+            onClick={loadProfile}
+            className="px-4 py-2.5 rounded-xl bg-[var(--accent-color)] text-black font-semibold text-sm inline-flex items-center gap-2"
+          >
+            <RefreshCw className="w-4 h-4" /> Thử lại
+          </button>
+        </div>
+      </div>
+    )
+  }
+  if (authState === 'out' || !user) {
     return <LoginView onLoggedIn={handleLoggedIn} />
   }
 
   return (
-    <div className="h-screen w-screen flex flex-col bg-[var(--bg-app)] text-[var(--text-main)] overflow-hidden transition-colors duration-200">
-      {/* Header with Light/Dark and 4 Navigation Views */}
+    <div className="flex-1 min-h-0 flex flex-col bg-[var(--bg-app)] text-[var(--text-main)]">
       <Header
         activeView={activeView}
         setActiveView={setActiveView}
         walletCredits={walletCredits}
         theme={theme}
-        onToggleTheme={handleToggleTheme}
-        onOpenDeposit={() => setIsDepositOpen(true)}
-        onOpenAudit={() => setIsAuditOpen(true)}
-        userName={user?.name}
+        onToggleTheme={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
+        onOpenDeposit={openDeposit}
+        onOpenAudit={isAdmin ? () => setAuditOpen(true) : undefined}
+        userName={user.name}
         onLogout={handleLogout}
       />
 
-      {notice && (
-        <div
-          className={`px-4 py-2 text-sm flex items-center justify-between ${
-            notice.ok ? 'bg-[var(--accent-color)]/10 text-[var(--accent-color)]' : 'bg-red-500/10 text-red-400'
-          }`}
-        >
-          <span>{notice.text}</span>
-          <button onClick={() => setNotice(null)} className="text-xs underline">
-            Đóng
-          </button>
+      <main className="flex-1 min-h-0 flex">
+        {/* Giữ trang Tạo video khi chuyển trang để không mất ảnh/thông tin đang nhập hoặc tiến độ */}
+        <div className={activeView === 'create' ? 'flex-1 min-w-0 flex' : 'hidden'}>
+          <CreateVideoView
+            credits={walletCredits}
+            isAdmin={isAdmin}
+            onCreditsChange={setWalletCredits}
+            onOpenDeposit={openDeposit}
+            onOpenVideos={openVideos}
+          />
         </div>
-      )}
-
-      {/* Main Workspace Body */}
-      <div className="flex-1 flex overflow-hidden relative">
-        {/* VIEW 1 & 2: B2B Node Studio */}
-        {(activeView === 'split' || activeView === 'studio') && (
-          <div
-            className={`relative flex flex-col h-full overflow-hidden transition-all duration-300 ${
-              activeView === 'split' ? 'w-[68%]' : 'w-full'
-            }`}
-          >
-            {/* Studio Controls Top Bar */}
-            <StudioControls
-              isRunning={isRunning}
-              progress={progress}
-              currentStep={currentStep}
-              completedVideoUrl={completedVideoUrl}
-              onRunPipeline={handleRunPipeline}
-              onReset={handleReset}
-            />
-
-            {/* Canvas Area */}
-            <NodeCanvas
-              nodes={nodes}
-              setNodes={setNodes}
-              selectedNode={selectedNode}
-              setSelectedNode={setSelectedNode}
-            />
-          </div>
+        {activeView === 'videos' && <MyVideosView onCreate={openCreate} onCreditsChange={setWalletCredits} />}
+        {activeView === 'connect' && <ConnectView isAdmin={isAdmin} />}
+        {activeView === 'stats' && (
+          <StatsView user={user} credits={walletCredits} isAdmin={isAdmin} onOpenDeposit={openDeposit} />
         )}
-
-        {/* Node Inspector Drawer */}
-        {selectedNode && (
-          <NodeInspector
-            node={nodes.find((n) => n.id === selectedNode.id) ?? selectedNode}
-            onClose={() => setSelectedNode(null)}
-            onUpdateConfig={handleUpdateConfig}
-          />
-        )}
-
-        {/* VIEW 3: Dedicated Comprehensive Dashboard & Settings */}
-        {activeView === 'create' && <CreateVideoView onCreditsChange={setWalletCredits} />}
-
-        {activeView === 'dashboard' && (
-          <DashboardView
-            walletCredits={walletCredits}
-            theme={theme}
-            initialTab={notice ? 'integrations' : undefined}
-          />
-        )}
-
-        {/* VIEW 4: C2C Shoppable Player */}
-        {(activeView === 'split' || activeView === 'tryon') && (
-          <div
-            className={`border-l border-[var(--border-subtle)] bg-[var(--bg-app)] flex flex-col h-full overflow-hidden transition-all duration-300 ${
-              activeView === 'split' ? 'w-[32%]' : 'w-full'
-            }`}
-          >
-            <ShoppableFeed
-              videoUrl={currentVideoUrl}
-              onOpenTryOn={() => setIsTryOnOpen(true)}
-              onOpenCheckout={() => setIsCheckoutOpen(true)}
-            />
-          </div>
-        )}
-      </div>
-
-      {/* Interactive Modals */}
-      <TryOnModal
-        isOpen={isTryOnOpen}
-        onClose={() => setIsTryOnOpen(false)}
-        onOpenCheckout={() => {
-          setIsTryOnOpen(false)
-          setIsCheckoutOpen(true)
-        }}
-      />
-
-      <QuickCheckoutDrawer
-        isOpen={isCheckoutOpen}
-        onClose={() => setIsCheckoutOpen(false)}
-      />
+      </main>
 
       <VietQRModal
-        isOpen={isDepositOpen}
-        onClose={() => setIsDepositOpen(false)}
-        onSuccessDeposit={(newBalance) => setWalletCredits(newBalance)}
+        open={depositOpen}
+        onClose={() => setDepositOpen(false)}
+        pending={pendingDeposit}
+        onCreated={setPendingDeposit}
+        onDiscard={() => setPendingDeposit(null)}
       />
-
-      <AuditModal
-        isOpen={isAuditOpen}
-        onClose={() => setIsAuditOpen(false)}
-      />
+      {isAdmin && <AuditModal open={auditOpen} onClose={() => setAuditOpen(false)} />}
     </div>
   )
 }

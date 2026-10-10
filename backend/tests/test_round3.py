@@ -318,6 +318,7 @@ def test_publish_to_tiktok(client, fake_social):
     pub = _wait_publication(client, job["job_id"])
     assert pub["status"] == "published", pub["error_message"]
     assert pub["external_id"] == "7300000000001"
+    assert pub["product_title"] == "Áo khoác dạ"
 
     init = json.loads(fake_social.find("video/init")[0].content)
     assert init["post_info"]["privacy_level"] == "SELF_ONLY"

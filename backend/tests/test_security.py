@@ -82,3 +82,9 @@ def test_avatar_management_requires_admin(client, shop):
     assert client.post("/api/avatars", headers=DEMO_AUTH, json=body).status_code == 200
     assert client.post("/api/avatars/set-default", headers=DEMO_AUTH,
                        json={"avatar_id": "khong_ton_tai"}).status_code == 404
+
+
+def test_system_audit_is_admin_only(client, shop):
+    assert client.get("/api/system/audit-25-tasks").status_code == 401
+    assert client.get("/api/system/audit-25-tasks", headers=shop["headers"]).status_code == 403
+    assert client.get("/api/system/audit-25-tasks", headers=DEMO_AUTH).status_code == 200

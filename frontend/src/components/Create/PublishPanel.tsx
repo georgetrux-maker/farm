@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from 'react'
-import { Loader2, Send, CheckCircle2, AlertTriangle, Link2 } from 'lucide-react'
+import { Loader2, Send, Link2 } from 'lucide-react'
 import {
   fetchCreatorInfo, fetchPublications, fetchSocialStatus, publishVideo, startSocialConnect,
   type Publication, type SocialStatus, type TikTokCreatorInfo,
 } from '../../services/api'
+import { StatusBadge } from '../ui/StatusBadge'
+import { useToast } from '../ui/toastContext'
 
 const PRIVACY_LABELS: Record<string, string> = {
   PUBLIC_TO_EVERYONE: 'Công khai',
@@ -12,19 +14,13 @@ const PRIVACY_LABELS: Record<string, string> = {
   SELF_ONLY: 'Chỉ mình tôi',
 }
 
-const STATUS_LABELS: Record<Publication['status'], string> = {
-  pending: 'Đang chờ',
-  processing: 'Đang đăng...',
-  published: 'Đã đăng',
-  failed: 'Thất bại',
-}
-
 interface PublishPanelProps {
   jobId: string
   defaultCaption: string
 }
 
 export const PublishPanel: React.FC<PublishPanelProps> = ({ jobId, defaultCaption }) => {
+  const toast = useToast()
   const [status, setStatus] = useState<SocialStatus | null>(null)
   const [accountId, setAccountId] = useState('')
   const [caption, setCaption] = useState(defaultCaption)
@@ -82,6 +78,7 @@ export const PublishPanel: React.FC<PublishPanelProps> = ({ jobId, defaultCaptio
           : {}),
       })
       setPubs(await fetchPublications(jobId))
+      toast('Đã gửi video, đang đăng lên ' + (account.platform === 'tiktok' ? 'TikTok' : 'Facebook'), 'success')
     } catch (e: any) {
       setError(e.message)
     } finally {
@@ -90,7 +87,7 @@ export const PublishPanel: React.FC<PublishPanelProps> = ({ jobId, defaultCaptio
   }
 
   if (!status) {
-    return <div className="text-xs text-[var(--text-muted)]">Đang tải tài khoản mạng xã hội...</div>
+    return <div className="text-sm text-[var(--text-muted)]">Đang tải tài khoản mạng xã hội...</div>
   }
 
   const canPublish = account && caption.trim() && (account.platform !== 'tiktok' || (creator && privacy)) && !busy
@@ -101,23 +98,23 @@ export const PublishPanel: React.FC<PublishPanelProps> = ({ jobId, defaultCaptio
 
       {status.accounts.length === 0 ? (
         <div className="space-y-2">
-          <p className="text-xs text-[var(--text-muted)]">Chưa kết nối tài khoản nào.</p>
+          <p className="text-sm text-[var(--text-muted)]">Chưa kết nối tài khoản nào.</p>
           <div className="flex gap-2 flex-wrap">
             {(['tiktok', 'facebook'] as const).map((p) =>
               status.platforms[p] ? (
                 <button
                   key={p}
                   onClick={() => startSocialConnect(p).catch((e) => setError(e.message))}
-                  className="px-3 py-2 rounded-lg border border-[var(--border-strong)] text-xs flex items-center gap-1.5"
+                  className="px-3 py-2 rounded-lg border border-[var(--border-strong)] text-sm flex items-center gap-1.5"
                 >
-                  <Link2 className="w-3.5 h-3.5" /> Kết nối {p === 'tiktok' ? 'TikTok' : 'Trang Facebook'}
+                  <Link2 className="w-4 h-4" /> Kết nối {p === 'tiktok' ? 'TikTok' : 'Trang Facebook'}
                 </button>
               ) : null,
             )}
           </div>
           {!status.platforms.tiktok && !status.platforms.facebook && (
-            <p className="text-[11px] text-amber-300">
-              Máy chủ chưa cấu hình ứng dụng TikTok/Facebook. Trong lúc chờ, bạn có thể tải video và đăng tay.
+            <p className="text-sm text-[var(--text-muted)]">
+              Hệ thống chưa mở tính năng đăng tự động. Bạn tải video về rồi đăng tay nhé.
             </p>
           )}
         </div>
@@ -131,9 +128,10 @@ export const PublishPanel: React.FC<PublishPanelProps> = ({ jobId, defaultCaptio
                   setAccountId(a.id)
                   setCreator(null)
                 }}
-                className={`px-3 py-2 rounded-lg border text-xs ${
+                aria-pressed={accountId === a.id}
+                className={`px-3 py-2 rounded-lg border text-sm ${
                   accountId === a.id
-                    ? 'border-[var(--accent-color)] bg-[var(--accent-color)]/10'
+                    ? 'border-[var(--accent-color)] bg-[var(--accent-soft)] font-medium'
                     : 'border-[var(--border-subtle)] bg-[var(--bg-card)]'
                 }`}
               >
@@ -145,7 +143,7 @@ export const PublishPanel: React.FC<PublishPanelProps> = ({ jobId, defaultCaptio
           {account && (
             <>
               <label className="block">
-                <span className="text-xs text-[var(--text-muted)] block mb-1">Nội dung bài đăng</span>
+                <span className="text-sm text-[var(--text-muted)] block mb-1">Nội dung bài đăng</span>
                 <textarea
                   value={caption}
                   onChange={(e) => setCaption(e.target.value)}
@@ -157,7 +155,7 @@ export const PublishPanel: React.FC<PublishPanelProps> = ({ jobId, defaultCaptio
 
               {account.platform === 'tiktok' &&
                 (creator ? (
-                  <div className="space-y-2 text-xs">
+                  <div className="space-y-2 text-sm">
                     {creator.creator_nickname && (
                       <div className="text-[var(--text-muted)]">Đăng lên tài khoản: @{creator.creator_nickname}</div>
                     )}
@@ -196,7 +194,7 @@ export const PublishPanel: React.FC<PublishPanelProps> = ({ jobId, defaultCaptio
                         </label>
                       ))}
                     </div>
-                    <p className="text-[11px] text-[var(--text-muted)]">
+                    <p className="text-xs text-[var(--text-muted)]">
                       Video sẽ được gắn nhãn "Nội dung do AI tạo". Khi đăng, bạn đồng ý với{' '}
                       <a
                         href="https://www.tiktok.com/legal/page/global/music-usage-confirmation/en"
@@ -210,8 +208,8 @@ export const PublishPanel: React.FC<PublishPanelProps> = ({ jobId, defaultCaptio
                     </p>
                   </div>
                 ) : (
-                  <div className="text-xs text-[var(--text-muted)] flex items-center gap-2">
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" /> Đang đọc thông tin tài khoản TikTok...
+                  <div className="text-sm text-[var(--text-muted)] flex items-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin" /> Đang đọc thông tin tài khoản TikTok...
                   </div>
                 ))}
 
@@ -228,23 +226,18 @@ export const PublishPanel: React.FC<PublishPanelProps> = ({ jobId, defaultCaptio
         </>
       )}
 
-      {error && <p className="text-xs text-red-400">{error}</p>}
+      {error && <p className="text-sm text-[var(--danger-text)]">{error}</p>}
 
       {pubs.length > 0 && (
-        <ul className="space-y-1.5 pt-1">
+        <ul className="space-y-2 pt-1">
           {pubs.map((p) => (
-            <li key={p.id} className="text-xs flex items-start gap-2">
-              {p.status === 'published' ? (
-                <CheckCircle2 className="w-3.5 h-3.5 text-[var(--accent-color)] shrink-0 mt-0.5" />
-              ) : p.status === 'failed' ? (
-                <AlertTriangle className="w-3.5 h-3.5 text-red-400 shrink-0 mt-0.5" />
-              ) : (
-                <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0 mt-0.5" />
-              )}
-              <span>
-                {p.platform === 'tiktok' ? 'TikTok' : 'Facebook'} ({p.account_name}): {STATUS_LABELS[p.status]}
-                {p.error_message && <span className="text-red-400"> – {p.error_message}</span>}
+            <li key={p.id} className="text-sm flex items-start justify-between gap-2">
+              <span className="min-w-0">
+                {p.platform === 'tiktok' ? 'TikTok' : 'Facebook'}
+                {p.account_name && ` · ${p.account_name}`}
+                {p.error_message && <span className="block text-[var(--danger-text)]">{p.error_message}</span>}
               </span>
+              <StatusBadge status={p.status} kind="publication" />
             </li>
           ))}
         </ul>

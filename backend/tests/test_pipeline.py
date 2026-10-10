@@ -35,6 +35,8 @@ def test_full_pipeline_uses_product_avatar_and_template(client, shop):
     video = resolve_media_ref(job["output_video_url"])
     assert os.path.getsize(video) > 0
     assert probe_duration(video) > 1
+    assert job["script"]["subtitles_burned"] is True
+    assert job["script"]["video_resolution"] == "720x1280"
 
     export = client.post("/api/publisher/export", headers=shop["headers"], json={"job_id": job["job_id"]}).json()
     assert export["download_url"] == job["output_video_url"]
@@ -117,3 +119,21 @@ def test_jobs_are_private(client, shop, monkeypatch):
     job_id = client.post("/api/pipeline/run", headers=DEMO_AUTH, json={"product_id": product["id"]}).json()["job_id"]
     assert client.get(f"/api/jobs/{job_id}", headers=shop["headers"]).status_code == 404
     assert client.post("/api/publisher/export", headers=shop["headers"], json={"job_id": job_id}).status_code == 404
+
+
+def test_my_videos_list_is_private_and_shows_status(client, shop, monkeypatch):
+    product = create_product(client, shop["headers"], title="Đầm suông linen")
+    job_id = client.post("/api/pipeline/run", headers=shop["headers"],
+                         json={"product_id": product["id"], "require_approval": True}).json()["job_id"]
+    assert wait_for_job(client, job_id, shop["headers"])["status"] == "awaiting_approval"
+    client.post(f"/api/jobs/{job_id}/reject", headers=shop["headers"])
+
+    mine = client.get("/api/jobs", headers=shop["headers"]).json()
+    assert [j["job_id"] for j in mine] == [job_id]
+    assert mine[0]["status"] == "rejected"
+    assert mine[0]["product_title"] == "Đầm suông linen"
+    assert mine[0]["product_image_url"].startswith("/media/uploads/")
+    assert mine[0]["published_count"] == 0
+    # Người khác không thấy video của shop
+    assert all(j["job_id"] != job_id for j in client.get("/api/jobs", headers=DEMO_AUTH).json())
+    assert client.get("/api/jobs").status_code == 401

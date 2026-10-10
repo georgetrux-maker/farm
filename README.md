@@ -12,22 +12,25 @@ Upload ảnh sản phẩm, chọn người mẫu và mẫu video, hệ thống t
 
 | Phần | Trạng thái |
 |---|---|
-| Màn hình **Tạo Video** 3 bước: upload ảnh → chọn người mẫu, kiểu video → duyệt & tải | ✅ |
-| Chấm chất lượng ảnh đầu vào (độ phân giải, độ nét, độ sáng) | ✅ Chạy tại chỗ, miễn phí |
+| Giao diện 4 mục: **Tạo video**, **Video của tôi**, **Kết nối**, **Thống kê**; số dư và nút nạp luôn ở góc trên; dùng tốt trên điện thoại | ✅ |
+| Màn hình **Tạo video** 3 bước: upload ảnh → chọn người mẫu, kiểu video → duyệt & tải (tên file tải về theo tên sản phẩm) | ✅ |
+| Chấm chất lượng ảnh đầu vào (độ phân giải, độ nét, ảnh mờ, độ sáng) | ✅ Chạy tại chỗ, miễn phí |
 | Phân tích ảnh sản phẩm (loại, màu, chất liệu, điểm nổi bật) + viết kịch bản, caption, hashtag | ✅ **Claude** khi có `ANTHROPIC_API_KEY`; không có thì dùng mẫu câu |
 | Thử đồ lên đúng người mẫu đã chọn | ✅ **FASHN** khi có `FASHN_API_KEY`; không có thì chỉ đặt sản phẩm lên phông nền |
 | 4 kiểu video (catwalk, xoay, dạo phố, cận chất liệu) | ✅ **Kling 3.0 qua Replicate** khi có `REPLICATE_API_TOKEN`; không có thì chuyển động máy quay bằng FFmpeg |
 | Duyệt ảnh thử đồ trước khi tạo video, từ chối được hoàn credit | ✅ |
-| Lồng tiếng tiếng Việt + phụ đề WebVTT | ✅ Edge-TTS (cần internet), có phương án dự phòng |
-| Ví credit, hoàn credit khi lỗi, upload, hàng đợi | ✅ |
+| Video dọc 720x1280, 30 fps, chuyển cảnh mượt, **phụ đề tiếng Việt in sẵn trong video** | ✅ Cần FFmpeg có libass và font DejaVu (Dockerfile đã cài) |
+| Lồng tiếng tiếng Việt (+ file phụ đề WebVTT) | ✅ Edge-TTS (cần internet), có phương án dự phòng |
+| Ví credit, hoàn credit khi lỗi, lịch sử credit, upload, hàng đợi | ✅ |
 | Nạp tiền VietQR, **tự cộng credit khi tiền về** | ✅ qua webhook **SePay** (`SEPAY_WEBHOOK_KEY`); chuyển thiếu tiền thì chờ quản trị viên |
 | Đăng ký / đăng nhập bằng email, đăng xuất | ✅ Mật khẩu băm scrypt, chống dò mật khẩu |
 | Đăng video lên **TikTok** và **Reels Trang Facebook** | ✅ Khi cấu hình app TikTok/Facebook (cần app được nền tảng duyệt, xem bên dưới) |
 | Deploy bằng Docker + HTTPS tự động | ✅ `docker compose up -d --build` |
 | Cào dữ liệu Shopee | ❌ Không làm: vi phạm điều khoản Shopee; cần tài khoản Shopee Open Platform |
-| Tư vấn size, điểm ghim trên video | ⚠️ Vẫn là số liệu cố định |
+| Tư vấn size, điểm ghim mua hàng trên video | ❌ Đã gỡ khỏi giao diện vì chưa có dữ liệu thật (API cũ vẫn giữ) |
 
-Trang **Kiểm Tra Hệ Thống** trong app cho biết đang dùng AI thật hay engine tạm cho từng bước.
+Tài khoản quản trị có nút **Kiểm tra hệ thống** trên thanh trên cùng, cho biết đang dùng AI thật hay engine tạm
+cho từng bước, và mục **Thống kê → Người mẫu AI** để thêm người mẫu, chọn người mẫu mặc định.
 
 ---
 
@@ -144,16 +147,18 @@ POST /api/products/analyze     { image_url, title? }        -> điểm chất l�
 POST /api/products             { title, price, image_url, category?, fabric_type?, analysis? } -> { id }
 POST /api/pipeline/run         { product_id, avatar_id?, template?, voice?, script_style?, duration_sec?, require_approval? }
 GET  /api/jobs/{job_id}        -> tiến độ %, ảnh thử đồ, link video khi xong
+GET  /api/jobs                 -> danh sách video của tôi (mới nhất trước)
 POST /api/jobs/{job_id}/approve   (khi status = awaiting_approval) tiếp tục tạo video
 POST /api/jobs/{job_id}/reject    hủy, hoàn credit trừ TRYON_PREVIEW_COST_CREDITS
 POST /api/publisher/export     { job_id } -> link tải, caption, hashtag, phụ đề
+GET  /api/wallet/transactions  -> lịch sử credit: nạp, trừ khi tạo video, hoàn
 ```
 
 - `template`: `catwalk`, `spin_360`, `street`, `fabric_closeup` (xem `GET /api/ai/templates`)
 - `voice`: `vi-VN-HoaiMyNeural` (nữ), `vi-VN-NamMinhNeural` (nam)
 - `script_style`: `genz`, `office`, `honest`
 
-Mọi API (trừ đăng ký/đăng nhập, danh sách người mẫu, feed, tư vấn size, kiểm tra hệ thống) cần header
+Mọi API (trừ đăng ký/đăng nhập, danh sách người mẫu, feed, tư vấn size) cần header
 `Authorization: Bearer <token>`, lấy token từ `POST /api/auth/login`.
 Mỗi video tốn `PIPELINE_COST_CREDITS` credit (mặc định 30); job lỗi được hoàn credit tự động.
 

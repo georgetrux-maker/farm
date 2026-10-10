@@ -1,45 +1,57 @@
 @import "tailwindcss";
 
 @theme {
-  --color-graphite: #0A0B10;
-  --color-panel: #12141D;
-  --color-surface: #1A1D29;
-  --color-accent: #00F5A0;
-  --color-accent-hover: #00D68B;
-  --color-pearl: #F8FAFC;
-  --color-muted: #8E95A5;
-
   --font-sans: "Plus Jakarta Sans", system-ui, sans-serif;
-  --font-display: "Syne", system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", monospace;
+  --font-display: "Be Vietnam Pro", "Plus Jakarta Sans", system-ui, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 :root {
   --bg-app: #0A0B10;
   --bg-card: #12141D;
   --bg-surface: #1A1D29;
-  --border-subtle: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.18);
+  --border-subtle: rgba(255, 255, 255, 0.09);
+  --border-strong: rgba(255, 255, 255, 0.2);
   --text-main: #F8FAFC;
-  --text-muted: #8E95A5;
+  --text-muted: #9AA1B1;
   --text-sub: #CBD5E1;
   --accent-color: #00F5A0;
-  --accent-glow: rgba(0, 245, 160, 0.25);
-  --canvas-dots: #1A1D29;
+  /* Chữ dùng màu nhấn: tách riêng để đủ tương phản ở chế độ sáng */
+  --accent-text: #00F5A0;
+  --accent-soft: rgba(0, 245, 160, 0.1);
+  --accent-border: rgba(0, 245, 160, 0.35);
+  --warn-text: #FCD34D;
+  --warn-bg: rgba(251, 191, 36, 0.1);
+  --warn-border: rgba(251, 191, 36, 0.35);
+  --danger-text: #FCA5A5;
+  --danger-bg: rgba(239, 68, 68, 0.12);
+  --danger-border: rgba(239, 68, 68, 0.4);
+  --danger-solid: #DC2626; /* nền nút nguy hiểm, chữ trắng */
+  color-scheme: dark;
 }
 
+/* Chế độ sáng: chữ phụ và viền đậm hơn để đọc rõ trên nền trắng (tương phản tối thiểu 4.5:1) */
 html.light {
-  --bg-app: #F8FAFC;
+  --bg-app: #F4F6F9;
   --bg-card: #FFFFFF;
-  --bg-surface: #F1F5F9;
-  --border-subtle: rgba(15, 23, 42, 0.08);
-  --border-strong: rgba(15, 23, 42, 0.16);
+  --bg-surface: #EEF2F6;
+  --border-subtle: rgba(15, 23, 42, 0.12);
+  --border-strong: rgba(15, 23, 42, 0.24);
   --text-main: #0F172A;
-  --text-muted: #64748B;
+  --text-muted: #475569;
   --text-sub: #334155;
   --accent-color: #00B377;
-  --accent-glow: rgba(0, 179, 119, 0.2);
-  --canvas-dots: #E2E8F0;
+  --accent-text: #047857;
+  --accent-soft: #ECFDF5;
+  --accent-border: #6EE7B7;
+  --warn-text: #92400E;
+  --warn-bg: #FFFBEB;
+  --warn-border: #FCD34D;
+  --danger-text: #B91C1C;
+  --danger-bg: #FEF2F2;
+  --danger-border: #FCA5A5;
+  --danger-solid: #B91C1C;
+  color-scheme: light;
 }
 
 body {
@@ -47,62 +59,29 @@ body {
   padding: 0;
   background-color: var(--bg-app);
   color: var(--text-main);
-  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-family: var(--font-sans);
   overflow: hidden;
   height: 100vh;
+  height: 100dvh; /* điện thoại: không bị thanh địa chỉ che */
   transition: background-color 0.25s ease, color 0.25s ease;
 }
 
 #root {
   height: 100vh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
 }
 
-/* Custom scrollbars */
+/* Thanh cuộn mảnh */
 ::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
+  width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: var(--bg-app);
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--bg-surface);
-  border-radius: 4px;
-}
-::-webkit-scrollbar-thumb:hover {
   background: var(--border-strong);
-}
-
-/* Living Pulse Animations */
-@keyframes nodePulse {
-  0%, 100% {
-    box-shadow: 0 0 0 0 var(--accent-glow);
-  }
-  50% {
-    box-shadow: 0 0 24px 6px var(--accent-glow);
-  }
-}
-
-.node-active-glow {
-  animation: nodePulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-}
-
-@keyframes pingCustom {
-  75%, 100% {
-    transform: scale(2);
-    opacity: 0;
-  }
-}
-
-.animate-ping-slow {
-  animation: pingCustom 2s cubic-bezier(0, 0, 0.2, 1) infinite;
-}
-
-/* Glassmorphism utility */
-.glass-panel {
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
-  backdrop-filter: blur(16px);
+  border-radius: 4px;
 }

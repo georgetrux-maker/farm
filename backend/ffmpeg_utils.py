@@ -12,11 +12,11 @@ def ffmpeg_available() -> bool:
     return shutil.which(config.ffmpeg_bin()) is not None
 
 
-def run_ffmpeg(args: list) -> None:
+def run_ffmpeg(args: list, cwd: str = None) -> None:
     """Chạy ffmpeg có timeout; khi lỗi trả về vài dòng stderr cuối để dễ debug."""
     cmd = [config.ffmpeg_bin(), "-y", "-hide_banner", "-loglevel", "error", *args]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=config.ffmpeg_timeout_sec())
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=config.ffmpeg_timeout_sec(), cwd=cwd)
     except FileNotFoundError as e:
         raise FFmpegError("Chưa cài ffmpeg trên máy chủ") from e
     except subprocess.TimeoutExpired as e:

@@ -1,7 +1,7 @@
 """Phân tích ảnh sản phẩm: kiểm tra chất lượng ảnh (chạy tại chỗ) + mô tả sản phẩm bằng Claude."""
 import logging
 
-from PIL import Image, ImageFilter, ImageStat
+from PIL import Image, ImageChops, ImageFilter, ImageStat
 
 from backend import config
 from backend.ai import claude_client
@@ -10,6 +10,44 @@ from backend.ai.http_utils import ProviderError
 log = logging.getLogger(__name__)
 
 MIN_SIDE_PX = 512
+ANALYSIS_SIDE_PX = 1024   # đo độ nét ở cỡ gần với video đầu ra (720x1280)
+BLURRY_BELOW = 0.30       # tương đương ảnh bị nhòe khoảng 3px ở cỡ 1024px
+SOFT_BELOW = 0.50         # hơi mờ (nhòe khoảng 2px)
+MIN_CONTRAST = 20
+
+# Bộ lọc Sobel theo 4 hướng (PIL cắt giá trị âm về 0 nên cần cả chiều thuận và nghịch)
+_SOBEL = [
+    [-1, 0, 1, -2, 0, 2, -1, 0, 1], [1, 0, -1, 2, 0, -2, 1, 0, -1],
+    [-1, -2, -1, 0, 0, 0, 1, 2, 1], [1, 2, 1, 0, 0, 0, -1, -2, -1],
+]
+
+
+def _percentile(hist: list, q: float) -> int:
+    total, acc = sum(hist), 0
+    for value, count in enumerate(hist):
+        acc += count
+        if acc >= q * total:
+            return value
+    return len(hist) - 1
+
+
+def measure_sharpness(gray: Image.Image):
+    """Độ sắc của các cạnh mạnh nhất so với độ tương phản của ảnh, khoảng 0 (rất mờ) đến 1 (rất nét).
+
+    Ảnh nét có những chỗ chuyển màu gọn trong 1-2 pixel nên độ dốc lớn nhất gần bằng độ tương phản;
+    ảnh mờ thì chỗ chuyển màu bị kéo dài nên độ dốc nhỏ đi. Cách đo này không phụ thuộc ảnh nhiều hay ít
+    chi tiết (khác với đo tổng lượng cạnh). Trả về (độ sắc, độ tương phản).
+    """
+    hist = gray.histogram()
+    contrast = _percentile(hist, 0.99) - _percentile(hist, 0.01)
+    edges = [gray.filter(ImageFilter.Kernel((3, 3), k, scale=4)) for k in _SOBEL]
+    magnitude = edges[0]
+    for e in edges[1:]:
+        magnitude = ImageChops.lighter(magnitude, e)
+    # PIL giữ nguyên giá trị gốc ở viền ảnh khi lọc: bỏ viền để không bị tính nhầm là cạnh sắc
+    magnitude = magnitude.crop((2, 2, magnitude.width - 2, magnitude.height - 2))
+    strongest = _percentile(magnitude.histogram(), 0.999)
+    return strongest / max(contrast, 1), contrast
 
 
 def check_image_quality(path: str) -> dict:
@@ -19,17 +57,22 @@ def check_image_quality(path: str) -> dict:
     with Image.open(path) as img:
         width, height = img.size
         gray = img.convert("L")
-        gray.thumbnail((1024, 1024))
+        gray.thumbnail((ANALYSIS_SIDE_PX, ANALYSIS_SIDE_PX))
 
     if min(width, height) < MIN_SIDE_PX:
         issues.append(f"Ảnh nhỏ ({width}x{height}px), nên dùng ảnh cạnh ngắn từ {MIN_SIDE_PX}px trở lên")
         score -= 35
 
-    # Độ nét: độ lệch chuẩn của ảnh biên cạnh; ảnh mờ có rất ít biên cạnh rõ
-    sharpness = ImageStat.Stat(gray.filter(ImageFilter.FIND_EDGES)).stddev[0]
-    if sharpness < 8:
-        issues.append("Ảnh bị mờ hoặc thiếu chi tiết, nên chụp lại rõ nét hơn")
-        score -= 30
+    sharpness, contrast = measure_sharpness(gray)
+    if contrast < MIN_CONTRAST:
+        issues.append("Ảnh gần như một màu, không thấy rõ sản phẩm")
+        score -= 40
+    elif sharpness < BLURRY_BELOW:
+        issues.append("Ảnh bị mờ, nên chụp lại rõ nét hơn (giữ chắc tay, lau ống kính, đủ sáng)")
+        score -= 55
+    elif sharpness < SOFT_BELOW:
+        issues.append("Ảnh hơi mờ, chi tiết vải có thể không rõ trong video")
+        score -= 20
 
     brightness = ImageStat.Stat(gray).mean[0]
     if brightness < 50:
@@ -44,7 +87,8 @@ def check_image_quality(path: str) -> dict:
         "issues": issues,
         "width": width,
         "height": height,
-        "sharpness": round(sharpness, 1),
+        "sharpness": round(sharpness, 2),
+        "contrast": contrast,
         "brightness": round(brightness, 1),
     }
 

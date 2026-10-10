@@ -240,7 +240,7 @@ def test_replicate_video_request_and_output_is_vertical(client, providers):
     assert out["engine"] == "replicate:kwaivgi/kling-v3-video"
     info = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height",
                            "-of", "csv=p=0", out["video_path"]], capture_output=True, text=True).stdout.strip()
-    assert info == "1080,1920"
+    assert info == "720,1280"
 
 
 def test_public_base_url_skips_upload(client, providers, monkeypatch):
@@ -294,6 +294,9 @@ def test_approval_flow_approve(client, shop):
     assert job["output_image_url"] and job["output_video_url"] is None
 
     assert client.post(f"/api/jobs/{job_id}/approve", headers=shop["headers"]).status_code == 200
+    # Ngay sau khi duyệt, tiến độ không còn nằm ở "Chờ duyệt ảnh thử đồ 40%"
+    right_after = client.get(f"/api/jobs/{job_id}", headers=shop["headers"]).json()
+    assert right_after["status"] != "awaiting_approval" and right_after["progress"] >= 45
     assert client.post(f"/api/jobs/{job_id}/approve", headers=shop["headers"]).status_code == 409
     job = wait_for_job(client, job_id, shop["headers"])
     assert job["status"] == "completed", job["error_message"]
@@ -310,7 +313,12 @@ def test_approval_flow_reject_refunds_all_but_preview_cost(client, shop, monkeyp
     assert res["credits_refunded"] == 25           # 30 - 5 phí thử đồ
     assert res["remaining_credits"] == 95
     assert client.post(f"/api/jobs/{job_id}/reject", headers=shop["headers"]).status_code == 409
-    assert client.get(f"/api/jobs/{job_id}", headers=shop["headers"]).json()["status"] == "rejected"
+    job = client.get(f"/api/jobs/{job_id}", headers=shop["headers"]).json()
+    assert job["status"] == "rejected" and job["cost_credits"] == 30
+
+    # Người dùng thấy rõ khoản trừ và khoản hoàn trong lịch sử credit
+    history = client.get("/api/wallet/transactions", headers=shop["headers"]).json()
+    assert [(t["transaction_type"], t["amount_credits"]) for t in history] == [("refund", 25), ("usage", -30)]
 
 
 def test_cannot_approve_someone_elses_job(client, shop):
@@ -333,7 +341,7 @@ def test_awaiting_jobs_survive_restart(client, shop):
 
 def test_health_report_shows_configured_providers(client, providers, claude):
     claude()
-    report = {r["module"]: r for r in client.get("/api/system/audit-25-tasks").json()["report"]}
+    report = {r["module"]: r for r in client.get("/api/system/audit-25-tasks", headers=DEMO_AUTH).json()["report"]}
     assert report["ai/vton.py"]["status"] == "PASSED"
     assert report["ai/motion.py"]["status"] == "PASSED"
     assert report["ai/claude_client.py"]["status"] == "PASSED"

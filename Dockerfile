@@ -12,8 +12,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     AURA_DB_PATH=/data/fashion_ai.db \
     AURA_MEDIA_DIR=/data/media
+# fonts-dejavu-core: font có đủ dấu tiếng Việt để gắn phụ đề vào video
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ffmpeg \
+ && apt-get install -y --no-install-recommends ffmpeg fonts-dejavu-core \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY backend/requirements.txt backend/requirements.txt

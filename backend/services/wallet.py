@@ -68,6 +68,23 @@ def get_transaction(transaction_id: str, user_id: str = None):
     return dict(row) if row else None
 
 
+def list_transactions(user_id: str, limit: int = 30) -> list:
+    """Lịch sử credit (nạp, trừ khi tạo video, hoàn), mới nhất trước.
+
+    Lệnh nạp chưa thanh toán chỉ hiện trong 24 giờ để các mã QR bỏ dở không làm rối danh sách.
+    """
+    conn = get_db()
+    rows = conn.execute('''
+    SELECT id, amount_credits, amount_vnd, transaction_type, description, status, created_at
+    FROM wallet_transactions
+    WHERE user_id = ? AND (status = 'success' OR created_at >= datetime('now', '-1 day'))
+    ORDER BY created_at DESC, rowid DESC
+    LIMIT ?
+    ''', (user_id, limit)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
 def verify_and_credit_transaction(transaction_id: str) -> dict:
     """Xác nhận đã nhận tiền và cộng credit. Chỉ gọi từ luồng quản trị/webhook đã xác thực."""
     conn = get_db()

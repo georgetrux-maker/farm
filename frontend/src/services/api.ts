@@ -1,8 +1,10 @@
-import type { AIJob, SystemAuditReport } from '../types'
+import type {
+  AIJob, BrandAvatar, CreditTransaction, DashboardStats, MyVideo, SystemAuditReport,
+} from '../types'
 
 const TOKEN_KEY = 'aura_api_token'
 
-/** Token lấy từ localStorage (sau này là màn đăng nhập) hoặc biến môi trường VITE_API_TOKEN khi phát triển. */
+/** Token đăng nhập lưu trong localStorage, hoặc biến môi trường VITE_API_TOKEN khi phát triển. */
 export function getApiToken(): string {
   try {
     return localStorage.getItem(TOKEN_KEY) || import.meta.env.VITE_API_TOKEN || ''
@@ -23,8 +25,20 @@ export function clearApiToken() {
   }
 }
 
+/** Lỗi từ máy chủ, kèm mã HTTP (vd 402 = không đủ credit) */
+export class ApiError extends Error {
+  status: number
+  constructor(message: string, status: number) {
+    super(message)
+    this.status = status
+  }
+}
+
 /** Lỗi 401: phiên đăng nhập hết hạn hoặc chưa đăng nhập */
-export class UnauthorizedError extends Error {}
+export class UnauthorizedError extends ApiError {}
+
+/** Phát ra khi máy chủ trả 401, App nghe sự kiện này để quay về màn đăng nhập */
+export const UNAUTHORIZED_EVENT = 'aura:unauthorized'
 
 async function request<T>(path: string, options: RequestInit = {}, fallbackError = 'Lỗi kết nối máy chủ'): Promise<T> {
   const headers = new Headers(options.headers)
@@ -42,8 +56,11 @@ async function request<T>(path: string, options: RequestInit = {}, fallbackError
     } catch {
       // giữ thông báo mặc định
     }
-    if (res.status === 401) throw new UnauthorizedError(message)
-    throw new Error(message)
+    if (res.status === 401) {
+      window.dispatchEvent(new Event(UNAUTHORIZED_EVENT))
+      throw new UnauthorizedError(message, 401)
+    }
+    throw new ApiError(message, res.status)
   }
   return res.json()
 }
@@ -83,20 +100,12 @@ export function triggerPipelineRun(
   return post('/api/pipeline/run', params, 'Lỗi khi kích hoạt luồng AI')
 }
 
-export function fetchJobStatus(jobId: string): Promise<AIJob> {
-  return request(`/api/jobs/${encodeURIComponent(jobId)}`, {}, `Không thể tìm thấy job ${jobId}`)
+export function fetchMyVideos(): Promise<MyVideo[]> {
+  return request('/api/jobs', {}, 'Không thể tải danh sách video')
 }
 
-export function recommendSize(params: {
-  height: number
-  weight: number
-  bust: number
-  waist: number
-  hips: number
-  body_shape: string
-  product_id?: string
-}) {
-  return post('/api/size/recommend', params, 'Lỗi khi phân tích số đo size')
+export function fetchJobStatus(jobId: string): Promise<AIJob> {
+  return request(`/api/jobs/${encodeURIComponent(jobId)}`, {}, `Không thể tìm thấy job ${jobId}`)
 }
 
 export interface DepositInfo {
@@ -121,34 +130,16 @@ export function fetchDepositStatus(
   return request(`/api/wallet/transactions/${encodeURIComponent(transactionId)}`, {}, 'Không thể kiểm tra giao dịch')
 }
 
-export function fetchAvatars() {
-  return request<any[]>('/api/avatars', {}, 'Không thể tải danh sách người mẫu')
+export function fetchCreditHistory(): Promise<CreditTransaction[]> {
+  return request('/api/wallet/transactions', {}, 'Không thể tải lịch sử credit')
 }
 
-export function fetchFeedVideos() {
-  return request('/api/feed/videos', {}, 'Không thể tải feed video')
+export function fetchAvatars(): Promise<BrandAvatar[]> {
+  return request('/api/avatars', {}, 'Không thể tải danh sách người mẫu')
 }
 
-export function exportVideo(jobId: string): Promise<{
-  download_url: string
-  subtitles_vtt: string | null
-  seo_caption: string
-  hashtags: string[]
-  ai_generated_label: string
-}> {
-  return post('/api/publisher/export', { job_id: jobId }, 'Lỗi khi xuất bản video')
-}
-
-export function fetchDashboardStats() {
-  return request<any>('/api/dashboard/stats', {}, 'Không thể tải dữ liệu thống kê từ máy chủ')
-}
-
-export function fetchSettings() {
-  return request<Record<string, string>>('/api/settings', {}, 'Không thể tải cấu hình từ máy chủ')
-}
-
-export function saveSettings(settings: Record<string, any>) {
-  return post<Record<string, string>>('/api/settings', settings, 'Không thể lưu cấu hình vào cơ sở dữ liệu')
+export function fetchDashboardStats(): Promise<DashboardStats> {
+  return request('/api/dashboard/stats', {}, 'Không thể tải dữ liệu thống kê')
 }
 
 export function addNewAvatar(data: {
@@ -160,7 +151,7 @@ export function addNewAvatar(data: {
   avatar_url: string
   badge?: string
 }) {
-  return post('/api/avatars', data, 'Không thể thêm người mẫu vào cơ sở dữ liệu')
+  return post<BrandAvatar>('/api/avatars', data, 'Không thể thêm người mẫu')
 }
 
 export function setDefaultAvatar(avatarId: string) {
@@ -171,16 +162,6 @@ export function uploadImage(file: File): Promise<{ media_url: string; width: num
   const form = new FormData()
   form.append('file', file)
   return request('/api/uploads/image', { method: 'POST', body: form }, 'Không thể tải ảnh lên')
-}
-
-export function createProduct(data: {
-  title: string
-  price: number
-  image_url: string
-  category?: string
-  fabric_type?: string
-}) {
-  return post<{ id: string; title: string }>('/api/products', data, 'Không thể tạo sản phẩm')
 }
 
 export interface ProductAnalysisAI {
@@ -319,6 +300,7 @@ export interface Publication {
   external_id: string | null
   error_message: string | null
   account_name: string | null
+  product_title: string | null
   created_at: string
 }
 

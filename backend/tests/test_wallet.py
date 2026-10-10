@@ -51,6 +51,18 @@ def test_users_cannot_read_others_transactions(client, shop):
     assert client.get(f"/api/wallet/transactions/{tx['transaction_id']}", headers=shop["headers"]).status_code == 404
 
 
+def test_credit_history_is_private_and_newest_first(client, shop):
+    client.post("/api/wallet/deposit", headers=shop["headers"], json={"amount_vnd": 100000})
+    deduct_credits(shop["id"], 30, "Tạo video AI")
+    history = client.get("/api/wallet/transactions", headers=shop["headers"]).json()
+    assert [(t["transaction_type"], t["amount_credits"], t["status"]) for t in history] == [
+        ("usage", -30, "success"), ("deposit", 1000, "pending")]
+
+    others = client.get("/api/wallet/transactions", headers=DEMO_AUTH).json()
+    assert not {t["id"] for t in history} & {t["id"] for t in others}
+    assert client.get("/api/wallet/transactions").status_code == 401
+
+
 def test_concurrent_deductions_never_go_negative(client, shop):
     # shop có 100 credit: 10 luồng cùng trừ 30 thì chỉ đúng 3 lần thành công
     results = []
