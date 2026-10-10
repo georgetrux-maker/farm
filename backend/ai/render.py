@@ -81,6 +81,7 @@ def build_ass(phrases: list, width: int = WIDTH, height: int = HEIGHT,
     tag_size = round(height * 0.04)
     price_size = round(height * 0.034)
     tag_pad = round(height * 0.012)
+    tag_left = round(width * 0.06)
     lines = [
         "[Script Info]",
         "ScriptType: v4.00+",
@@ -97,17 +98,18 @@ def build_ass(phrases: list, width: int = WIDTH, height: int = HEIGHT,
         f"Style: Default,{sub_font},{font_size},&H00FFFFFF,&H00FFFFFF,&H0016191E,&H80000000,{sub_bold},0,0,0,"
         f"100,100,0,0,1,4,2,2,{margin_h},{margin_h},{margin_v},1",
         # Thẻ tên: chữ serif trắng trên nền mực; thẻ giá: chữ mực trên nền hồng phấn
+        # Thẻ nằm góc trên bên trái để không che mặt người mẫu (thường ở giữa khung)
         f"Style: Title,{title_font},{tag_size},&H00FFFFFF,&H00FFFFFF,&H0016191E,&H00000000,-1,0,0,0,"
-        f"100,100,1,0,3,{tag_pad},0,8,{margin_h},{margin_h},{round(height * 0.075)},1",
+        f"100,100,1,0,3,{tag_pad},0,7,{tag_left},{margin_h},{round(height * 0.075)},1",
         f"Style: Price,{sub_font},{price_size},&H0016191E,&H0016191E,&H00C8B6F3,&H00000000,{sub_bold},0,0,0,"
-        f"100,100,0,0,3,{tag_pad},0,8,{margin_h},{margin_h},{round(height * 0.075)},1",
+        f"100,100,0,0,3,{tag_pad},0,7,{tag_left},{margin_h},{round(height * 0.075)},1",
         "",
         "[Events]",
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ]
     # Thẻ tên nằm gọn một dòng, thẻ giá ngay bên dưới (mỗi thẻ là một khung màu riêng)
     top = round(height * 0.075)
-    max_tag_width = (width - 2 * margin_h - 2 * tag_pad) * 0.92
+    max_tag_width = width * 0.62 - 2 * tag_pad  # chừa phần giữa khung cho người mẫu
     start, end = _ass_time(TAG_START), _ass_time(TAG_END)
     name = _ass_text(title or "")
     if name:
