@@ -1,9 +1,12 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { AlertTriangle, ArrowUpDown, Download, Film, Loader2, Play, Plus, Search, Send, X } from 'lucide-react'
+import {
+  AlertTriangle, ArrowUpDown, Download, Film, LayoutGrid, List, Loader2, Play, Plus, RotateCcw, Search, Send, X,
+} from 'lucide-react'
 import { fetchJobStatus, fetchMyVideos, fetchProfile, fetchStudioOptions } from '../../services/api'
 import type { MyVideo, VideoFilter, VideoSort } from '../../types'
-import { formatDateTime, formatNumber, videoFileName } from '../../lib/format'
+import { formatDateTime, formatNumber, formatVnd, videoFileName } from '../../lib/format'
 import { isJobBusy } from '../../lib/jobStatus'
+import { FacebookLogo, TikTokLogo } from '../ui/BrandLogos'
 import { HangerArt } from '../ui/GarmentArt'
 import { Modal } from '../ui/Modal'
 import { StatusBadge } from '../ui/StatusBadge'
@@ -14,7 +17,23 @@ import { VideoResult } from '../Create/VideoResult'
 interface MyVideosViewProps {
   onCreate: () => void
   onCreditsChange: (credits: number) => void
+  /** Mở bước 2 của Tạo video với sản phẩm và cài đặt của video này */
+  onRemake: (video: MyVideo) => void
 }
+
+type Layout = 'list' | 'grid'
+const LAYOUT_KEY = 'aura_videos_layout'
+
+function savedLayout(): Layout {
+  try {
+    return localStorage.getItem(LAYOUT_KEY) === 'grid' ? 'grid' : 'list'
+  } catch {
+    return 'list'
+  }
+}
+
+/** Video còn đủ thông tin sản phẩm để tạo lại */
+const canRemake = (v: MyVideo) => !!v.product_image_url && !isJobBusy(v.status) && v.status !== 'awaiting_approval'
 
 const PAGE_SIZE = 24
 
@@ -40,7 +59,7 @@ function titleOf(v: MyVideo) {
 
 /** Thư viện video kiểu lookbook: tìm kiếm, lọc, sắp xếp phía máy chủ, tải thêm từng trang;
  *  video đang tạo tự cập nhật tiến độ. */
-export const MyVideosView: React.FC<MyVideosViewProps> = ({ onCreate, onCreditsChange }) => {
+export const MyVideosView: React.FC<MyVideosViewProps> = ({ onCreate, onCreditsChange, onRemake }) => {
   const toast = useToast()
   const [videos, setVideos] = useState<MyVideo[] | null>(null)
   const [total, setTotal] = useState(0)
@@ -56,6 +75,15 @@ export const MyVideosView: React.FC<MyVideosViewProps> = ({ onCreate, onCreditsC
   const [search, setSearch] = useState('')
   const [q, setQ] = useState('')
   const [previewCost, setPreviewCost] = useState(0)
+  const [layout, setLayoutState] = useState<Layout>(savedLayout)
+  const setLayout = (l: Layout) => {
+    setLayoutState(l)
+    try {
+      localStorage.setItem(LAYOUT_KEY, l)
+    } catch {
+      // không lưu được thì chỉ áp dụng lần này
+    }
+  }
   const lastStatus = useRef<Record<string, string>>({})
   const requestId = useRef(0)
 
@@ -265,7 +293,8 @@ export const MyVideosView: React.FC<MyVideosViewProps> = ({ onCreate, onCreditsC
                     </button>
                   ) : null}
                 </div>
-                <label className="flex items-center gap-2 sm:ml-auto text-sm text-[var(--text-muted)]">
+                <div className="flex items-center gap-2 sm:ml-auto">
+                <label className="flex items-center gap-2 text-sm text-[var(--text-muted)] flex-1 sm:flex-none">
                   <ArrowUpDown className="w-4 h-4" />
                   <span className="sr-only">Sắp xếp</span>
                   <select
@@ -281,6 +310,26 @@ export const MyVideosView: React.FC<MyVideosViewProps> = ({ onCreate, onCreditsC
                     ))}
                   </select>
                 </label>
+                <div className="flex gap-1 p-1 rounded-full bg-[var(--bg-surface)]" role="group" aria-label="Cách hiển thị">
+                  {([
+                    ['list', List, 'Danh sách'],
+                    ['grid', LayoutGrid, 'Lưới'],
+                  ] as const).map(([id, Icon, label]) => (
+                    <button
+                      key={id}
+                      onClick={() => setLayout(id)}
+                      aria-pressed={layout === id}
+                      title={label}
+                      aria-label={`Xem dạng ${label.toLowerCase()}`}
+                      className={`w-9 h-9 rounded-full flex items-center justify-center transition-colors ${
+                        layout === id ? 'bg-[var(--bg-card)] text-[var(--text-main)] shadow-sm' : 'text-[var(--text-muted)]'
+                      }`}
+                    >
+                      <Icon className="w-4 h-4" />
+                    </button>
+                  ))}
+                </div>
+                </div>
               </div>
               <div className="flex gap-2 overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0 pb-1" role="group" aria-label="Lọc video">
                 {FILTERS.filter((f) => f.id === 'all' || f.id === filter || counts[f.id] > 0).map((f) => (
@@ -311,15 +360,43 @@ export const MyVideosView: React.FC<MyVideosViewProps> = ({ onCreate, onCreditsC
               </div>
             ) : (
               <>
-                <div
-                  className={`grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-4 gap-y-7 sm:gap-x-5 transition-opacity ${
-                    loading ? 'opacity-60' : ''
-                  }`}
-                >
-                  {videos.map((v, i) => (
-                    <VideoCard key={v.job_id} video={v} index={i % PAGE_SIZE} onOpen={() => setOpenId(v.job_id)} />
-                  ))}
-                </div>
+                {layout === 'grid' ? (
+                  <div
+                    className={`grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-4 gap-y-7 sm:gap-x-5 transition-opacity ${
+                      loading ? 'opacity-60' : ''
+                    }`}
+                  >
+                    {videos.map((v, i) => (
+                      <VideoCard
+                        key={v.job_id}
+                        video={v}
+                        index={i % PAGE_SIZE}
+                        onOpen={() => setOpenId(v.job_id)}
+                        onRemake={canRemake(v) ? () => onRemake(v) : undefined}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <div className={`card overflow-hidden transition-opacity ${loading ? 'opacity-60' : ''}`}>
+                    <div className="hidden md:grid grid-cols-[minmax(0,2.4fr)_minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,0.9fr)_auto] gap-4 px-5 py-3 text-xs font-semibold text-[var(--text-muted)] border-b border-[var(--border-subtle)] bg-[var(--bg-surface)]">
+                      <span>Sản phẩm</span>
+                      <span>Trạng thái</span>
+                      <span>Đăng bán</span>
+                      <span>Ngày tạo</span>
+                      <span className="w-[8.5rem] text-right">Thao tác</span>
+                    </div>
+                    <ul className="divide-y divide-[var(--border-subtle)]">
+                      {videos.map((v) => (
+                        <VideoRow
+                          key={v.job_id}
+                          video={v}
+                          onOpen={() => setOpenId(v.job_id)}
+                          onRemake={canRemake(v) ? () => onRemake(v) : undefined}
+                        />
+                      ))}
+                    </ul>
+                  </div>
+                )}
                 <div className="flex flex-col items-center gap-3 pt-2">
                   <p className="text-sm text-[var(--text-muted)]">
                     Đang hiện {formatNumber(videos.length)} / {formatNumber(total)} video
@@ -339,7 +416,15 @@ export const MyVideosView: React.FC<MyVideosViewProps> = ({ onCreate, onCreditsC
 
       {/* Xem video đã xong: tải về, sao chép caption, đăng mạng xã hội */}
       <Modal open={opened?.status === 'completed'} onClose={closeModal} title={opened ? titleOf(opened) : ''} width="max-w-5xl">
-        {opened?.status === 'completed' && <VideoResult job={opened} productTitle={opened.product_title} />}
+        {opened?.status === 'completed' && (
+          <VideoResult
+            job={opened}
+            productTitle={opened.product_title}
+            price={opened.product_price}
+            originalPrice={opened.product_original_price}
+            onRemake={canRemake(opened) ? () => onRemake(opened) : undefined}
+          />
+        )}
       </Modal>
 
       {/* Duyệt ảnh thử đồ */}
@@ -365,7 +450,118 @@ export const MyVideosView: React.FC<MyVideosViewProps> = ({ onCreate, onCreditsC
   )
 }
 
-const VideoCard: React.FC<{ video: MyVideo; index: number; onOpen: () => void }> = ({ video: v, index, onOpen }) => {
+/** Các nền tảng đã đăng: logo sáng nếu đã đăng, mờ nếu chưa */
+const PublishedIcons: React.FC<{ video: MyVideo }> = ({ video: v }) => {
+  const done = new Set(v.published_platforms ?? [])
+  if (v.status !== 'completed') return <span className="text-sm text-[var(--text-muted)]">—</span>
+  return (
+    <span className="flex items-center gap-2 text-sm">
+      <span title={done.has('tiktok') ? 'Đã đăng TikTok' : 'Chưa đăng TikTok'} className={done.has('tiktok') ? '' : 'opacity-30'}>
+        <TikTokLogo className="w-4 h-4" />
+      </span>
+      <span title={done.has('facebook') ? 'Đã đăng Facebook' : 'Chưa đăng Facebook'} className={done.has('facebook') ? '' : 'opacity-30'}>
+        <FacebookLogo className="w-4 h-4 text-[#1877F2]" />
+      </span>
+      <span className={done.size ? 'text-[var(--ok-text)] font-medium' : 'text-[var(--text-muted)]'}>
+        {done.size ? 'Đã đăng' : 'Chưa đăng'}
+      </span>
+    </span>
+  )
+}
+
+/** Một dòng ở chế độ Danh sách: ảnh, tên + giá, trạng thái/tiến độ, đã đăng ở đâu, ngày tạo, thao tác */
+const VideoRow: React.FC<{ video: MyVideo; onOpen: () => void; onRemake?: () => void }> = ({ video: v, onOpen, onRemake }) => {
+  const thumb = v.output_image_url || v.product_image_url
+  const busy = isJobBusy(v.status)
+  const done = v.status === 'completed'
+  return (
+    <li className="px-4 md:px-5 py-3.5 grid grid-cols-[minmax(0,1fr)_auto] md:grid-cols-[minmax(0,2.4fr)_minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,0.9fr)_auto] gap-x-4 gap-y-2 items-center">
+      <div className="flex items-center gap-3 min-w-0">
+        <button
+          onClick={onOpen}
+          disabled={!done && v.status !== 'awaiting_approval'}
+          className="relative w-12 h-16 rounded-xl overflow-hidden bg-[var(--bg-surface)] shrink-0 disabled:cursor-default"
+          aria-label={`Mở ${titleOf(v)}`}
+        >
+          {thumb ? <img src={thumb} alt="" loading="lazy" className="w-full h-full object-cover" /> : <Film className="w-5 h-5 m-auto text-[var(--text-muted)]" />}
+          {done && (
+            <span className="absolute inset-0 flex items-center justify-center bg-black/20">
+              <Play className="w-4 h-4 text-white fill-current" />
+            </span>
+          )}
+        </button>
+        <div className="min-w-0">
+          <p className="font-semibold truncate">{titleOf(v)}</p>
+          <p className="text-sm text-[var(--text-muted)] truncate">
+            {v.product_price ? formatVnd(v.product_price) : ''}
+            {v.product_category ? `${v.product_price ? ' · ' : ''}${v.product_category}` : ''}
+          </p>
+          {/* Điện thoại: trạng thái + ngày ngay dưới tên */}
+          <div className="md:hidden flex items-center gap-2 mt-1 flex-wrap">
+            <StatusBadge status={v.status} />
+            <span className="text-xs text-[var(--text-muted)]">{formatDateTime(v.created_at)}</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="hidden md:block min-w-0">
+        <StatusBadge status={v.status} />
+        {busy && (
+          <div className="mt-2 flex items-center gap-2">
+            <span className="flex-1 h-1.5 rounded-full bg-[var(--bg-surface)] overflow-hidden">
+              <span className="block h-full progress-bar" style={{ width: `${Math.max(4, v.progress)}%` }} />
+            </span>
+            <span className="text-xs tabular-nums text-[var(--text-muted)]">{v.progress}%</span>
+          </div>
+        )}
+        {v.status === 'failed' && (
+          <p className="text-xs text-[var(--danger-text)] mt-1 line-clamp-1">{v.refunded ? 'Đã hoàn credit' : v.error_message}</p>
+        )}
+      </div>
+      <div className="hidden md:block">
+        <PublishedIcons video={v} />
+      </div>
+      <span className="hidden md:block text-sm text-[var(--text-muted)] tabular-nums">{formatDateTime(v.created_at)}</span>
+
+      <div className="flex items-center justify-end gap-1.5 md:w-[8.5rem]">
+        {done && (
+          <button onClick={onOpen} className="btn btn-primary btn-sm">
+            Xem
+          </button>
+        )}
+        {v.status === 'awaiting_approval' && (
+          <button onClick={onOpen} className="btn btn-accent btn-sm">
+            Duyệt
+          </button>
+        )}
+        {busy && <Loader2 className="md:hidden w-4 h-4 animate-spin text-[var(--text-muted)]" />}
+        {done && v.output_video_url && (
+          <a
+            href={v.output_video_url}
+            download={videoFileName(v.product_title)}
+            className="icon-btn w-9 h-9"
+            title="Tải video"
+            aria-label={`Tải video ${titleOf(v)}`}
+          >
+            <Download className="w-4 h-4" />
+          </a>
+        )}
+        {onRemake && (
+          <button onClick={onRemake} className="icon-btn w-9 h-9" title="Tạo lại" aria-label={`Tạo lại video ${titleOf(v)}`}>
+            <RotateCcw className="w-4 h-4" />
+          </button>
+        )}
+      </div>
+    </li>
+  )
+}
+
+const VideoCard: React.FC<{ video: MyVideo; index: number; onOpen: () => void; onRemake?: () => void }> = ({
+  video: v,
+  index,
+  onOpen,
+  onRemake,
+}) => {
   const [hover, setHover] = useState(false)
   const thumb = v.output_image_url || v.product_image_url
   const busy = isJobBusy(v.status)
@@ -457,6 +653,13 @@ const VideoCard: React.FC<{ video: MyVideo; index: number; onOpen: () => void }>
             >
               <Download className="w-4 h-4" />
             </a>
+          </div>
+        )}
+        {onRemake && !done && (
+          <div className="pt-1.5">
+            <button onClick={onRemake} className="btn btn-secondary btn-sm w-full">
+              <RotateCcw className="w-3.5 h-3.5" /> Tạo lại
+            </button>
           </div>
         )}
         {v.status === 'awaiting_approval' && (

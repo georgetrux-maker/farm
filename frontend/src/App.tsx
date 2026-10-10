@@ -1,45 +1,40 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Loader2, RefreshCw } from 'lucide-react'
 import { Header } from './components/Header'
+import { Sidebar } from './components/Sidebar'
 import { BottomNav } from './components/BottomNav'
 import { Wordmark } from './components/ui/Wordmark'
 import { LoginView } from './components/Auth/LoginView'
-import { CreateVideoView } from './components/Create/CreateVideoView'
+import { HomeView } from './components/Home/HomeView'
+import { CreateVideoView, type RemakeRequest } from './components/Create/CreateVideoView'
 import { MyVideosView } from './components/Videos/MyVideosView'
 import { ConnectView } from './components/Connect/ConnectView'
-import { StatsView } from './components/Stats/StatsView'
+import { WalletView } from './components/Wallet/WalletView'
+import { SupportView } from './components/Support/SupportView'
 import { TemplateShowcaseView } from './components/Showcase/TemplateShowcaseView'
 import { AdminDashboardView } from './components/Admin/AdminDashboardView'
-import { VietQRModal } from './components/Wallet/VietQRModal'
 import { AuditModal } from './components/SystemAudit/AuditModal'
 import { useToast } from './components/ui/toastContext'
 import {
   UNAUTHORIZED_EVENT, UnauthorizedError, clearApiToken, fetchDepositStatus, fetchProfile, logout,
   type DepositInfo, type ShowcaseTemplate, type UserProfile,
 } from './services/api'
+import type { MyVideo } from './types'
 import { formatNumber, formatVnd } from './lib/format'
-import type { View } from './lib/navigation'
+import { parseHash, toHash, type AdminSection, type View } from './lib/navigation'
+import { applyTheme, savedMode, savedPalette, type Palette, type ThemeMode } from './lib/theme'
 
-const VIEWS: View[] = ['create', 'showcase', 'videos', 'connect', 'stats', 'admin']
 const DEPOSIT_WATCH_MS = 30 * 60 * 1000 // theo dõi tiền về tối đa 30 phút
 
-function viewFromHash(): View {
-  const h = window.location.hash.replace(/^#\/?/, '')
-  return (VIEWS as string[]).includes(h) ? (h as View) : 'create'
+interface Route {
+  view: View
+  section: AdminSection
 }
 
-/** Vừa quay về từ trang cấp quyền TikTok/Facebook thì mở trang Kết nối */
-function initialView(): View {
-  return new URLSearchParams(window.location.search).has('social') ? 'connect' : viewFromHash()
-}
-
-/** Mặc định nền sáng (đúng phong cách thời trang); người dùng chọn nền tối thì nhớ lại */
-function savedTheme(): 'dark' | 'light' {
-  try {
-    return localStorage.getItem('aura_theme') === 'dark' ? 'dark' : 'light'
-  } catch {
-    return 'light'
-  }
+/** Vừa quay về từ trang cấp quyền TikTok/Facebook thì mở trang Kênh liên kết */
+function initialRoute(): Route {
+  if (new URLSearchParams(window.location.search).has('social')) return { view: 'connect', section: 'overview' }
+  return parseHash(window.location.hash)
 }
 
 export default function App() {
@@ -47,32 +42,39 @@ export default function App() {
   const [authState, setAuthState] = useState<'loading' | 'in' | 'out' | 'offline'>('loading')
   const [user, setUser] = useState<UserProfile | null>(null)
   const [walletCredits, setWalletCredits] = useState(0)
-  const [activeView, setActiveViewState] = useState<View>(initialView)
-  const [theme, setTheme] = useState<'dark' | 'light'>(savedTheme)
-  const [depositOpen, setDepositOpen] = useState(false)
+  const [route, setRoute] = useState<Route>(initialRoute)
+  const [mode, setMode] = useState<ThemeMode>(savedMode)
+  const [palette, setPalette] = useState<Palette>(savedPalette)
   const [pendingDeposit, setPendingDeposit] = useState<DepositInfo | null>(null)
   const [auditOpen, setAuditOpen] = useState(false)
   const [selectedTemplate, setSelectedTemplate] = useState<ShowcaseTemplate | null>(null)
+  const [remake, setRemake] = useState<RemakeRequest | null>(null)
 
   const isAdmin = user?.role === 'admin'
-  // Trang Admin chỉ dành cho quản trị viên: tài khoản thường gõ #admin thì vẫn ở trang Tạo video
-  const view: View = activeView === 'admin' && !isAdmin ? 'create' : activeView
+  // Trang Quản trị chỉ dành cho quản trị viên: tài khoản thường gõ #admin thì về Trang chủ
+  const view: View = route.view === 'admin' && !isAdmin ? 'home' : route.view
   const authRef = useRef(authState)
   useEffect(() => {
     authRef.current = authState
   }, [authState])
 
-  const setActiveView = useCallback((view: View) => {
-    setActiveViewState(view)
-    if (viewFromHash() !== view) window.location.hash = view
+  const navigate = useCallback((next: View, section: AdminSection = 'overview') => {
+    setRoute({ view: next, section })
+    const hash = toHash(next, section)
+    if (window.location.hash.replace(/^#\/?/, '') !== hash) window.location.hash = hash
   }, [])
+  const setActiveView = useCallback((next: View) => navigate(next), [navigate])
+  const setAdminSection = useCallback((section: AdminSection) => navigate('admin', section), [navigate])
 
   // Nút Back/Forward của trình duyệt đổi trang theo #hash
   useEffect(() => {
-    const onHash = () => setActiveViewState(viewFromHash())
+    const onHash = () => setRoute(parseHash(window.location.hash))
     window.addEventListener('hashchange', onHash)
     return () => window.removeEventListener('hashchange', onHash)
   }, [])
+
+  // Giao diện: sáng/tối và tông màu, nhớ lại cho lần sau
+  useEffect(() => applyTheme(mode, palette), [mode, palette])
 
   const handleLoggedIn = useCallback(
     (u: UserProfile, isNewAccount = false) => {
@@ -83,7 +85,7 @@ export default function App() {
         toast(
           u.credits > 0
             ? `Chào mừng ${u.name}! Bạn có ${formatNumber(u.credits)} credit để bắt đầu tạo video.`
-            : `Chào mừng ${u.name}! Nạp credit (từ 10.000đ) ở nút số dư góc trên để bắt đầu tạo video.`,
+            : `Chào mừng ${u.name}! Nạp credit (từ 10.000đ) ở trang Ví Credits để bắt đầu tạo video.`,
           'success',
         )
       }
@@ -104,7 +106,7 @@ export default function App() {
     return () => clearTimeout(id)
   }, [loadProfile])
 
-  // Phiên hết hạn giữa chừng (máy chủ trả 401): quay về màn đăng nhập
+  // Phiên hết hạn hoặc tài khoản bị khóa giữa chừng (máy chủ trả 401): quay về màn đăng nhập
   useEffect(() => {
     const onUnauthorized = () => {
       if (authRef.current !== 'in') return // đang đăng nhập/kiểm tra phiên: nơi gọi tự xử lý lỗi
@@ -130,18 +132,7 @@ export default function App() {
     window.history.replaceState(null, '', `${window.location.pathname}#connect`)
   }, [toast])
 
-  // Giao diện sáng / tối
-  useEffect(() => {
-    document.documentElement.classList.toggle('dark', theme === 'dark')
-    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#1B1714' : '#FBF8F4')
-    try {
-      localStorage.setItem('aura_theme', theme)
-    } catch {
-      // bỏ qua
-    }
-  }, [theme])
-
-  // Có lệnh nạp đang chờ: hỏi máy chủ mỗi 5 giây kể cả khi đã đóng cửa sổ nạp
+  // Có lệnh nạp đang chờ: hỏi máy chủ mỗi 5 giây kể cả khi đã rời trang Ví
   useEffect(() => {
     if (!pendingDeposit) return
     const startedAt = Date.now()
@@ -156,11 +147,14 @@ export default function App() {
           clearInterval(timer)
           setWalletCredits(tx.balance)
           setPendingDeposit(null)
-          setDepositOpen(false)
           toast(
             `Đã nhận ${formatVnd(pendingDeposit.amount_vnd)}, cộng ${formatNumber(tx.credits)} credit vào ví`,
             'success',
           )
+        } else if (tx.status === 'cancelled') {
+          clearInterval(timer)
+          setPendingDeposit(null)
+          toast('Lệnh nạp đã bị hủy. Nếu bạn đã chuyển khoản, vui lòng liên hệ Hỗ trợ.', 'info')
         }
       } catch {
         // mạng chập chờn: thử lại lần sau
@@ -174,19 +168,27 @@ export default function App() {
     await logout().catch(() => {})
     setUser(null)
     setPendingDeposit(null)
-    setActiveView('create')
+    navigate('home')
     setAuthState('out')
   }
 
-  const openDeposit = useCallback(() => setDepositOpen(true), [])
-  const openVideos = useCallback(() => setActiveView('videos'), [setActiveView])
-  const openCreate = useCallback(() => setActiveView('create'), [setActiveView])
+  const openWallet = useCallback(() => navigate('wallet'), [navigate])
+  const openVideos = useCallback(() => navigate('videos'), [navigate])
+  const openCreate = useCallback(() => navigate('create'), [navigate])
   const handleUseTemplate = useCallback(
     (tmpl: ShowcaseTemplate) => {
       setSelectedTemplate(tmpl)
-      setActiveView('create')
+      navigate('create')
     },
-    [setActiveView],
+    [navigate],
+  )
+  // "Tạo lại" ở trang Video của tôi: mở bước 2 với sản phẩm và cài đặt của video cũ để sửa trước khi tạo
+  const handleRemake = useCallback(
+    (video: MyVideo) => {
+      setRemake({ video, at: Date.now() })
+      navigate('create')
+    },
+    [navigate],
   )
 
   if (authState === 'loading') {
@@ -216,56 +218,75 @@ export default function App() {
   }
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col text-[var(--text-main)]">
-      <Header
-        activeView={view}
-        setActiveView={setActiveView}
-        walletCredits={walletCredits}
-        theme={theme}
-        onToggleTheme={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
-        onOpenDeposit={openDeposit}
-        onOpenAudit={isAdmin ? () => setAuditOpen(true) : undefined}
-        userName={user.name}
-        userEmail={user.email}
+    <div className="flex-1 min-h-0 flex text-[var(--text-main)]">
+      <Sidebar
+        view={view}
+        adminSection={route.section}
         isAdmin={isAdmin}
-        onLogout={handleLogout}
+        onNavigate={setActiveView}
+        onAdminSection={setAdminSection}
       />
 
-      <main className="flex-1 min-h-0 flex">
-        {/* Giữ trang Tạo video khi chuyển trang để không mất ảnh/thông tin đang nhập hoặc tiến độ */}
-        <div className={view === 'create' ? 'flex-1 min-w-0 flex animate-fade-in' : 'hidden'}>
-          <CreateVideoView
-            credits={walletCredits}
-            isAdmin={isAdmin}
-            onCreditsChange={setWalletCredits}
-            onOpenDeposit={openDeposit}
-            onOpenVideos={openVideos}
-            initialTemplate={selectedTemplate}
-            onClearInitialTemplate={() => setSelectedTemplate(null)}
-          />
-        </div>
-        {view !== 'create' && (
-          <div key={view} className="flex-1 min-w-0 flex animate-fade-in">
-            {view === 'showcase' && <TemplateShowcaseView onUseTemplate={handleUseTemplate} />}
-            {view === 'videos' && <MyVideosView onCreate={openCreate} onCreditsChange={setWalletCredits} />}
-            {view === 'connect' && <ConnectView isAdmin={isAdmin} />}
-            {view === 'stats' && (
-              <StatsView user={user} credits={walletCredits} onOpenDeposit={openDeposit} />
-            )}
-            {view === 'admin' && <AdminDashboardView />}
+      <div className="flex-1 min-w-0 flex flex-col">
+        <Header
+          activeView={view}
+          setActiveView={setActiveView}
+          walletCredits={walletCredits}
+          mode={mode}
+          palette={palette}
+          onModeChange={setMode}
+          onPaletteChange={setPalette}
+          onOpenDeposit={openWallet}
+          onOpenAudit={isAdmin ? () => setAuditOpen(true) : undefined}
+          userName={user.name}
+          userEmail={user.email}
+          isAdmin={isAdmin}
+          onLogout={handleLogout}
+        />
+
+        <main className="flex-1 min-h-0 flex">
+          {/* Giữ trang Tạo video khi chuyển trang để không mất ảnh/thông tin đang nhập hoặc tiến độ */}
+          <div className={view === 'create' ? 'flex-1 min-w-0 flex animate-fade-in' : 'hidden'}>
+            <CreateVideoView
+              credits={walletCredits}
+              isAdmin={isAdmin}
+              onCreditsChange={setWalletCredits}
+              onOpenDeposit={openWallet}
+              onOpenVideos={openVideos}
+              initialTemplate={selectedTemplate}
+              onClearInitialTemplate={() => setSelectedTemplate(null)}
+              remake={remake}
+            />
           </div>
-        )}
-      </main>
+          {view !== 'create' && (
+            <div key={view} className="flex-1 min-w-0 flex animate-fade-in">
+              {view === 'home' && (
+                <HomeView user={user} credits={walletCredits} onNavigate={setActiveView} onOpenDeposit={openWallet} />
+              )}
+              {view === 'showcase' && <TemplateShowcaseView onUseTemplate={handleUseTemplate} />}
+              {view === 'videos' && (
+                <MyVideosView onCreate={openCreate} onCreditsChange={setWalletCredits} onRemake={handleRemake} />
+              )}
+              {view === 'connect' && <ConnectView isAdmin={isAdmin} />}
+              {view === 'wallet' && (
+                <WalletView
+                  credits={walletCredits}
+                  pending={pendingDeposit}
+                  onCreated={setPendingDeposit}
+                  onDiscard={() => setPendingDeposit(null)}
+                />
+              )}
+              {view === 'support' && <SupportView onNavigate={setActiveView} />}
+              {view === 'admin' && (
+                <AdminDashboardView section={route.section} onSectionChange={setAdminSection} currentUserId={user.id} />
+              )}
+            </div>
+          )}
+        </main>
 
-      <BottomNav activeView={view} setActiveView={setActiveView} />
+        <BottomNav activeView={view} setActiveView={setActiveView} />
+      </div>
 
-      <VietQRModal
-        open={depositOpen}
-        onClose={() => setDepositOpen(false)}
-        pending={pendingDeposit}
-        onCreated={setPendingDeposit}
-        onDiscard={() => setPendingDeposit(null)}
-      />
       {isAdmin && <AuditModal open={auditOpen} onClose={() => setAuditOpen(false)} />}
     </div>
   )

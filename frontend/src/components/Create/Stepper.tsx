@@ -1,7 +1,7 @@
 import React from 'react'
 import { Check } from 'lucide-react'
 
-const STEPS = ['Sản phẩm', 'Người mẫu & video', 'Duyệt & đăng']
+const STEPS = ['Sản phẩm', 'Tùy chỉnh', 'Kết quả']
 
 /** Ba bước tạo video; điện thoại chỉ hiện tên bước đang làm. */
 export const Stepper: React.FC<{ step: number }> = ({ step }) => (

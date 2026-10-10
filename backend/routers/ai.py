@@ -1,6 +1,6 @@
 """Từng bước AI riêng lẻ: tách nền, thử đồ, chuyển động, kịch bản, lồng tiếng, ghép video"""
 
-from typing import Optional
+from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -147,6 +147,8 @@ class ScriptPreviewRequest(BaseModel):
     fabric: Optional[str] = Field(default=None, max_length=100)
     category: Optional[str] = Field(default=None, max_length=100)
     style: str = "genz"
+    features: List[Annotated[str, Field(max_length=80)]] = Field(
+        default_factory=list, max_length=12, description="Điểm nổi bật AI nhận ra từ ảnh (màu, chi tiết)")
 
 
 @router.post("/api/ai/script/preview")
@@ -154,4 +156,6 @@ def api_preview_script(req: ScriptPreviewRequest, user: dict = Depends(get_curre
     """Viết trước kịch bản để người bán xem và sửa (thêm tên shop, hotline...) trước khi tạo video"""
     if req.style not in STYLES:
         raise HTTPException(status_code=400, detail="Phong cách kịch bản không hợp lệ")
-    return generate_koc_script(req.title, req.price, req.fabric, style=req.style, category=req.category)
+    analysis = {"key_features": [f.strip() for f in req.features if f.strip()]} if req.features else None
+    return generate_koc_script(req.title, req.price, req.fabric, style=req.style, category=req.category,
+                               analysis=analysis)

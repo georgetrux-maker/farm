@@ -15,6 +15,7 @@
       // Áp giao diện đã lưu trước khi vẽ trang để không bị nháy màu
       try {
         if (localStorage.getItem('aura_theme') === 'dark') document.documentElement.classList.add('dark')
+        if (localStorage.getItem('aura_palette') === 'violet') document.documentElement.dataset.palette = 'violet'
       } catch (e) {}
     </script>
   </head>

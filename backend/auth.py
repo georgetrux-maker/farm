@@ -17,9 +17,14 @@ def bearer_token(authorization: str = Header(default="")) -> str:
     return token.strip() if scheme.lower() == "bearer" else ""
 
 
+LOCKED_MESSAGE = "Tài khoản đã bị khóa, vui lòng liên hệ bộ phận hỗ trợ"
+
+
 def get_current_user(token: str = Depends(bearer_token)) -> dict:
     if token:
         user = get_user_by_token(token)
+        if user and user.get("disabled"):
+            raise HTTPException(status_code=403, detail=LOCKED_MESSAGE)
         if user:
             return user
         raise HTTPException(status_code=401, detail="Token không hợp lệ")

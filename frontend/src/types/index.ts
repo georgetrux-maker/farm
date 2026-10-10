@@ -8,6 +8,14 @@ export interface JobScript {
   motion_engine?: string
   video_resolution?: string
   subtitles_burned?: boolean
+  /** 5 khung hình trong video kèm câu phụ đề lúc đó (video tạo từ bản này trở đi) */
+  scenes?: VideoScene[]
+}
+
+export interface VideoScene {
+  time: number
+  image_url: string
+  caption: string
 }
 
 export interface AIJob {
@@ -22,7 +30,15 @@ export interface AIJob {
   error_message?: string | null
   refunded?: boolean
   cost_credits?: number
-  params?: { avatar_id?: string; template?: string; duration_sec?: number; require_approval?: boolean }
+  params?: {
+    avatar_id?: string
+    template?: string
+    voice?: string
+    script_style?: string
+    custom_script?: string | null
+    duration_sec?: number
+    require_approval?: boolean
+  }
   script?: JobScript | null
   created_at?: string
   completed_at?: string | null
@@ -32,7 +48,13 @@ export interface AIJob {
 export interface MyVideo extends AIJob {
   product_title: string | null
   product_image_url: string | null
+  product_price?: number | null
+  product_original_price?: number | null
+  product_category?: string | null
+  product_fabric?: string | null
   published_count: number
+  /** Các nền tảng đã đăng thành công, ví dụ ["facebook", "tiktok"] */
+  published_platforms?: string[]
 }
 
 export type VideoFilter = 'all' | 'completed' | 'busy' | 'awaiting_approval' | 'other'
@@ -59,6 +81,7 @@ export interface BrandAvatar {
   measurements: string
   avatar_url: string
   badge?: string | null
+  gender?: 'female' | 'male'
   renders_count?: number
   is_default: number
 }
@@ -66,6 +89,7 @@ export interface BrandAvatar {
 export interface DashboardStats {
   total_renders: number
   completed_renders: number
+  products_count?: number
   published_videos: number
   wallet_credits: number
   avg_render_time: string | null
@@ -77,9 +101,9 @@ export interface CreditTransaction {
   id: string
   amount_credits: number
   amount_vnd: number | null
-  transaction_type: 'deposit' | 'usage' | 'refund'
+  transaction_type: 'deposit' | 'usage' | 'refund' | 'adjust'
   description: string | null
-  status: 'pending' | 'success'
+  status: 'pending' | 'success' | 'cancelled'
   created_at: string
 }
 

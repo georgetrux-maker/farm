@@ -7,10 +7,13 @@ import {
 } from '../../services/api'
 import { useToast } from '../ui/toastContext'
 
-type Edits = Record<string, string | null>
+type Edits = Record<string, string | boolean | null>
+type EditValue = string | boolean | null | undefined
 
-const SECTIONS: { title: string; note: string; providers: { id: string; name: string; testable: boolean }[] }[] = [
+const SECTIONS: { id: string; tab: string; title: string; note: string; providers: { id: string; name: string; testable: boolean }[] }[] = [
   {
+    id: 'ai',
+    tab: 'AI',
     title: 'Trí tuệ nhân tạo',
     note: 'Để trống thì app dùng engine tạm miễn phí cho bước đó.',
     providers: [
@@ -20,6 +23,8 @@ const SECTIONS: { title: string; note: string; providers: { id: string; name: st
     ],
   },
   {
+    id: 'payment',
+    tab: 'Thanh toán',
     title: 'Thanh toán',
     note: 'Khách quét mã VietQR, SePay báo tiền về thì credit tự cộng.',
     providers: [
@@ -28,6 +33,8 @@ const SECTIONS: { title: string; note: string; providers: { id: string; name: st
     ],
   },
   {
+    id: 'social',
+    tab: 'Mạng xã hội',
     title: 'Mạng xã hội',
     note: 'Cần app được TikTok/Facebook duyệt để đăng công khai.',
     providers: [
@@ -35,8 +42,25 @@ const SECTIONS: { title: string; note: string; providers: { id: string; name: st
       { id: 'facebook', name: 'Facebook Reels', testable: true },
     ],
   },
-  { title: 'Giá & credit', note: '1 credit = 100đ.', providers: [{ id: 'pricing', name: 'Chính sách giá', testable: false }] },
+  {
+    id: 'pricing',
+    tab: 'Giá & tài khoản',
+    title: 'Giá & tài khoản',
+    note: '1 credit = 100đ.',
+    providers: [
+      { id: 'pricing', name: 'Chính sách giá', testable: false },
+      { id: 'other', name: 'Đăng ký tài khoản', testable: false },
+    ],
+  },
+  {
+    id: 'support',
+    tab: 'Hỗ trợ',
+    title: 'Liên hệ hỗ trợ',
+    note: 'Hiện ở trang Hỗ trợ của shop. Để trống mục nào thì ẩn mục đó.',
+    providers: [{ id: 'support', name: 'Kênh liên hệ', testable: false }],
+  },
 ]
+const NO_STATUS = new Set(['pricing', 'other', 'support'])
 
 const SOURCE_TEXT: Record<AdminSetting['source'], string> = {
   admin: 'Đã lưu trong Admin',
@@ -57,14 +81,48 @@ const CHECK_STYLE: Record<ProviderCheck['status'], { icon: React.ElementType; cl
 /** Một ô cấu hình. Key bí mật không bao giờ hiện nguyên văn: để trống = giữ key đang dùng. */
 const SettingField: React.FC<{
   s: AdminSetting
-  edit: string | null | undefined
-  onEdit: (value: string | null | undefined) => void
+  edit: EditValue
+  onEdit: (value: EditValue) => void
 }> = ({ s, edit, onEdit }) => {
   const id = `setting-${s.key}`
   const changed = edit !== undefined
   const clearing = edit === null
+
+  // Công tắc bật/tắt (vd tắt Claude để dùng mẫu câu miễn phí): bấm lại về giá trị cũ thì coi như chưa sửa
+  if (s.kind === 'bool') {
+    const saved = s.value === true
+    const on = typeof edit === 'boolean' ? edit : saved
+    return (
+      <div className="sm:col-span-2 flex items-center justify-between gap-4 px-4 py-3 rounded-xl bg-[var(--bg-card)] border border-[var(--border-subtle)]">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold">{s.label}</p>
+          <p className="text-xs text-[var(--text-muted)] mt-0.5">
+            {changed ? 'Đã sửa, chưa lưu' : `${on ? 'Đang bật' : 'Đang tắt'} · ${SOURCE_TEXT[s.source]}`}
+            {s.hint ? ` · ${s.hint}` : ''}
+          </p>
+        </div>
+        <button
+          id={id}
+          type="button"
+          role="switch"
+          aria-checked={on}
+          aria-label={s.label}
+          onClick={() => onEdit(!on === saved ? undefined : !on)}
+          className={`relative shrink-0 w-11 h-6 rounded-full transition-colors duration-200 ${
+            on ? 'bg-[var(--accent-color)]' : 'bg-[var(--border-strong)]'
+          }`}
+        >
+          <span
+            className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${
+              on ? 'translate-x-5' : ''
+            }`}
+          />
+        </button>
+      </div>
+    )
+  }
   const current = s.value === null || s.value === undefined ? '' : String(s.value)
-  const shown = clearing ? '' : changed ? (edit ?? '') : s.kind === 'secret' ? '' : current
+  const shown = clearing ? '' : changed ? String(edit ?? '') : s.kind === 'secret' ? '' : current
 
   let input: React.ReactNode
   if (s.kind === 'choice' && s.options) {
@@ -134,6 +192,7 @@ export const SettingsTab: React.FC = () => {
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState<string | null>(null)
   const [checks, setChecks] = useState<Record<string, ProviderCheck>>({})
+  const [tab, setTab] = useState(SECTIONS[0].id)
 
   const load = useCallback(() => {
     setError(null)
@@ -155,7 +214,7 @@ export const SettingsTab: React.FC = () => {
 
   const changedCount = Object.keys(edits).length
 
-  const setEdit = (key: string, value: string | null | undefined) =>
+  const setEdit = (key: string, value: EditValue) =>
     setEdits((prev) => {
       const next = { ...prev }
       if (value === undefined) delete next[key]
@@ -224,7 +283,28 @@ export const SettingsTab: React.FC = () => {
         Nút “Kiểm tra” thử luôn key vừa gõ, chưa cần lưu.
       </p>
 
-      {SECTIONS.map((section) => (
+      <div className="flex gap-1 p-1 rounded-full bg-[var(--bg-surface)] overflow-x-auto no-scrollbar w-full sm:w-fit" role="tablist">
+        {SECTIONS.map((section) => {
+          const keys = new Set(section.providers.flatMap((p) => (byProvider[p.id] ?? []).map((f) => f.key)))
+          const dirty = Object.keys(edits).some((k) => keys.has(k))
+          return (
+            <button
+              key={section.id}
+              role="tab"
+              aria-selected={tab === section.id}
+              onClick={() => setTab(section.id)}
+              className={`px-4 py-2 rounded-full text-sm font-semibold whitespace-nowrap transition-colors flex items-center gap-1.5 ${
+                tab === section.id ? 'bg-[var(--bg-card)] text-[var(--text-main)] shadow-sm' : 'text-[var(--text-muted)]'
+              }`}
+            >
+              {section.tab}
+              {dirty && <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent-color)]" aria-label="có thay đổi chưa lưu" />}
+            </button>
+          )
+        })}
+      </div>
+
+      {SECTIONS.filter((section) => section.id === tab).map((section) => (
         <section key={section.title} className="card p-5 sm:p-6 space-y-5">
           <div>
             <h2 className="display text-xl">{section.title}</h2>
@@ -233,6 +313,8 @@ export const SettingsTab: React.FC = () => {
           {section.providers.map((p) => {
             const fields = byProvider[p.id] ?? []
             const configured = fields.filter((f) => f.kind === 'secret' || f.kind === 'text').every((f) => f.configured)
+            const switchField = fields.find((f) => f.kind === 'bool' && f.key.endsWith('_enabled'))
+            const switchedOff = switchField && (typeof edits[switchField.key] === 'boolean' ? edits[switchField.key] === false : switchField.value === false)
             const check = checks[p.id]
             const CheckIcon = check ? CHECK_STYLE[check.status].icon : null
             return (
@@ -240,13 +322,17 @@ export const SettingsTab: React.FC = () => {
                 <div className="flex items-center justify-between gap-3 flex-wrap">
                   <div className="flex items-center gap-2.5 min-w-0">
                     <h3 className="font-semibold">{p.name}</h3>
-                    {p.id !== 'pricing' && (
+                    {!NO_STATUS.has(p.id) && (
                       <span
                         className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${
-                          configured ? 'bg-[var(--ok-bg)] text-[var(--ok-text)]' : 'bg-[var(--bg-card)] text-[var(--text-muted)]'
+                          switchedOff
+                            ? 'bg-[var(--bg-card)] text-[var(--text-muted)]'
+                            : configured
+                              ? 'bg-[var(--ok-bg)] text-[var(--ok-text)]'
+                              : 'bg-[var(--bg-card)] text-[var(--text-muted)]'
                         }`}
                       >
-                        {configured ? 'Đã cấu hình' : 'Chưa cấu hình'}
+                        {switchedOff ? 'Đang tắt' : configured ? 'Đã cấu hình' : 'Chưa cấu hình'}
                       </span>
                     )}
                   </div>

@@ -1,91 +1,120 @@
 import React, { useCallback, useEffect, useState } from 'react'
-import { RefreshCw, ShieldCheck } from 'lucide-react'
+import { RefreshCw } from 'lucide-react'
 import { fetchAdminStatsOverview, type AdminStatsOverview } from '../../services/api'
+import { ADMIN_SECTIONS, type AdminSection } from '../../lib/navigation'
+import { AuditLogTab } from './AuditLogTab'
 import { AvatarManager } from './AvatarManager'
-import { DepositsTab } from './DepositsTab'
 import { OverviewTab } from './OverviewTab'
 import { SettingsTab } from './SettingsTab'
+import { TransactionsTab } from './TransactionsTab'
+import { UsersTab } from './UsersTab'
 
-type Tab = 'overview' | 'deposits' | 'models' | 'settings'
+interface AdminDashboardViewProps {
+  section: AdminSection
+  onSectionChange: (section: AdminSection) => void
+  currentUserId: string
+}
 
-/** Trang quản trị độc lập: chỉ App mở cho tài khoản admin (máy chủ cũng chặn mọi API admin với tài khoản thường). */
-export const AdminDashboardView: React.FC = () => {
-  const [tab, setTab] = useState<Tab>('overview')
+const SUBTITLES: Record<AdminSection, string> = {
+  overview: 'Doanh thu, shop mới và video, so với kỳ trước. Mốc ngày/tháng theo giờ Việt Nam.',
+  users: 'Tìm tài khoản, cộng/trừ credit, khóa tài khoản vi phạm.',
+  transactions: 'Lệnh nạp tiền VietQR: duyệt tay khi khách chuyển sai nội dung, hủy lệnh không thanh toán.',
+  models: 'Kho người mẫu AI dùng chung cho mọi shop.',
+  settings: 'API key, thanh toán, mạng xã hội, giá và thông tin hỗ trợ.',
+  logs: 'Mọi thao tác quản trị và giao dịch tự động được ghi lại.',
+}
+
+/** Admin Panel: menu trái (máy tính) hoặc thanh tab cuộn ngang (điện thoại) chọn mục; App giữ mục trong #hash. */
+export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ section, onSectionChange, currentUserId }) => {
   const [stats, setStats] = useState<AdminStatsOverview | null>(null)
+  const [days, setDays] = useState(7)
+  const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const loadStats = useCallback(() => {
+  const loadStats = useCallback((range: number) => {
     setError(null)
-    fetchAdminStatsOverview()
+    setRefreshing(true)
+    fetchAdminStatsOverview(range)
       .then(setStats)
       .catch((e) => setError(e.message))
+      .finally(() => setRefreshing(false))
   }, [])
 
   useEffect(() => {
-    const id = setTimeout(loadStats, 0)
+    const id = setTimeout(() => loadStats(days), 0)
     return () => clearTimeout(id)
-  }, [loadStats])
+  }, [loadStats, days])
 
   const pending = stats?.summary.pending_deposits ?? 0
-  const tabs: { id: Tab; label: string; badge?: number }[] = [
-    { id: 'overview', label: 'Tổng quan' },
-    { id: 'deposits', label: 'Nạp tiền', badge: pending },
-    { id: 'models', label: 'Người mẫu AI' },
-    { id: 'settings', label: 'Cài đặt API' },
-  ]
+  const current = ADMIN_SECTIONS.find((s) => s.id === section) ?? ADMIN_SECTIONS[0]
 
   return (
     <div className="flex-1 h-full overflow-y-auto text-[var(--text-main)]">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-10 space-y-6 sm:space-y-8">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-5 sm:py-8 space-y-5 sm:space-y-6">
+        {/* Điện thoại / máy tính bảng: chọn mục bằng thanh tab (máy tính đã có menu trái) */}
+        <nav className="lg:hidden -mx-4 px-4 overflow-x-auto no-scrollbar" aria-label="Menu quản trị">
+          <div className="flex gap-2 w-max">
+            {ADMIN_SECTIONS.map((s) => {
+              const Icon = s.icon
+              return (
+                <button
+                  key={s.id}
+                  onClick={() => onSectionChange(s.id)}
+                  aria-current={section === s.id ? 'page' : undefined}
+                  className="chip shrink-0"
+                  aria-pressed={section === s.id}
+                >
+                  <Icon className="w-4 h-4" />
+                  {s.label}
+                  {s.id === 'transactions' && pending > 0 && (
+                    <span className="min-w-5 h-5 px-1.5 rounded-full bg-[var(--accent-color)] text-[var(--on-accent)] text-[11px] leading-5 text-center">
+                      {pending}
+                    </span>
+                  )}
+                </button>
+              )
+            })}
+          </div>
+        </nav>
+
         <div className="flex items-end justify-between gap-4 flex-wrap">
           <div className="min-w-0">
-            <p className="eyebrow flex items-center gap-1.5">
-              <ShieldCheck className="w-3.5 h-3.5" /> Quản trị hệ thống
-            </p>
-            <h1 className="display text-3xl sm:text-4xl mt-1.5">Admin</h1>
+            <p className="eyebrow">Admin Panel</p>
+            <h1 className="display text-3xl sm:text-4xl mt-1.5">{current.label}</h1>
+            <p className="text-[var(--text-muted)] mt-2">{SUBTITLES[section]}</p>
           </div>
-          <button onClick={loadStats} className="btn btn-ghost btn-sm" aria-label="Tải lại số liệu">
-            <RefreshCw className="w-4 h-4" /> Làm mới
-          </button>
-        </div>
-
-        <div className="flex gap-1 p-1 rounded-full bg-[var(--bg-surface)] overflow-x-auto no-scrollbar w-full sm:w-fit" role="tablist">
-          {tabs.map((t) => (
-            <button
-              key={t.id}
-              role="tab"
-              aria-selected={tab === t.id}
-              onClick={() => setTab(t.id)}
-              className={`px-4 py-2 rounded-full text-sm font-semibold whitespace-nowrap transition-colors flex items-center gap-1.5 ${
-                tab === t.id ? 'bg-[var(--bg-card)] text-[var(--text-main)] shadow-sm' : 'text-[var(--text-muted)]'
-              }`}
-            >
-              {t.label}
-              {!!t.badge && (
-                <span className="min-w-5 h-5 px-1.5 rounded-full bg-[var(--accent-color)] text-[var(--on-accent)] text-[11px] leading-5 text-center">
-                  {t.badge}
-                </span>
-              )}
+          {section === 'overview' && (
+            <button onClick={() => loadStats(days)} disabled={refreshing} className="btn btn-ghost btn-sm" aria-label="Tải lại số liệu">
+              <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} /> Làm mới
             </button>
-          ))}
+          )}
         </div>
 
-        {tab === 'overview' &&
-          (error ? (
+        {section === 'overview' &&
+          (error && !stats ? (
             <p className="text-sm text-[var(--danger-text)]">
               {error}{' '}
-              <button onClick={loadStats} className="underline font-semibold">
+              <button onClick={() => loadStats(days)} className="underline font-semibold">
                 Thử lại
               </button>
             </p>
           ) : stats ? (
-            <OverviewTab stats={stats} onOpenDeposits={() => setTab('deposits')} />
+            <OverviewTab
+              stats={stats}
+              days={days}
+              onDaysChange={setDays}
+              refreshing={refreshing}
+              onOpenTransactions={() => onSectionChange('transactions')}
+              onOpenUsers={() => onSectionChange('users')}
+            />
           ) : (
             <div className="skeleton h-96 rounded-3xl" />
           ))}
-        {tab === 'deposits' && <DepositsTab onChanged={loadStats} />}
-        {tab === 'models' && <AvatarManager />}
-        {tab === 'settings' && <SettingsTab />}
+        {section === 'users' && <UsersTab currentUserId={currentUserId} />}
+        {section === 'transactions' && <TransactionsTab onChanged={() => loadStats(days)} />}
+        {section === 'models' && <AvatarManager />}
+        {section === 'settings' && <SettingsTab />}
+        {section === 'logs' && <AuditLogTab />}
       </div>
     </div>
   )

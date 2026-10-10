@@ -28,7 +28,7 @@ AVATARS = {
 
 
 def engine_name() -> str:
-    return "fashn" if config.fashn_api_key() else "placeholder-composite"
+    return "fashn" if config.fashn_active() else "placeholder-composite"
 
 
 def _parse_number(value, default: float) -> float:

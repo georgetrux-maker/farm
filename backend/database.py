@@ -252,6 +252,21 @@ def init_db():
     _add_column_if_missing(cursor, "ai_jobs", "refunded", "INTEGER DEFAULT 0")
     _add_column_if_missing(cursor, "ai_jobs", "updated_at", "TIMESTAMP")  # SQLite không cho DEFAULT động khi ALTER
     _add_column_if_missing(cursor, "wallet_transactions", "amount_vnd", "INTEGER")
+    _add_column_if_missing(cursor, "users", "disabled", "INTEGER DEFAULT 0")  # 1 = quản trị viên đã khóa
+    _add_column_if_missing(cursor, "brand_avatars", "gender", "TEXT DEFAULT 'female'")
+    # Nhật ký thao tác quản trị và xác nhận thanh toán (ai, làm gì, lúc nào)
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS audit_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        actor_id TEXT,
+        actor_name TEXT,
+        action TEXT NOT NULL,
+        target TEXT,
+        detail TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    ''')
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at)")
     # Ai xác nhận tiền về và lúc nào: "sepay", "admin:<id>", "cli"
     _add_column_if_missing(cursor, "wallet_transactions", "confirmed_at", "TIMESTAMP")
     _add_column_if_missing(cursor, "wallet_transactions", "confirmed_by", "TEXT")
@@ -461,19 +476,21 @@ def get_brand_avatar(avatar_id: str):
     return dict(row) if row else None
 
 
-def add_brand_avatar_entry(name: str, style: str, height: str, weight: str, measurements: str, avatar_url: str, badge: str = "Tùy Chỉnh"):
+def add_brand_avatar_entry(name: str, style: str, height: str, weight: str, measurements: str, avatar_url: str,
+                           badge: str = "Tùy Chỉnh", gender: str = "female"):
     avatar_id = f"model_{uuid.uuid4().hex[:6]}"
     conn = get_db()
     conn.execute('''
-    INSERT INTO brand_avatars (id, name, style, height, weight, measurements, avatar_url, badge, renders_count, is_default)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0)
-    ''', (avatar_id, name, style, height, weight, measurements, avatar_url, badge))
+    INSERT INTO brand_avatars (id, name, style, height, weight, measurements, avatar_url, badge, renders_count, is_default, gender)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?)
+    ''', (avatar_id, name, style, height, weight, measurements, avatar_url, badge, gender))
     conn.commit()
     conn.close()
-    return {"id": avatar_id, "name": name, "style": style, "height": height, "weight": weight, "measurements": measurements, "avatar_url": avatar_url, "badge": badge, "renders_count": 0, "is_default": 0}
+    return {"id": avatar_id, "name": name, "style": style, "height": height, "weight": weight, "measurements": measurements,
+            "avatar_url": avatar_url, "badge": badge, "renders_count": 0, "is_default": 0, "gender": gender}
 
 
-_AVATAR_FIELDS = ("name", "style", "height", "weight", "measurements", "avatar_url", "badge")
+_AVATAR_FIELDS = ("name", "style", "height", "weight", "measurements", "avatar_url", "badge", "gender")
 
 
 def update_brand_avatar(avatar_id: str, **fields):
@@ -609,9 +626,14 @@ def get_dashboard_summary(user_id: str):
             'height': f"{max(8, int(count / max_count * 90))}%",
         })
 
+    conn = get_db()
+    products_count = conn.execute("SELECT COUNT(*) FROM products WHERE owner_id = ?", (user_id,)).fetchone()[0]
+    conn.close()
+
     return {
         "total_renders": total_renders,
         "completed_renders": completed_renders,
+        "products_count": products_count,
         "published_videos": published_videos,
         "cache_hits": cache_hits,
         "cache_saved_usd": cache_saved_usd,

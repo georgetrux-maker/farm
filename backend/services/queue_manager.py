@@ -4,8 +4,8 @@ import uuid
 
 from backend import config
 from backend.ai.motion import DEFAULT_TEMPLATE, generate_motion
-from backend.ai.render import render_final_video
-from backend.ai.script import generate_koc_script
+from backend.ai.render import extract_keyframes, render_final_video
+from backend.ai.script import caption_and_hashtags, generate_koc_script
 from backend.ai.segmentation import segment_garment
 from backend.ai.product_analysis import analyze_product
 from backend.ai.tts import DEFAULT_VOICE, generate_speech
@@ -152,6 +152,8 @@ def _run_video_stage(job_id: str, params: dict, product: dict, tryon_path: str):
             "cta": lines[2] if len(lines) > 2 else (lines[-1] if len(lines) > 1 else ""),
             "full_script": custom_txt,
             "engine": "custom_user_script",
+            # Người bán tự viết lời: vẫn kèm caption + hashtag để đăng mạng xã hội
+            **caption_and_hashtags(product["title"], product["price"], product.get("category")),
         }
     else:
         script = generate_koc_script(product["title"], product["price"], product.get("fabric_type"),
@@ -171,7 +173,8 @@ def _run_video_stage(job_id: str, params: dict, product: dict, tryon_path: str):
     final = render_final_video(motion["video_path"], tts["audio_path"], output_name=f"final_{job_id}.mp4",
                                subtitle_phrases=tts["phrases"], title=product["title"], price_text=price_text)
     script.update({"motion_engine": motion["engine"], "video_resolution": final["resolution"],
-                   "video_duration_sec": final["duration_sec"], "subtitles_burned": final["subtitles_burned"]})
+                   "video_duration_sec": final["duration_sec"], "subtitles_burned": final["subtitles_burned"],
+                   "scenes": _scenes(final["output_path"], tts["phrases"], job_id)})
 
     conn = get_db()
     conn.execute("UPDATE brand_avatars SET renders_count = renders_count + 1 WHERE id = ?", (avatar_id,))
@@ -179,6 +182,19 @@ def _run_video_stage(job_id: str, params: dict, product: dict, tryon_path: str):
     conn.close()
     _update_job(job_id, 'completed', 100, 'Hoàn tất, video sẵn sàng xuất bản', video=final["video_url"],
                 script=json.dumps(script, ensure_ascii=False))
+
+
+def _scenes(video_path: str, phrases: list, job_id: str) -> list:
+    """5 khung hình trong video kèm câu phụ đề đang đọc lúc đó. Lỗi thì bỏ qua, không làm hỏng video."""
+    try:
+        frames = extract_keyframes(video_path, prefix=f"scene_{job_id}")
+    except Exception:
+        log.exception("Không chụp được khung hình cho job %s", job_id)
+        return []
+    for frame in frames:
+        current = [text for start, end, text in phrases if start <= frame["time"]]
+        frame["caption"] = current[-1] if current else ""
+    return frames
 
 
 def run_job(job_id: str, resume_after_approval: bool = False):
@@ -356,8 +372,12 @@ def list_jobs(user_id: str, page: int = 1, page_size: int = 24, q: str = None, s
             filter_args += list(members)
         total = conn.execute(f"SELECT COUNT(*) {filtered}", filter_args).fetchone()[0]
         rows = conn.execute(f'''
-        SELECT j.*, p.title AS product_title, p.image_url AS product_image_url,
-               (SELECT COUNT(*) FROM publications pb WHERE pb.job_id = j.id AND pb.status = 'published') AS published_count
+        SELECT j.*, p.title AS product_title, p.image_url AS product_image_url, p.price AS product_price,
+               p.original_price AS product_original_price, p.category AS product_category,
+               p.fabric_type AS product_fabric,
+               (SELECT COUNT(*) FROM publications pb WHERE pb.job_id = j.id AND pb.status = 'published') AS published_count,
+               (SELECT GROUP_CONCAT(DISTINCT pb.platform) FROM publications pb
+                 WHERE pb.job_id = j.id AND pb.status = 'published') AS published_platforms
         {filtered}
         ORDER BY {SORTS.get(sort, SORTS["newest"])}
         LIMIT ? OFFSET ?
@@ -369,7 +389,10 @@ def list_jobs(user_id: str, page: int = 1, page_size: int = 24, q: str = None, s
     for row in rows:
         job = _job_dict(row)
         job.update({"product_title": row["product_title"], "product_image_url": row["product_image_url"],
-                    "published_count": row["published_count"]})
+                    "product_price": row["product_price"], "product_original_price": row["product_original_price"],
+                    "product_category": row["product_category"], "product_fabric": row["product_fabric"],
+                    "published_count": row["published_count"],
+                    "published_platforms": sorted(filter(None, (row["published_platforms"] or "").split(",")))})
         items.append(job)
     return {"items": items, "total": total, "page": page, "page_size": page_size,
             "has_more": page * page_size < total, "counts": counts}

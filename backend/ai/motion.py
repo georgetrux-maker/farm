@@ -62,7 +62,7 @@ NEGATIVE_PROMPT = ("changing the garment design, different clothes, distorted cl
 
 
 def engine_name() -> str:
-    return "replicate:" + config.replicate_video_model() if config.replicate_api_token() else "placeholder-ffmpeg-camera"
+    return "replicate:" + config.replicate_video_model() if config.replicate_active() else "placeholder-ffmpeg-camera"
 
 
 def _ffmpeg_motion(image_path: Optional[str], duration_sec: float, template: str, output_path: str) -> None:

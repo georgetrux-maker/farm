@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useState } from 'react'
-import { ArrowRight, Pause, Play, Square, Volume2 } from 'lucide-react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import { ArrowRight, Pause, Play, Search, Square, Volume2, X } from 'lucide-react'
 import { fetchTemplateShowcase, type ShowcaseTemplate } from '../../services/api'
 import { STYLE_LABELS, TEMPLATE_SHORT_LABELS } from '../../lib/labels'
+import { stripVietnamese } from '../../lib/format'
 import { useVoicePreview } from '../../lib/useVoicePreview'
 import { MotionPreview } from '../ui/MotionPreview'
 import { useToast } from '../ui/toastContext'
@@ -17,6 +18,25 @@ export const TemplateShowcaseView: React.FC<TemplateShowcaseViewProps> = ({ onUs
   const [error, setError] = useState<string | null>(null)
   const [playingId, setPlayingId] = useState<string | null>(null)
   const voice = useVoicePreview((msg) => toast(msg, 'info'))
+  const [tag, setTag] = useState('all')
+  const [motion, setMotion] = useState('all')
+  const [search, setSearch] = useState('')
+
+  const tags = useMemo(() => [...new Set((templates ?? []).flatMap((t) => t.tags))], [templates])
+  const motions = useMemo(() => [...new Set((templates ?? []).map((t) => t.motion_template))], [templates])
+  const norm = (text: string) => stripVietnamese(text).toLowerCase()
+  const shown = (templates ?? []).filter(
+    (t) =>
+      (tag === 'all' || t.tags.includes(tag)) &&
+      (motion === 'all' || t.motion_template === motion) &&
+      (!search.trim() || norm([t.title, t.category, t.description, ...t.tags].join(' ')).includes(norm(search.trim()))),
+  )
+  const filtering = tag !== 'all' || motion !== 'all' || search.trim() !== ''
+  const clearFilters = () => {
+    setTag('all')
+    setMotion('all')
+    setSearch('')
+  }
 
   const load = useCallback(() => {
     setError(null)
@@ -35,7 +55,7 @@ export const TemplateShowcaseView: React.FC<TemplateShowcaseViewProps> = ({ onUs
 
   return (
     <div className="flex-1 h-full overflow-y-auto text-[var(--text-main)]">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-10 space-y-6 sm:space-y-8">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-5 sm:py-8 space-y-5 sm:space-y-6">
         <div>
           <p className="eyebrow">Thư viện mẫu</p>
           <h1 className="display text-3xl sm:text-4xl mt-1.5">Chọn phong cách, tạo trong một chạm</h1>
@@ -43,6 +63,42 @@ export const TemplateShowcaseView: React.FC<TemplateShowcaseViewProps> = ({ onUs
             Mỗi mẫu đã chọn sẵn góc quay, người mẫu, giọng đọc và lời văn. Bạn chỉ cần tải ảnh sản phẩm của mình.
           </p>
         </div>
+
+        {templates && templates.length > 0 && (
+          <div className="space-y-3">
+            <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
+              <div className="relative flex-1 sm:max-w-sm">
+                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-muted)] pointer-events-none" />
+                <input
+                  type="search"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Tìm mẫu: công sở, dự tiệc..."
+                  aria-label="Tìm mẫu video"
+                  className="field rounded-full pl-11"
+                />
+              </div>
+              <label className="flex items-center gap-2 text-sm text-[var(--text-muted)] sm:ml-auto">
+                Góc quay
+                <select value={motion} onChange={(e) => setMotion(e.target.value)} className="field rounded-full w-auto py-2.5">
+                  <option value="all">Tất cả</option>
+                  {motions.map((m) => (
+                    <option key={m} value={m}>
+                      {TEMPLATE_SHORT_LABELS[m] ?? m}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <div className="flex gap-2 overflow-x-auto no-scrollbar -mx-4 px-4 sm:mx-0 sm:px-0" role="group" aria-label="Lọc theo phong cách">
+              {['all', ...tags].map((t) => (
+                <button key={t} onClick={() => setTag(t)} aria-pressed={tag === t} className="chip shrink-0">
+                  {t === 'all' ? 'Tất cả' : t}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {error ? (
           <p className="text-sm text-[var(--danger-text)]">
@@ -57,9 +113,19 @@ export const TemplateShowcaseView: React.FC<TemplateShowcaseViewProps> = ({ onUs
               <div key={i} className="skeleton rounded-3xl aspect-[9/16]" />
             ))}
           </div>
+        ) : shown.length === 0 ? (
+          <div className="card text-center py-12 px-6">
+            <Search className="w-8 h-8 mx-auto text-[var(--text-muted)]" />
+            <p className="font-semibold mt-3">Không có mẫu phù hợp</p>
+            {filtering && (
+              <button onClick={clearFilters} className="btn btn-secondary mt-4">
+                <X className="w-4 h-4" /> Xóa bộ lọc
+              </button>
+            )}
+          </div>
         ) : (
           <div className="grid grid-cols-1 min-[480px]:grid-cols-2 lg:grid-cols-4 gap-x-5 gap-y-8">
-            {templates.map((t) => {
+            {shown.map((t) => {
               const isPlaying = playingId === t.id
               const voicePlaying = voice.playing === t.voice_id
               return (

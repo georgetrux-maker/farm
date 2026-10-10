@@ -85,6 +85,25 @@ def list_transactions(user_id: str, limit: int = 30) -> list:
     return [dict(r) for r in rows]
 
 
+def wallet_summary(user_id: str) -> dict:
+    """Tổng đã nạp (tiền và credit), đã dùng để tạo video, được hoàn và được quản trị viên điều chỉnh."""
+    conn = get_db()
+    try:
+        row = conn.execute('''
+        SELECT
+          COALESCE(SUM(CASE WHEN transaction_type = 'deposit' THEN amount_vnd END), 0),
+          COALESCE(SUM(CASE WHEN transaction_type = 'deposit' THEN amount_credits END), 0),
+          COALESCE(-SUM(CASE WHEN transaction_type = 'usage' THEN amount_credits END), 0),
+          COALESCE(SUM(CASE WHEN transaction_type = 'refund' THEN amount_credits END), 0),
+          COALESCE(SUM(CASE WHEN transaction_type = 'adjust' THEN amount_credits END), 0)
+        FROM wallet_transactions WHERE user_id = ? AND status = 'success'
+        ''', (user_id,)).fetchone()
+    finally:
+        conn.close()
+    return {"deposited_vnd": row[0], "deposited_credits": row[1], "used_credits": row[2],
+            "refunded_credits": row[3], "adjusted_credits": row[4]}
+
+
 def verify_and_credit_transaction(transaction_id: str, confirmed_by: str = "admin") -> dict:
     """Xác nhận đã nhận tiền và cộng credit. Chỉ gọi từ luồng quản trị/webhook đã xác thực.
 
@@ -101,9 +120,11 @@ def verify_and_credit_transaction(transaction_id: str, confirmed_by: str = "admi
             conn.rollback()
             return {"status": "error", "message": "Giao dịch không tồn tại"}
 
-        # Chỉ chuyển pending -> success đúng một lần, kể cả khi bị gọi đồng thời
+        # Chỉ chuyển sang success đúng một lần, kể cả khi bị gọi đồng thời.
+        # Lệnh đã hủy vẫn duyệt được: khách có thể chuyển tiền sau khi quản trị viên hủy.
         cursor.execute("UPDATE wallet_transactions SET status = 'success', confirmed_at = CURRENT_TIMESTAMP, "
-                       "confirmed_by = ? WHERE id = ? AND status = 'pending'", (confirmed_by[:64], transaction_id))
+                       "confirmed_by = ? WHERE id = ? AND status IN ('pending', 'cancelled')",
+                       (confirmed_by[:64], transaction_id))
         if cursor.rowcount == 0:
             conn.rollback()
             return {"status": "already_processed", "message": "Giao dịch đã được ghi nhận trước đó"}
@@ -162,3 +183,42 @@ def refund_credits(user_id: str, amount_credits: int, description: str, conn) ->
     INSERT INTO wallet_transactions (id, user_id, amount_credits, transaction_type, description, status)
     VALUES (?, ?, ?, 'refund', ?, 'success')
     ''', (f"REF_{uuid.uuid4().hex[:10].upper()}", user_id, amount_credits, description))
+
+
+def cancel_deposit(transaction_id: str, admin_id: str) -> bool:
+    """Hủy lệnh nạp đang chờ (mã QR bỏ dở, nạp nhầm). Trả False nếu không còn ở trạng thái chờ."""
+    conn = get_db()
+    try:
+        cur = conn.execute("UPDATE wallet_transactions SET status = 'cancelled', confirmed_at = CURRENT_TIMESTAMP, "
+                           "confirmed_by = ? WHERE id = ? AND transaction_type = 'deposit' AND status = 'pending'",
+                           (f"admin:{admin_id}"[:64], transaction_id))
+        conn.commit()
+        return cur.rowcount == 1
+    finally:
+        conn.close()
+
+
+def adjust_credits(user_id: str, delta: int, reason: str) -> dict:
+    """Quản trị viên cộng (delta > 0) hoặc trừ (delta < 0) credit, ghi vào lịch sử ví của khách."""
+    conn = get_db()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("BEGIN IMMEDIATE")
+        if delta < 0:
+            cursor.execute("UPDATE users SET credits = credits + ? WHERE id = ? AND credits + ? >= 0",
+                           (delta, user_id, delta))
+        else:
+            cursor.execute("UPDATE users SET credits = credits + ? WHERE id = ?", (delta, user_id))
+        if cursor.rowcount == 0:
+            conn.rollback()
+            exists = conn.execute("SELECT 1 FROM users WHERE id = ?", (user_id,)).fetchone()
+            raise WalletError("Số dư không đủ để trừ" if exists else "Tài khoản không tồn tại")
+        cursor.execute(
+            "INSERT INTO wallet_transactions (id, user_id, amount_credits, transaction_type, description, status) "
+            "VALUES (?, ?, ?, 'adjust', ?, 'success')",
+            (f"ADJ{uuid.uuid4().hex[:10].upper()}", user_id, delta, f"Điều chỉnh bởi quản trị viên: {reason}"))
+        balance = cursor.execute("SELECT credits FROM users WHERE id = ?", (user_id,)).fetchone()[0]
+        conn.commit()
+    finally:
+        conn.close()
+    return {"status": "success", "new_balance": balance}

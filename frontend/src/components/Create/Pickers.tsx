@@ -11,12 +11,19 @@ const TEMPLATE_ICONS: Record<string, React.ElementType> = {
   fabric_closeup: ZoomIn,
 }
 
-/** Chọn người mẫu: thẻ ảnh chân dung, viền đậm + dấu tích khi được chọn */
+const GENDERS = [
+  { id: 'all', label: 'Tất cả' },
+  { id: 'female', label: 'Nữ' },
+  { id: 'male', label: 'Nam' },
+] as const
+
+/** Chọn người mẫu: lọc Nữ/Nam, thẻ ảnh chân dung, viền đậm + dấu tích khi được chọn */
 export const ModelPicker: React.FC<{ avatars: BrandAvatar[]; value: string; onChange: (id: string) => void }> = ({
   avatars,
   value,
   onChange,
 }) => {
+  const [gender, setGender] = React.useState<(typeof GENDERS)[number]['id']>('all')
   if (avatars.length === 0) {
     return (
       <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
@@ -26,33 +33,57 @@ export const ModelPicker: React.FC<{ avatars: BrandAvatar[]; value: string; onCh
       </div>
     )
   }
+  const hasBoth = avatars.some((a) => a.gender === 'male') && avatars.some((a) => (a.gender ?? 'female') === 'female')
+  const shown = gender === 'all' ? avatars : avatars.filter((a) => (a.gender ?? 'female') === gender)
   return (
-    <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
-      {avatars.map((a) => {
-        const selected = value === a.id
-        return (
-          <button key={a.id} onClick={() => onChange(a.id)} aria-pressed={selected} className="group text-left">
-            <div
-              className={`relative overflow-hidden rounded-2xl ring-2 ring-offset-2 ring-offset-[var(--bg-card)] transition ${
-                selected ? 'ring-[var(--ink)]' : 'ring-transparent group-hover:ring-[var(--border-strong)]'
+    <div>
+      {hasBoth && (
+        <div role="tablist" aria-label="Lọc người mẫu" className="flex gap-1 p-1 rounded-full bg-[var(--bg-surface)] w-fit mb-4">
+          {GENDERS.map((g) => (
+            <button
+              key={g.id}
+              role="tab"
+              aria-selected={gender === g.id}
+              onClick={() => setGender(g.id)}
+              className={`px-4 py-1.5 rounded-full text-sm font-semibold transition-colors ${
+                gender === g.id ? 'bg-[var(--bg-card)] text-[var(--text-main)] shadow-sm' : 'text-[var(--text-muted)]'
               }`}
             >
-              <AvatarImage
-                src={a.avatar_url}
-                name={a.name}
-                className="w-full aspect-[3/4] transition-transform duration-500 group-hover:scale-[1.04]"
-              />
-              {selected && (
-                <span className="absolute top-2 right-2 w-6 h-6 rounded-full bg-[var(--ink)] text-[var(--on-ink)] flex items-center justify-center animate-scale-in">
-                  <Check className="w-3.5 h-3.5" />
-                </span>
-              )}
-            </div>
-            <div className="mt-2 text-sm font-semibold truncate">{a.name}</div>
-            <div className="text-xs text-[var(--text-muted)] truncate">{[a.height, a.style].filter(Boolean).join(' · ')}</div>
-          </button>
-        )
-      })}
+              {g.label}
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
+        {shown.map((a) => {
+          const selected = value === a.id
+          return (
+            <button key={a.id} onClick={() => onChange(a.id)} aria-pressed={selected} className="group text-left">
+              <div
+                className={`relative overflow-hidden rounded-2xl ring-2 ring-offset-2 ring-offset-[var(--bg-card)] transition ${
+                  selected ? 'ring-[var(--accent-color)]' : 'ring-transparent group-hover:ring-[var(--border-strong)]'
+                }`}
+              >
+                <AvatarImage
+                  src={a.avatar_url}
+                  name={a.name}
+                  className="w-full aspect-[3/4] transition-transform duration-500 group-hover:scale-[1.04]"
+                />
+                {selected && (
+                  <span className="absolute top-2 right-2 w-6 h-6 rounded-full bg-[var(--accent-color)] text-[var(--on-accent)] flex items-center justify-center animate-scale-in">
+                    <Check className="w-3.5 h-3.5" />
+                  </span>
+                )}
+                {a.badge && (
+                  <span className="absolute bottom-2 left-2 glass rounded-full px-2 py-0.5 text-[10px] font-semibold">{a.badge}</span>
+                )}
+              </div>
+              <div className="mt-2 text-sm font-semibold truncate">{a.name}</div>
+              <div className="text-xs text-[var(--text-muted)] truncate">{[a.height, a.style].filter(Boolean).join(' · ')}</div>
+            </button>
+          )
+        })}
+      </div>
     </div>
   )
 }
@@ -163,7 +194,7 @@ export const VoicePicker: React.FC<{
   playing: string | null
   onPreview: (id: string) => void
 }> = ({ voices, value, onChange, playing, onPreview }) => (
-  <div role="radiogroup" aria-label="Giọng đọc" className="grid grid-cols-1 min-[420px]:grid-cols-2 gap-3">
+  <div role="radiogroup" aria-label="Giọng đọc" className="grid grid-cols-1 gap-2.5">
     {voices.map((v) => {
       const selected = value === v.id
       const isPlaying = playing === v.id

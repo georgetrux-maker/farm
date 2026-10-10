@@ -1,11 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { AlertTriangle, Film, Info, Loader2, Plus, RefreshCw, RotateCcw, Sparkles } from 'lucide-react'
+import {
+  AlertTriangle, ArrowLeft, ArrowRight, Film, Info, Loader2, Pencil, Plus, RefreshCw, RotateCcw, Sparkles, X,
+} from 'lucide-react'
 import {
   ApiError, analyzeProduct, createAnalyzedProduct, fetchAvatars, fetchJobStatus, fetchProfile, fetchStudioOptions,
   previewScript, triggerPipelineRun, uploadImage, type ProductAnalysis, type ProductPrefill, type ShowcaseTemplate,
   type StudioOptions,
 } from '../../services/api'
-import type { AIJob, BrandAvatar } from '../../types'
+import type { AIJob, BrandAvatar, MyVideo } from '../../types'
 import { formatNumber, formatVnd, suggestTitleFromFileName } from '../../lib/format'
 import { STYLE_LABELS } from '../../lib/labels'
 import { useVoicePreview } from '../../lib/useVoicePreview'
@@ -17,6 +19,12 @@ import { TryOnReview } from './TryOnReview'
 import { UploadHero } from './UploadHero'
 import { VideoResult } from './VideoResult'
 
+/** "Tạo lại" từ trang Video của tôi; at đổi mỗi lần bấm để bấm lại cùng video vẫn có tác dụng */
+export interface RemakeRequest {
+  video: MyVideo
+  at: number
+}
+
 interface CreateVideoViewProps {
   credits: number
   isAdmin: boolean
@@ -25,14 +33,23 @@ interface CreateVideoViewProps {
   onOpenVideos: () => void
   initialTemplate?: ShowcaseTemplate | null
   onClearInitialTemplate?: () => void
+  remake?: RemakeRequest | null
 }
 
-type Phase = 'upload' | 'configure' | 'running' | 'review' | 'done' | 'failed'
+/** upload/product = bước 1, configure = bước 2, còn lại = bước 3 */
+type Phase = 'upload' | 'product' | 'configure' | 'running' | 'review' | 'done' | 'failed'
 
 const DURATIONS = [
   { id: 5, label: '5 giây' },
   { id: 10, label: '10 giây' },
 ]
+const SCRIPT_MAX = 600
+
+const digits = (v: string) => Number(v.replace(/\D/g, '')) || 0
+
+/** Khóa nhận biết sản phẩm: đổi bất kỳ thông tin nào thì tạo sản phẩm mới, viết lại kịch bản tự động */
+const productKey = (image: string | null, title: string, price: string, original: string, category: string, fabric: string) =>
+  JSON.stringify([image, title.trim(), digits(price), digits(original), category.trim(), fabric.trim()])
 
 /** Một khối lựa chọn có số thứ tự kiểu tạp chí */
 const Section: React.FC<{ n: string; title: string; aside?: React.ReactNode; children: React.ReactNode }> = ({
@@ -68,7 +85,7 @@ const QualityNote: React.FC<{ quality: ProductAnalysis['quality']; warning: stri
         style={{ background: `conic-gradient(${tone.color} ${quality.score * 3.6}deg, var(--bg-surface) 0)` }}
         aria-hidden="true"
       >
-        <div className="w-full h-full rounded-full bg-[var(--bg-card)] flex items-center justify-center font-display text-lg font-semibold">
+        <div className="w-full h-full rounded-full bg-[var(--bg-card)] flex items-center justify-center text-lg font-semibold">
           {quality.score}
         </div>
       </div>
@@ -94,6 +111,8 @@ const QualityNote: React.FC<{ quality: ProductAnalysis['quality']; warning: stri
   )
 }
 
+const errorText = (e: unknown, fallback: string) => (e instanceof Error ? e.message : fallback)
+
 export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
   credits,
   isAdmin,
@@ -102,6 +121,7 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
   onOpenVideos,
   initialTemplate,
   onClearInitialTemplate,
+  remake,
 }) => {
   const toast = useToast()
   const [phase, setPhase] = useState<Phase>('upload')
@@ -109,6 +129,7 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
+  const [productError, setProductError] = useState<string | null>(null)
 
   // Bước 1: ảnh + thông tin sản phẩm
   const [imageUrl, setImageUrl] = useState<string | null>(null)
@@ -116,6 +137,7 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
   const [title, setTitle] = useState('')
   const [titleFromFile, setTitleFromFile] = useState(false)
   const [price, setPrice] = useState('')
+  const [originalPrice, setOriginalPrice] = useState('')
   const [category, setCategory] = useState('')
   const [fabric, setFabric] = useState('')
 
@@ -129,18 +151,25 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
   const [duration, setDuration] = useState(5)
   const [requireApproval, setRequireApproval] = useState(true)
 
-  // Kịch bản review KOC tùy chỉnh & xem trước
-  const [customScript, setCustomScript] = useState('')
-  const [isGeneratingScript, setIsGeneratingScript] = useState(false)
-  const [isScriptEditing, setIsScriptEditing] = useState(false)
+  // Kịch bản xem trước: AI viết sẵn khi vào bước 2 (theo sản phẩm + phong cách), người bán sửa thoải mái
+  const [script, setScript] = useState('')
+  const [scriptEdited, setScriptEdited] = useState(false)
+  const [scriptLoading, setScriptLoading] = useState(false)
+  const [scriptWarning, setScriptWarning] = useState<string | null>(null)
+  const [scriptFor, setScriptFor] = useState<string | null>(null)
+  const scriptRequest = useRef(0)
 
   // Bước 3: job
   const [job, setJob] = useState<AIJob | null>(null)
-  // Dùng lại sản phẩm đã tạo nếu người dùng thử lại với cùng thông tin
+  // Dùng lại sản phẩm đã tạo nếu tạo lại với cùng thông tin
   const [savedProduct, setSavedProduct] = useState<{ key: string; id: string } | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const currentJobRef = useRef<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+
+  // Tên/giá lấy được từ link nhưng trang không cho lấy ảnh: chờ người dùng tải ảnh lên
+  const [pendingPrefill, setPendingPrefill] = useState<ProductPrefill | null>(null)
 
   // Chọn "Dùng mẫu này" ở Thư viện mẫu: điền sẵn góc quay, giọng đọc, lời văn và người mẫu của mẫu đó
   const [appliedTemplateId, setAppliedTemplateId] = useState<string | null>(null)
@@ -152,14 +181,55 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
     if (initialTemplate.avatar_id) setAvatarId(initialTemplate.avatar_id)
   }
 
-  // Tên/giá lấy được từ link nhưng trang không cho lấy ảnh: chờ người dùng tải ảnh lên
-  const [pendingPrefill, setPendingPrefill] = useState<ProductPrefill | null>(null)
+  // "Tạo lại" ở Video của tôi: nạp sản phẩm, cài đặt và lời review của video cũ rồi mở bước 2 để sửa
+  const [appliedRemake, setAppliedRemake] = useState<number | null>(null)
+  if (remake && remake.at !== appliedRemake) {
+    const v = remake.video
+    const p = v.params ?? {}
+    const image = v.product_image_url
+    const t = v.product_title ?? ''
+    const pr = v.product_price ? String(v.product_price) : ''
+    const op = v.product_original_price ? String(v.product_original_price) : ''
+    const cat = v.product_category ?? ''
+    const fab = v.product_fabric ?? ''
+    const oldScript = (p.custom_script || v.script?.full_script || '').slice(0, SCRIPT_MAX)
+    setAppliedRemake(remake.at)
+    setImageUrl(image)
+    setAnalysis(null)
+    setTitle(t)
+    setTitleFromFile(false)
+    setPrice(pr)
+    setOriginalPrice(op)
+    setCategory(cat)
+    setFabric(fab)
+    setSavedProduct(v.product_id && image ? { key: productKey(image, t, pr, op, cat, fab), id: v.product_id } : null)
+    if (p.avatar_id) setAvatarId(p.avatar_id)
+    if (p.template) setTemplate(p.template)
+    if (p.voice) setVoice(p.voice)
+    if (p.script_style) setStyle(p.script_style)
+    if (p.duration_sec) setDuration(p.duration_sec)
+    setRequireApproval(!!p.require_approval)
+    setScript(oldScript)
+    setScriptEdited(!!oldScript)
+    setScriptWarning(null)
+    setJob(null)
+    setSubmitError(null)
+    setUploadError(null)
+    setPendingPrefill(null)
+    setPhase(image ? 'configure' : 'upload')
+  }
+
   const voicePreview = useVoicePreview((msg) => toast(msg, 'info'))
 
-  // Sang bước mới thì đưa về đầu trang (nút bấm nằm ở cuối trang nên đang cuộn xuống dưới)
+  // Sang bước mới thì đưa về đầu trang
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
   }, [phase])
+
+  // Job đang theo dõi (để bỏ qua kết quả của job cũ khi đã chuyển sang tạo video khác)
+  useEffect(() => {
+    currentJobRef.current = job?.job_id ?? null
+  }, [job?.job_id])
 
   useEffect(() => {
     Promise.all([fetchStudioOptions(), fetchAvatars()])
@@ -167,7 +237,7 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
         setOptions(opts)
         setAvatars(list)
         const def = list.find((a) => a.is_default) ?? list[0]
-        // Giữ người mẫu do mẫu video chọn sẵn nếu có, không thì dùng người mẫu mặc định
+        // Giữ người mẫu do mẫu video / video cũ chọn sẵn nếu còn, không thì dùng người mẫu mặc định
         setAvatarId((current) => (current && list.some((a) => a.id === current) ? current : (def?.id ?? '')))
       })
       .catch((e) => toast(e.message, 'error'))
@@ -175,6 +245,49 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
       if (pollRef.current) clearInterval(pollRef.current)
     }
   }, [toast])
+
+  const key = productKey(imageUrl, title, price, originalPrice, category, fabric)
+  const ai = analysis?.ai
+  const features = ai ? [...ai.key_features, ...ai.colors].map((f) => f.slice(0, 80)).slice(0, 12) : []
+
+  const generateScript = async (forStyle = style) => {
+    const priceNum = digits(price)
+    if (title.trim().length < 2 || !priceNum) return
+    const id = ++scriptRequest.current
+    setScriptFor(JSON.stringify([key, forStyle]))
+    setScriptLoading(true)
+    try {
+      const res = await previewScript({
+        title: title.trim(),
+        price: priceNum,
+        fabric: fabric.trim() || undefined,
+        category: category.trim() || undefined,
+        style: forStyle,
+        features,
+      })
+      if (id !== scriptRequest.current) return // đã có yêu cầu mới hơn
+      setScript([res.hook_3s, res.body_text, res.cta_text].filter(Boolean).join('\n').slice(0, SCRIPT_MAX))
+      setScriptEdited(false)
+      setScriptWarning(res.warning)
+    } catch (e) {
+      if (id === scriptRequest.current) setScriptWarning(errorText(e, 'Không viết được kịch bản xem trước'))
+    } finally {
+      if (id === scriptRequest.current) setScriptLoading(false)
+    }
+  }
+
+  // Vào bước 2 hoặc đổi phong cách lời review: AI viết lại kịch bản (trừ khi người bán đã tự sửa)
+  // generateScript luôn là bản của lần vẽ mới nhất; effect chỉ chạy lại khi khóa kịch bản đổi
+  const generateRef = useRef(generateScript)
+  useEffect(() => {
+    generateRef.current = generateScript
+  })
+  const wantScript = phase === 'configure' && !scriptEdited ? JSON.stringify([key, style]) : null
+  useEffect(() => {
+    if (!wantScript || wantScript === scriptFor) return
+    const id = setTimeout(() => generateRef.current(), 0)
+    return () => clearTimeout(id)
+  }, [wantScript, scriptFor])
 
   const pickFile = () => fileRef.current?.click()
 
@@ -185,7 +298,7 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
     try {
       const up = await uploadImage(file)
       setImageUrl(up.media_url)
-      setPhase('configure')
+      setPhase('product')
       setSavedProduct(null)
       setPendingPrefill(null)
       // Chưa có tên: gợi ý tạm từ tên file, AI (nếu có) sẽ điền lại chính xác hơn
@@ -198,14 +311,14 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
       const res = await analyzeProduct(up.media_url, title || suggestion || undefined)
       setAnalysis(res)
       if (res.ai) {
-        const ai = res.ai
-        setTitle((t) => (!t || titleFromFile || t === suggestion ? ai.title_suggestion : t))
+        const found = res.ai
+        setTitle((t) => (!t || titleFromFile || t === suggestion ? found.title_suggestion : t))
         setTitleFromFile(false)
-        setCategory((c) => c || ai.category)
-        setFabric((f) => f || ai.material_guess)
+        setCategory((c) => c || found.category)
+        setFabric((f) => f || found.material_guess)
       }
-    } catch (e: any) {
-      setUploadError(e.message)
+    } catch (e) {
+      setUploadError(errorText(e, 'Không tải được ảnh'))
     } finally {
       setUploading(null)
     }
@@ -219,6 +332,7 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
       setTitleFromFile(false)
     }
     setPrice(data.price ? String(data.price) : '')
+    setOriginalPrice('')
     setFabric(data.fabric ?? '')
     setCategory(data.category ?? '')
     setSavedProduct(null)
@@ -230,7 +344,7 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
     setPendingPrefill(null)
     setImageUrl(data.image_url)
     setAnalysis(null)
-    setPhase('configure')
+    setPhase('product')
     setUploading('analyze')
     try {
       setAnalysis(await analyzeProduct(data.image_url, data.title || undefined))
@@ -241,43 +355,29 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
     }
   }
 
-  const handleGenerateScriptPreview = async () => {
-    if (!title.trim()) {
-      toast('Vui lòng nhập tên sản phẩm trước khi tạo kịch bản', 'error')
-      return
-    }
-    const priceNum = Number(price.replace(/\D/g, '')) || 0
-    if (!priceNum) {
-      toast('Vui lòng nhập giá bán trước để kịch bản nhắc đúng giá', 'error')
-      return
-    }
-    setIsGeneratingScript(true)
-    try {
-      const res = await previewScript({
-        title: title.trim(),
-        price: priceNum,
-        fabric: fabric || undefined,
-        category: category || undefined,
-        style,
-      })
-      setCustomScript(res.full_script)
-      setIsScriptEditing(true)
-      toast('Đã viết kịch bản, bạn có thể sửa trực tiếp', 'success')
-    } catch (e: any) {
-      toast(e.message, 'error')
-    } finally {
-      setIsGeneratingScript(false)
-    }
+  const goConfigure = () => {
+    setProductError(null)
+    const priceNum = digits(price)
+    if (title.trim().length < 2) return setProductError('Vui lòng nhập tên sản phẩm')
+    if (!priceNum) return setProductError('Vui lòng nhập giá bán, ví dụ 189000')
+    const original = digits(originalPrice)
+    if (original && original <= priceNum) return setProductError('Giá gốc phải cao hơn giá bán (hoặc để trống)')
+    setPhase('configure')
   }
 
   const startPolling = (jobId: string) => {
     if (pollRef.current) clearInterval(pollRef.current)
-    pollRef.current = setInterval(async () => {
+    const timer = setInterval(async () => {
+      if (currentJobRef.current !== jobId) {
+        clearInterval(timer)
+        return
+      }
       try {
         const j = await fetchJobStatus(jobId)
+        if (currentJobRef.current !== jobId) return
         setJob(j)
         if (['completed', 'failed', 'awaiting_approval', 'rejected'].includes(j.status)) {
-          if (pollRef.current) clearInterval(pollRef.current)
+          clearInterval(timer)
           setPhase(j.status === 'completed' ? 'done' : j.status === 'awaiting_approval' ? 'review' : 'failed')
           if (j.status === 'failed') {
             fetchProfile()
@@ -289,6 +389,7 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
         console.error(e)
       }
     }, 1500)
+    pollRef.current = timer
   }
 
   const cost = options?.pipeline_cost_credits ?? 0
@@ -297,23 +398,26 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
 
   const handleCreate = async () => {
     setSubmitError(null)
-    const priceNum = Number(price.replace(/\D/g, ''))
+    const priceNum = digits(price)
     if (!imageUrl) return setSubmitError('Vui lòng tải ảnh sản phẩm trước')
-    if (title.trim().length < 2) return setSubmitError('Vui lòng nhập tên sản phẩm')
-    if (!priceNum) return setSubmitError('Vui lòng nhập giá bán, ví dụ 189000')
+    if (title.trim().length < 2 || !priceNum) {
+      setPhase('product')
+      return setProductError('Vui lòng nhập tên và giá sản phẩm')
+    }
+    if (script.length > SCRIPT_MAX) return setSubmitError(`Kịch bản tối đa ${SCRIPT_MAX} ký tự`)
     if (missingCredits > 0) return setSubmitError(`Bạn cần thêm ${formatNumber(missingCredits)} credit để tạo video này.`)
 
     setSubmitting(true)
     try {
-      const key = JSON.stringify([imageUrl, title.trim(), priceNum, category, fabric])
       let productId = savedProduct?.key === key ? savedProduct.id : null
       if (!productId) {
         const product = await createAnalyzedProduct({
           title: title.trim(),
           price: priceNum,
+          original_price: digits(originalPrice) || undefined,
           image_url: imageUrl,
-          category: category || undefined,
-          fabric_type: fabric || undefined,
+          category: category.trim() || undefined,
+          fabric_type: fabric.trim() || undefined,
           analysis: analysis?.ai ?? null,
         })
         productId = product.id
@@ -325,19 +429,30 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
         template,
         voice,
         script_style: style,
-        custom_script: isScriptEditing && customScript.trim() ? customScript.trim() : undefined,
+        // Video đọc đúng kịch bản người bán đang thấy ở bước 2
+        custom_script: script.trim() || undefined,
         duration_sec: duration,
         require_approval: requireApproval,
       })
       onCreditsChange(run.remaining_credits)
+      currentJobRef.current = run.job_id
       setJob({ job_id: run.job_id, status: 'queued', progress: 0, current_step: 'Đang chờ xử lý' })
       setPhase('running')
       startPolling(run.job_id)
-    } catch (e: any) {
-      setSubmitError(e instanceof ApiError && e.status === 402 ? `${e.message}. Hãy nạp thêm credit.` : e.message)
+    } catch (e) {
+      const message = errorText(e, 'Không tạo được video')
+      setSubmitError(e instanceof ApiError && e.status === 402 ? `${message}. Hãy nạp thêm credit.` : message)
     } finally {
       setSubmitting(false)
     }
+  }
+
+  /** Về bước 2 với đúng sản phẩm và cài đặt vừa dùng */
+  const remakeWithSettings = () => {
+    if (pollRef.current) clearInterval(pollRef.current)
+    setJob(null)
+    setSubmitError(null)
+    setPhase('configure')
   }
 
   const reset = () => {
@@ -348,58 +463,65 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
     setTitle('')
     setTitleFromFile(false)
     setPrice('')
+    setOriginalPrice('')
     setCategory('')
     setFabric('')
     setJob(null)
     setUploadError(null)
     setSubmitError(null)
+    setProductError(null)
     setSavedProduct(null)
+    setScript('')
+    setScriptEdited(false)
+    setScriptWarning(null)
+    setScriptFor(null)
   }
 
   const placeholderEngines = options && [options.engines.tryon, options.engines.video].some((e) => e.startsWith('placeholder'))
-  const ai = analysis?.ai
-  const step = phase === 'upload' ? 0 : phase === 'configure' ? 1 : 2
+  const step = phase === 'upload' || phase === 'product' ? 0 : phase === 'configure' ? 1 : 2
+  const priceNum = digits(price)
+  const originalNum = digits(originalPrice)
 
   return (
     <div ref={scrollRef} className="flex-1 h-full overflow-y-auto text-[var(--text-main)]">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-10 space-y-6 sm:space-y-8">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-5 sm:py-8 space-y-5 sm:space-y-6">
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
           <div>
             <p className="eyebrow">Studio</p>
-            <h1 className="display text-3xl sm:text-4xl mt-1.5">Tạo video review</h1>
+            <h1 className="display text-3xl sm:text-4xl mt-1.5">Tạo video AI</h1>
             <p className="text-[var(--text-muted)] mt-2 max-w-xl">
-              Từ một tấm ảnh sản phẩm thành video có người mẫu, lời review và phụ đề.
+              {step === 0
+                ? 'Bước 1: thêm sản phẩm bằng link, ảnh tải lên hoặc ảnh mẫu.'
+                : step === 1
+                  ? 'Bước 2: chọn người mẫu, phong cách, giọng đọc và xem trước lời review.'
+                  : 'Bước 3: xem video, tải về hoặc đăng bán.'}
             </p>
           </div>
           <Stepper step={step} />
         </div>
 
-        {placeholderEngines && (
+        {placeholderEngines && step < 2 && (
           <div className="flex gap-2.5 items-start text-sm px-4 py-3 rounded-2xl border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--bg-card)_70%,transparent)] text-[var(--text-sub)]">
             <Info className="w-4 h-4 shrink-0 mt-0.5 text-[var(--accent-text)]" />
             <span>
               {isAdmin
-                ? 'Máy chủ chưa bật AI thử đồ hoặc AI tạo video, nên video sẽ là ảnh sản phẩm kèm chuyển động máy quay (bản xem thử). Mở "Kiểm tra hệ thống" trong menu tài khoản để xem cách bật.'
+                ? 'Máy chủ chưa bật AI thử đồ hoặc AI tạo video, nên video sẽ là ảnh sản phẩm kèm chuyển động máy quay (bản xem thử). Vào Quản trị hệ thống → Cài đặt API để bật.'
                 : 'Hệ thống đang ở chế độ xem thử: video là ảnh sản phẩm kèm chuyển động máy quay, chưa có người mẫu AI mặc đồ.'}
             </span>
           </div>
         )}
 
-        {initialTemplate && (
-          <div className="mb-4 p-3.5 rounded-2xl bg-gradient-to-r from-amber-500/10 via-rose-500/10 to-purple-500/10 border border-amber-500/20 flex items-center justify-between gap-3 text-sm animate-fade-up">
-            <div className="flex items-center gap-2.5">
-              <Sparkles className="w-4 h-4 text-amber-500 shrink-0" />
-              <span>
-                Đang áp dụng mẫu: <strong className="text-[var(--text-main)]">{initialTemplate.title}</strong> ({initialTemplate.badge})
+        {initialTemplate && step < 2 && (
+          <div className="p-3.5 rounded-2xl bg-[var(--accent-soft)] border border-[var(--accent-border)] flex items-center justify-between gap-3 text-sm animate-fade-up">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <Sparkles className="w-4 h-4 text-[var(--accent-text)] shrink-0" />
+              <span className="min-w-0">
+                Đang dùng mẫu <strong>{initialTemplate.title}</strong>: góc quay, giọng đọc và lời văn đã được chọn sẵn.
               </span>
             </div>
             {onClearInitialTemplate && (
-              <button
-                type="button"
-                onClick={onClearInitialTemplate}
-                className="text-xs text-[var(--text-muted)] hover:text-[var(--text-main)] underline shrink-0"
-              >
-                Hủy mẫu
+              <button type="button" onClick={onClearInitialTemplate} className="icon-btn w-8 h-8" aria-label="Bỏ mẫu đang dùng">
+                <X className="w-4 h-4" />
               </button>
             )}
           </div>
@@ -428,13 +550,13 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
           />
         )}
 
-        {phase === 'configure' && imageUrl && (
-          <>
-            <div className="grid lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] gap-5 lg:gap-8 items-start animate-fade-up">
-              {/* Ảnh sản phẩm + chất lượng ảnh */}
-              <div className="card p-3 sm:p-4 lg:sticky lg:top-6">
+        {/* ------------------------------------------------ Bước 1: thẻ sản phẩm */}
+        {phase === 'product' && imageUrl && (
+          <div className="space-y-5 animate-fade-up">
+            <div className="grid lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] gap-5 lg:gap-8 items-start">
+              <div className="card p-3 sm:p-4 lg:sticky lg:top-0">
                 <div
-                  className={`relative rounded-2xl overflow-hidden bg-[var(--bg-surface)] aspect-[4/5] max-h-[62vh] w-full ${
+                  className={`relative rounded-2xl overflow-hidden bg-[var(--bg-surface)] aspect-[4/5] max-h-[60vh] w-full ${
                     uploading ? 'shimmer' : ''
                   }`}
                   onDragOver={(e) => e.preventDefault()}
@@ -453,7 +575,7 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
                   )}
                   <button
                     onClick={pickFile}
-                    className="absolute bottom-3 right-3 glass rounded-full px-3.5 py-2 text-sm font-semibold flex items-center gap-1.5 shadow-sm hover:bg-white"
+                    className="absolute bottom-3 right-3 glass rounded-full px-3.5 py-2 text-sm font-semibold flex items-center gap-1.5 shadow-sm"
                   >
                     <RefreshCw className="w-4 h-4" /> Đổi ảnh
                   </button>
@@ -467,77 +589,129 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
                 {analysis && <QualityNote quality={analysis.quality} warning={analysis.warning} />}
               </div>
 
-              <div className="space-y-5">
-                <Section
-                  n="01"
-                  title="Thông tin sản phẩm"
-                  aside={
-                    ai && (
-                      <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--accent-soft)] text-[var(--accent-text)] px-3 py-1 text-xs font-semibold">
-                        <Sparkles className="w-3.5 h-3.5" /> AI đã điền sẵn
-                      </span>
-                    )
-                  }
-                >
-                  <div className="grid sm:grid-cols-2 gap-4">
-                    <div className="sm:col-span-2">
-                      <label className="block">
-                        <span className="field-label">Tên sản phẩm *</span>
-                        <input
-                          className="field"
-                          value={title}
-                          onChange={(e) => {
-                            setTitle(e.target.value)
-                            setTitleFromFile(false)
-                          }}
-                          maxLength={200}
-                          placeholder="Ví dụ: Áo sơ mi kẻ sọc xanh"
-                        />
-                      </label>
-                      {titleFromFile && (
-                        <span className="text-sm text-[var(--text-muted)] block mt-1.5">
-                          Gợi ý từ tên file ảnh, bạn sửa lại cho đúng nhé.
-                        </span>
-                      )}
-                    </div>
+              <Section
+                n="01"
+                title="Thông tin sản phẩm"
+                aside={
+                  ai && (
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--accent-soft)] text-[var(--accent-text)] px-3 py-1 text-xs font-semibold">
+                      <Sparkles className="w-3.5 h-3.5" /> AI đã điền sẵn
+                    </span>
+                  )
+                }
+              >
+                <div className="grid sm:grid-cols-2 gap-4">
+                  <div className="sm:col-span-2">
                     <label className="block">
-                      <span className="field-label">Giá bán (đồng) *</span>
+                      <span className="field-label">Tên sản phẩm *</span>
                       <input
                         className="field"
-                        inputMode="numeric"
-                        value={price}
-                        placeholder="Ví dụ: 189000"
-                        onChange={(e) => setPrice(e.target.value)}
+                        value={title}
+                        onChange={(e) => {
+                          setTitle(e.target.value)
+                          setTitleFromFile(false)
+                        }}
+                        maxLength={200}
+                        placeholder="Ví dụ: Áo sơ mi kẻ sọc xanh"
                       />
                     </label>
-                    <label className="block">
-                      <span className="field-label">Loại sản phẩm</span>
-                      <input className="field" value={category} onChange={(e) => setCategory(e.target.value)} placeholder="Áo, đầm, quần..." />
-                    </label>
-                    <label className="sm:col-span-2 block">
-                      <span className="field-label">Chất liệu</span>
-                      <input className="field" value={fabric} onChange={(e) => setFabric(e.target.value)} placeholder="Cotton, lụa, dạ..." />
-                    </label>
+                    {titleFromFile && (
+                      <span className="text-sm text-[var(--text-muted)] block mt-1.5">Gợi ý từ tên file ảnh, bạn sửa lại cho đúng nhé.</span>
+                    )}
                   </div>
-                  {ai && ai.key_features.length > 0 && (
-                    <div className="mt-5">
-                      <span className="field-label">Điểm nổi bật AI nhận ra (dùng để viết lời review)</span>
-                      <div className="flex flex-wrap gap-2">
-                        {[...ai.key_features, ...ai.colors].map((f) => (
-                          <span key={f} className="text-sm px-3 py-1 rounded-full bg-[var(--bg-surface)] text-[var(--text-sub)]">
-                            {f}
-                          </span>
-                        ))}
-                      </div>
+                  <label className="block">
+                    <span className="field-label">Giá bán (đồng) *</span>
+                    <input
+                      className="field"
+                      inputMode="numeric"
+                      value={price}
+                      placeholder="Ví dụ: 189000"
+                      onChange={(e) => setPrice(e.target.value)}
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="field-label">Giá gốc (nếu đang giảm giá)</span>
+                    <input
+                      className="field"
+                      inputMode="numeric"
+                      value={originalPrice}
+                      placeholder="Ví dụ: 259000"
+                      onChange={(e) => setOriginalPrice(e.target.value)}
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="field-label">Loại sản phẩm</span>
+                    <input className="field" value={category} onChange={(e) => setCategory(e.target.value)} placeholder="Áo, đầm, quần..." />
+                  </label>
+                  <label className="block">
+                    <span className="field-label">Chất liệu</span>
+                    <input className="field" value={fabric} onChange={(e) => setFabric(e.target.value)} placeholder="Cotton, lụa, dạ..." />
+                  </label>
+                </div>
+                {features.length > 0 && (
+                  <div className="mt-5">
+                    <span className="field-label">Điểm nổi bật AI nhận ra (dùng để viết lời review)</span>
+                    <div className="flex flex-wrap gap-2">
+                      {features.map((f) => (
+                        <span key={f} className="text-sm px-3 py-1 rounded-full bg-[var(--bg-surface)] text-[var(--text-sub)]">
+                          {f}
+                        </span>
+                      ))}
                     </div>
-                  )}
-                </Section>
+                  </div>
+                )}
+                {priceNum > 0 && (
+                  <div className="mt-5 flex items-baseline gap-2 flex-wrap text-sm">
+                    <span className="text-[var(--text-muted)]">Giá hiện trên video:</span>
+                    <strong className="text-[var(--accent-text)]">{formatVnd(priceNum)}</strong>
+                    {originalNum > priceNum && <span className="line-through text-[var(--text-muted)]">{formatVnd(originalNum)}</span>}
+                  </div>
+                )}
+              </Section>
+            </div>
 
-                <Section n="02" title="Chọn người mẫu">
+            {productError && (
+              <div className="flex gap-2 items-start text-sm p-3 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-bg)] text-[var(--danger-text)]">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>{productError}</span>
+              </div>
+            )}
+            <div className="flex items-center justify-between gap-3">
+              <button onClick={reset} className="btn btn-ghost">
+                <ArrowLeft className="w-4 h-4" /> Chọn sản phẩm khác
+              </button>
+              <button onClick={goConfigure} disabled={uploading === 'upload'} className="btn btn-primary btn-lg">
+                Tiếp tục <ArrowRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ------------------------------------------------ Bước 2: tùy chỉnh */}
+        {phase === 'configure' && imageUrl && (
+          <>
+            <div className="card p-3 flex items-center gap-3.5 animate-fade-up">
+              <img src={imageUrl} alt="" className="w-14 h-16 rounded-xl object-cover bg-[var(--bg-surface)] shrink-0" />
+              <div className="min-w-0 flex-1">
+                <p className="font-semibold truncate">{title}</p>
+                <p className="text-sm flex items-baseline gap-2">
+                  <span className="text-[var(--accent-text)] font-semibold">{formatVnd(priceNum)}</span>
+                  {originalNum > priceNum && <span className="line-through text-[var(--text-muted)]">{formatVnd(originalNum)}</span>}
+                  {category && <span className="text-[var(--text-muted)] truncate">· {category}</span>}
+                </p>
+              </div>
+              <button onClick={() => setPhase('product')} className="btn btn-secondary btn-sm shrink-0">
+                <Pencil className="w-3.5 h-3.5" /> Sửa
+              </button>
+            </div>
+
+            <div className="grid lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)] gap-5 lg:gap-6 items-start animate-fade-up">
+              <div className="space-y-5">
+                <Section n="01" title="Người mẫu">
                   <ModelPicker avatars={avatars} value={avatarId} onChange={setAvatarId} />
                 </Section>
 
-                <Section n="03" title="Kiểu video">
+                <Section n="02" title="Phong cách video">
                   <TemplatePicker templates={options?.templates ?? []} value={template} onChange={setTemplate} image={imageUrl} />
                   {options?.engines.video.startsWith('replicate') && (
                     <div className="mt-5">
@@ -546,9 +720,10 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
                     </div>
                   )}
                 </Section>
+              </div>
 
-                <Section n="04" title="Giọng đọc & lời review">
-                  <span className="field-label">Giọng đọc</span>
+              <div className="space-y-5">
+                <Section n="03" title="Giọng đọc">
                   <VoicePicker
                     voices={options?.voices ?? []}
                     value={voice}
@@ -556,7 +731,6 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
                     playing={voicePreview.playing}
                     onPreview={voicePreview.toggle}
                   />
-
                   <span className="field-label mt-5">Phong cách lời review</span>
                   <ChipGroup
                     label="Phong cách lời review"
@@ -564,65 +738,52 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
                     value={style}
                     onChange={setStyle}
                   />
+                </Section>
 
-                  {/* Kịch bản review xem trước & chỉnh sửa */}
-                  <div className="mt-5 p-4 rounded-2xl bg-[var(--bg-subtle)] border border-[var(--border-subtle)] space-y-3">
-                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <div>
-                        <h4 className="text-sm font-semibold text-[var(--text-main)] flex items-center gap-1.5">
-                          <Sparkles className="w-4 h-4 text-amber-500" />
-                          Kịch bản review KOC (3 câu)
-                        </h4>
-                        <p className="text-xs text-[var(--text-muted)]">
-                          {isScriptEditing
-                            ? 'Bạn có thể chỉnh sửa trực tiếp câu từ bên dưới để AI đọc đúng ý'
-                            : 'AI sẽ tự động viết kịch bản tối ưu chuyển đổi theo phong cách đã chọn'}
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={handleGenerateScriptPreview}
-                        disabled={isGeneratingScript || !title}
-                        className="btn btn-secondary btn-sm text-xs"
-                      >
-                        {isGeneratingScript ? (
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        ) : (
-                          <RefreshCw className="w-3.5 h-3.5" />
-                        )}
-                        {customScript ? 'Viết lại kịch bản' : 'Xem & chỉnh sửa câu từ'}
-                      </button>
+                <Section
+                  n="04"
+                  title="Kịch bản xem trước"
+                  aside={
+                    <button
+                      type="button"
+                      onClick={() => generateScript()}
+                      disabled={scriptLoading}
+                      className="btn btn-ghost btn-sm"
+                    >
+                      {scriptLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                      Viết lại
+                    </button>
+                  }
+                >
+                  {scriptLoading && !script ? (
+                    <div className="space-y-2" aria-label="AI đang viết kịch bản">
+                      <div className="skeleton rounded-lg h-4 w-full" />
+                      <div className="skeleton rounded-lg h-4 w-11/12" />
+                      <div className="skeleton rounded-lg h-4 w-3/4" />
                     </div>
-
-                    {isScriptEditing && (
-                      <div className="space-y-2 animate-fade-up">
-                        <textarea
-                          rows={4}
-                          maxLength={600}
-                          aria-label="Kịch bản lời review"
-                          value={customScript}
-                          onChange={(e) => setCustomScript(e.target.value)}
-                          placeholder="Ví dụ: Dạ em đầm hoa nhí này vừa cập bến xinh xắn lắm các nàng ơi..."
-                          className="w-full text-sm p-3 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-card)] focus:outline-none focus:ring-2 focus:ring-[var(--ink)] leading-relaxed resize-y"
-                        />
-                        <div className="flex items-center justify-between text-xs text-[var(--text-muted)]">
-                          <span>
-                            AI đọc đúng nguyên văn, có thể thêm tên shop, hotline · {customScript.length}/600
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setCustomScript('')
-                              setIsScriptEditing(false)
-                            }}
-                            className="text-[var(--text-muted)] hover:text-[var(--danger-text)] underline shrink-0"
-                          >
-                            Dùng lại kịch bản tự động
-                          </button>
-                        </div>
-                      </div>
-                    )}
+                  ) : (
+                    <textarea
+                      rows={6}
+                      maxLength={SCRIPT_MAX}
+                      aria-label="Kịch bản lời review"
+                      value={script}
+                      onChange={(e) => {
+                        setScript(e.target.value)
+                        setScriptEdited(true)
+                      }}
+                      placeholder="AI sẽ viết sẵn 3 câu: mở đầu gây chú ý, giới thiệu sản phẩm, kêu gọi mua."
+                      className={`field resize-y leading-relaxed ${scriptLoading ? 'opacity-60' : ''}`}
+                    />
+                  )}
+                  <div className="flex items-center justify-between gap-3 mt-2 text-xs text-[var(--text-muted)]">
+                    <span>
+                      {scriptEdited ? 'Bạn đã sửa: AI đọc đúng nguyên văn.' : 'AI viết theo sản phẩm và phong cách, sửa thoải mái.'}
+                    </span>
+                    <span className="tabular-nums shrink-0">
+                      {script.length}/{SCRIPT_MAX}
+                    </span>
                   </div>
+                  {scriptWarning && <p className="text-xs text-[var(--warn-text)] mt-1.5">{scriptWarning}</p>}
                 </Section>
 
                 <section className="card p-5 sm:p-6">
@@ -638,42 +799,40 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
               </div>
             </div>
 
-            {/* Chi phí, số dư và nút tạo: luôn nằm ở đáy màn hình, lỗi hiện ngay tại đây */}
+            {/* Quay lại, chi phí, số dư và nút tạo: luôn nằm ở đáy màn hình */}
             <div className="sticky bottom-3 sm:bottom-5 z-10">
-              <div className="card shadow-[var(--shadow-pop)] p-3 sm:p-4 sm:pl-6 space-y-3">
+              <div className="card shadow-[var(--shadow-pop)] p-3 sm:p-4 space-y-3">
                 {submitError && (
                   <div className="flex gap-2 items-start text-sm p-3 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-bg)] text-[var(--danger-text)] animate-fade-up">
                     <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
                     <span className="flex-1">{submitError}</span>
                   </div>
                 )}
-                <div className="flex items-center justify-between gap-3">
-                  <div className="text-sm leading-snug min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[var(--text-muted)]">Chi phí:</span>
+                <div className="flex items-center justify-between gap-2 sm:gap-3">
+                  <button onClick={() => setPhase('product')} className="btn btn-ghost px-3 sm:px-4" aria-label="Quay lại bước 1">
+                    <ArrowLeft className="w-4 h-4" /> <span className="hidden sm:inline">Quay lại</span>
+                  </button>
+                  <div className="text-sm leading-snug min-w-0 flex-1 text-right sm:text-left">
+                    <div>
+                      <span className="text-[var(--text-muted)]">Chi phí: </span>
                       <strong>{options ? `${formatNumber(cost)} credit` : '...'}</strong>
-                      {options && (
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-[var(--ok-bg)] text-[var(--ok-text)] font-medium">
-                          ≈ {formatVnd(cost * 100)}
-                        </span>
-                      )}
+                      {options && <span className="hidden sm:inline text-[var(--text-muted)]"> (≈ {formatVnd(cost * 100)})</span>}
                     </div>
-                    <div className="mt-0.5">
-                      <span className="text-[var(--text-muted)]">Số dư: </span>
-                      <strong className={missingCredits > 0 ? 'text-[var(--danger-text)]' : ''}>{formatNumber(credits)} credit</strong>
-                      {cost > 0 && credits >= cost && (
-                        <span className="text-xs text-[var(--text-muted)] ml-1">(đủ tạo {formatNumber(Math.floor(credits / cost))} video)</span>
-                      )}
+                    <div className="text-[var(--text-muted)]">
+                      Số dư:{' '}
+                      <strong className={missingCredits > 0 ? 'text-[var(--danger-text)]' : 'text-[var(--text-main)]'}>
+                        {formatNumber(credits)}
+                      </strong>
                     </div>
                   </div>
                   {missingCredits > 0 ? (
                     <button onClick={onOpenDeposit} className="btn btn-accent btn-lg">
-                      <Plus className="w-4 h-4" /> Nạp<span className="hidden sm:inline"> thêm</span> {formatNumber(missingCredits)} credit
+                      <Plus className="w-4 h-4" /> Nạp<span className="hidden sm:inline"> thêm</span> {formatNumber(missingCredits)}
                     </button>
                   ) : (
-                    <button onClick={handleCreate} disabled={submitting || !!uploading} className="btn btn-primary btn-lg">
+                    <button onClick={handleCreate} disabled={submitting || !!uploading || !options} className="btn btn-primary btn-lg">
                       {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-                      Tạo video
+                      Tạo video<span className="hidden sm:inline"> · {formatNumber(cost)} credit</span>
                     </button>
                   )}
                 </div>
@@ -682,6 +841,7 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
           </>
         )}
 
+        {/* ------------------------------------------------ Bước 3: kết quả */}
         {phase === 'running' && job && <JobProgress job={job} fallbackImage={imageUrl} onOpenVideos={onOpenVideos} />}
 
         {phase === 'review' && job?.output_image_url && (
@@ -707,7 +867,7 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
         )}
 
         {phase === 'done' && job && (
-          <div className="space-y-6 animate-fade-up">
+          <div className="space-y-5 animate-fade-up">
             <div>
               <p className="eyebrow flex items-center gap-1.5">
                 <Sparkles className="w-3.5 h-3.5" /> Hoàn tất
@@ -717,12 +877,15 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
             <VideoResult
               job={job}
               productTitle={title}
+              price={priceNum}
+              originalPrice={originalNum || null}
+              onRemake={remakeWithSettings}
               actions={
                 <>
-                  <button onClick={reset} className="btn btn-secondary">
-                    <RotateCcw className="w-4 h-4" /> Tạo video mới
+                  <button onClick={reset} className="btn btn-ghost btn-lg">
+                    <Plus className="w-4 h-4" /> Video mới
                   </button>
-                  <button onClick={onOpenVideos} className="btn btn-ghost">
+                  <button onClick={onOpenVideos} className="btn btn-ghost btn-lg">
                     <Film className="w-4 h-4" /> Video của tôi
                   </button>
                 </>
@@ -739,7 +902,7 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
             <h2 className="display text-2xl">Chưa tạo được video</h2>
             <p className="text-sm text-[var(--text-muted)]">{job.error_message}</p>
             {job.refunded && <p className="text-sm font-medium text-[var(--ok-text)]">Credit đã được hoàn lại vào ví.</p>}
-            <button onClick={() => setPhase('configure')} className="btn btn-primary">
+            <button onClick={remakeWithSettings} className="btn btn-primary">
               <RotateCcw className="w-4 h-4" /> Thử lại
             </button>
           </div>

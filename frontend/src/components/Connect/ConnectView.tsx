@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react'
-import { AlertTriangle, Info, Link2, Loader2, Unlink } from 'lucide-react'
+import { AlertTriangle, Info, Link2, Loader2, LogIn, Send, Unlink } from 'lucide-react'
 import {
   disconnectSocial, fetchPublications, fetchSocialStatus, startSocialConnect,
   type Publication, type SocialAccount, type SocialStatus,
@@ -26,6 +26,12 @@ const PLATFORMS = [
     note: 'Đăng Reels lên Trang Facebook bạn quản lý. Video dọc 9:16, dài 3 đến 90 giây.',
     env: 'FACEBOOK_APP_ID, FACEBOOK_APP_SECRET',
   },
+]
+
+const GUIDE = [
+  { icon: Link2, title: 'Bấm “Kết nối”', text: 'Chọn TikTok hoặc Trang Facebook bạn muốn đăng video.' },
+  { icon: LogIn, title: 'Đăng nhập & cho phép', text: 'Đăng nhập trên trang của TikTok/Facebook và đồng ý cho Aura đăng video.' },
+  { icon: Send, title: 'Đăng từ Aura', text: 'Ở mỗi video đã tạo, bấm Đăng TikTok hoặc Đăng Facebook là xong.' },
 ]
 
 interface ConnectViewProps {
@@ -86,14 +92,34 @@ export const ConnectView: React.FC<ConnectViewProps> = ({ isAdmin }) => {
 
   return (
     <div className="flex-1 h-full overflow-y-auto text-[var(--text-main)]">
-      <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-10 space-y-6">
+      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-5 sm:py-8 space-y-5 sm:space-y-6">
         <div>
           <p className="eyebrow">Kênh bán hàng</p>
-          <h1 className="display text-3xl sm:text-4xl mt-1.5">Kết nối mạng xã hội</h1>
+          <h1 className="display text-3xl sm:text-4xl mt-1.5">Kênh liên kết</h1>
           <p className="text-[var(--text-muted)] mt-2">
-            Kết nối một lần, sau đó bấm "Đăng" ngay dưới mỗi video để đưa lên TikTok hoặc Facebook.
+            Kết nối một lần, sau đó đăng video lên TikTok hoặc Facebook ngay trong Aura.
           </p>
         </div>
+
+        <section className="card p-5 sm:p-6">
+          <h2 className="display text-xl">Kết nối trong 3 bước</h2>
+          <ol className="grid sm:grid-cols-3 gap-3 sm:gap-4 mt-4">
+            {GUIDE.map((g, i) => (
+              <li key={g.title} className="flex sm:flex-col gap-3 p-4 rounded-2xl bg-[var(--bg-surface)]">
+                <span className="relative w-10 h-10 rounded-xl bg-[var(--accent-soft)] text-[var(--accent-text)] flex items-center justify-center shrink-0">
+                  <g.icon className="w-5 h-5" />
+                  <span className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-[var(--ink)] text-[var(--on-ink)] text-[11px] font-semibold flex items-center justify-center">
+                    {i + 1}
+                  </span>
+                </span>
+                <div>
+                  <p className="font-semibold">{g.title}</p>
+                  <p className="text-sm text-[var(--text-muted)] mt-0.5">{g.text}</p>
+                </div>
+              </li>
+            ))}
+          </ol>
+        </section>
 
         {loadError && (
           <div className="flex gap-2 items-center text-sm p-3 rounded-2xl border border-[var(--danger-border)] bg-[var(--danger-bg)] text-[var(--danger-text)]">
@@ -119,8 +145,9 @@ export const ConnectView: React.FC<ConnectViewProps> = ({ isAdmin }) => {
           </div>
         )}
 
-        {status &&
-          PLATFORMS.map((p, i) => {
+        {status && (
+          <div className="grid lg:grid-cols-2 gap-5">
+          {PLATFORMS.map((p, i) => {
             const accounts = status.accounts.filter((a) => a.platform === p.id)
             const configured = status.platforms[p.id]
             return (
@@ -144,7 +171,7 @@ export const ConnectView: React.FC<ConnectViewProps> = ({ isAdmin }) => {
                 {!configured && (
                   <p className="text-sm text-[var(--text-muted)]">
                     {isAdmin
-                      ? `Máy chủ chưa cấu hình ứng dụng ${p.name}: đặt ${p.env} trong backend/.env.`
+                      ? `Chưa cấu hình ứng dụng ${p.name}: nhập key ở Quản trị hệ thống → Cài đặt API (hoặc ${p.env} trong backend/.env).`
                       : 'Sắp ra mắt trên hệ thống này.'}
                   </p>
                 )}
@@ -179,6 +206,8 @@ export const ConnectView: React.FC<ConnectViewProps> = ({ isAdmin }) => {
               </section>
             )
           })}
+          </div>
+        )}
 
         {pubs.length > 0 && (
           <section className="card p-5 sm:p-6">

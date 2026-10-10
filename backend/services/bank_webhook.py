@@ -11,6 +11,7 @@ import sqlite3
 
 from backend import config
 from backend.database import get_db
+from backend.services import audit
 from backend.services.wallet import get_transaction, verify_and_credit_transaction
 
 log = logging.getLogger(__name__)
@@ -82,4 +83,6 @@ def handle_sepay_event(payload: dict) -> dict:
         res = verify_and_credit_transaction(tx_id, confirmed_by="sepay")
         if res["status"] != "success":
             result = res["status"]
+        else:
+            audit.record(None, "deposit.auto", tx_id, f"+{res['credits_added']} credit")
     return {"result": result, "transaction_id": tx_id}

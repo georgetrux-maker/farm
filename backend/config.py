@@ -66,6 +66,11 @@ def _admin(name: str) -> str:
     return admin_config.get(name)
 
 
+def _admin_flag(name: str, default: bool = True) -> bool:
+    raw = _admin(name)
+    return default if raw == "" else raw == "1"
+
+
 def _admin_int(name: str, env_name: str, default: int) -> int:
     raw = _admin(name)
     return int(raw) if raw.isdigit() else _env_int(env_name, default)
@@ -127,9 +132,14 @@ def anthropic_api_key() -> str:
     return _admin("anthropic_api_key") or _env("ANTHROPIC_API_KEY")
 
 
+def anthropic_switch() -> bool:
+    """Công tắc bật/tắt Claude trong trang Admin (mặc định bật)."""
+    return _admin_flag("anthropic_enabled")
+
+
 def anthropic_enabled() -> bool:
-    """Có key, hoặc ANTHROPIC_AUTH_TOKEN mà SDK tự đọc từ môi trường."""
-    return bool(anthropic_api_key() or _env("ANTHROPIC_AUTH_TOKEN"))
+    """Công tắc bật và có key, hoặc ANTHROPIC_AUTH_TOKEN mà SDK tự đọc từ môi trường."""
+    return anthropic_switch() and bool(anthropic_api_key() or _env("ANTHROPIC_AUTH_TOKEN"))
 
 
 def anthropic_model() -> str:
@@ -139,6 +149,15 @@ def anthropic_model() -> str:
 
 def fashn_api_key() -> str:
     return _admin("fashn_api_key") or _env("FASHN_API_KEY")
+
+
+def fashn_switch() -> bool:
+    return _admin_flag("fashn_enabled")
+
+
+def fashn_active() -> bool:
+    """Dùng FASHN thật: công tắc bật và có key. Tắt thì dùng engine tạm dù vẫn còn key."""
+    return fashn_switch() and bool(fashn_api_key())
 
 
 def fashn_model_name() -> str:
@@ -151,6 +170,14 @@ def fashn_mode() -> str:
 
 def replicate_api_token() -> str:
     return _admin("replicate_api_token") or _env("REPLICATE_API_TOKEN")
+
+
+def replicate_switch() -> bool:
+    return _admin_flag("replicate_enabled")
+
+
+def replicate_active() -> bool:
+    return replicate_switch() and bool(replicate_api_token())
 
 
 def replicate_video_model() -> str:
@@ -190,7 +217,21 @@ def signup_bonus_credits() -> int:
 
 
 def allow_signup() -> bool:
-    return _env_bool("ALLOW_SIGNUP", True)
+    raw = _admin("allow_signup")
+    return raw == "1" if raw else _env_bool("ALLOW_SIGNUP", True)
+
+
+# --- Liên hệ hỗ trợ (hiện ở trang Hỗ trợ) ---
+def support_hotline() -> str:
+    return _admin("support_hotline") or _env("SUPPORT_HOTLINE")
+
+
+def support_zalo() -> str:
+    return _admin("support_zalo") or _env("SUPPORT_ZALO")
+
+
+def support_email() -> str:
+    return _admin("support_email") or _env("SUPPORT_EMAIL")
 
 
 def frontend_url() -> str:

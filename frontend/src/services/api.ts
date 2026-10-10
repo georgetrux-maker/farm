@@ -110,6 +110,8 @@ export function previewScript(data: {
   fabric?: string
   category?: string
   style?: string
+  /** Điểm nổi bật AI nhận ra từ ảnh để lời review cụ thể hơn */
+  features?: string[]
 }): Promise<ScriptPreviewResult> {
   return post('/api/ai/script/preview', data, 'Không thể tạo kịch bản xem trước')
 }
@@ -160,12 +162,25 @@ export function createDeposit(amountVnd: number): Promise<DepositInfo> {
 
 export function fetchDepositStatus(
   transactionId: string,
-): Promise<{ transaction_id: string; status: 'pending' | 'success'; credits: number; balance: number }> {
+): Promise<{ transaction_id: string; status: 'pending' | 'success' | 'cancelled'; credits: number; balance: number }> {
   return request(`/api/wallet/transactions/${encodeURIComponent(transactionId)}`, {}, 'Không thể kiểm tra giao dịch')
 }
 
 export function fetchCreditHistory(): Promise<CreditTransaction[]> {
   return request('/api/wallet/transactions', {}, 'Không thể tải lịch sử credit')
+}
+
+export interface WalletSummary {
+  balance: number
+  deposited_vnd: number
+  deposited_credits: number
+  used_credits: number
+  refunded_credits: number
+  adjusted_credits: number
+}
+
+export function fetchWalletSummary(): Promise<WalletSummary> {
+  return request('/api/wallet/summary', {}, 'Không tải được thông tin ví')
 }
 
 export function fetchAvatars(): Promise<BrandAvatar[]> {
@@ -184,6 +199,7 @@ export function addNewAvatar(data: {
   measurements: string
   avatar_url: string
   badge?: string
+  gender?: 'female' | 'male'
 }) {
   return post<BrandAvatar>('/api/avatars', data, 'Không thể thêm người mẫu')
 }
@@ -228,6 +244,7 @@ export function createAnalyzedProduct(data: {
   title: string
   price: number
   image_url: string
+  original_price?: number
   category?: string
   fabric_type?: string
   analysis?: ProductAnalysisAI | null
@@ -402,7 +419,7 @@ export function prepareSampleProduct(sampleId: string): Promise<ProductPrefill> 
 }
 
 // ----------------------------------------------------------------- Quản trị: cài đặt API & hệ thống
-export type AdminSettingKind = 'secret' | 'text' | 'choice' | 'int'
+export type AdminSettingKind = 'secret' | 'text' | 'choice' | 'int' | 'bool'
 export type AdminSettingSource = 'admin' | 'env' | 'default' | 'none'
 
 export interface AdminSetting {
@@ -410,8 +427,8 @@ export interface AdminSetting {
   provider: string
   label: string
   kind: AdminSettingKind
-  /** Key bí mật: bản đã che; số: number; còn lại: chuỗi */
-  value: string | number | null
+  /** Key bí mật: bản đã che; số: number; công tắc: boolean; còn lại: chuỗi */
+  value: string | number | boolean | null
   source: AdminSettingSource
   configured: boolean
   hint: string
@@ -440,7 +457,7 @@ export function fetchAdminSettings(): Promise<AdminSettings> {
 
 /** Chỉ gửi các ô đã sửa; null hoặc chuỗi rỗng = xóa giá trị trong Admin, dùng lại backend/.env */
 export function saveAdminSettings(
-  changes: Record<string, string | number | null>,
+  changes: Record<string, string | number | boolean | null>,
 ): Promise<{ status: string; saved: string[]; message: string; settings: AdminSetting[] }> {
   return post('/api/admin/api-keys', changes, 'Không lưu được cấu hình')
 }
@@ -467,11 +484,22 @@ export interface AdminStatsOverview {
     credits_in_wallets: number
     pending_deposits: number
   }
+  /** Cùng kỳ trước để so sánh: hôm qua (đến cùng giờ), tháng trước (đến cùng ngày) */
+  previous: {
+    revenue_today: number
+    revenue_month: number
+    new_shops_month: number
+    completed_videos_month: number
+  }
+  /** Theo từng ngày (giờ Việt Nam), ngày cũ nhất trước */
+  series: { dates: string[]; revenue_vnd: number[]; completed_videos: number[] }
+  /** Doanh thu trong cùng khoảng ngày của biểu đồ, theo nguồn: sepay = tự động, manual = admin duyệt tay */
+  revenue_sources: Partial<Record<'sepay' | 'manual' | 'other', number>>
   recent_users: Array<{ id: string; name: string; email: string | null; role: string; credits: number; created_at: string }>
 }
 
-export function fetchAdminStatsOverview(): Promise<AdminStatsOverview> {
-  return request('/api/admin/stats-overview', {}, 'Không tải được báo cáo quản trị')
+export function fetchAdminStatsOverview(days = 7): Promise<AdminStatsOverview> {
+  return request(`/api/admin/stats-overview?days=${days}`, {}, 'Không tải được báo cáo quản trị')
 }
 
 export interface AdminDeposit {
@@ -483,7 +511,7 @@ export interface AdminDeposit {
   amount_credits: number
   /** Nội dung chuyển khoản khách phải ghi, ví dụ "NAPTIEN TX1A2B3C" */
   transfer_content: string | null
-  status: 'pending' | 'success'
+  status: 'pending' | 'success' | 'cancelled'
   created_at: string
   confirmed_at: string | null
   confirmed_by: string | null
@@ -495,10 +523,13 @@ export interface AdminDepositPage {
   page: number
   page_size: number
   has_more: boolean
+  counts: Partial<Record<AdminDepositStatus | 'all', number>>
 }
 
+export type AdminDepositStatus = 'pending' | 'success' | 'cancelled'
+
 export function fetchAdminDeposits(params: {
-  status?: 'pending' | 'success' | 'all'
+  status?: AdminDepositStatus | 'all'
   q?: string
   page?: number
   pageSize?: number
@@ -517,9 +548,96 @@ export function verifyDeposit(
   return post(`/api/admin/deposits/${encodeURIComponent(transactionId)}/verify`, {}, 'Không thể xác nhận giao dịch')
 }
 
+export function cancelDeposit(transactionId: string): Promise<{ status: 'cancelled' }> {
+  return post(`/api/admin/deposits/${encodeURIComponent(transactionId)}/cancel`, {}, 'Không thể hủy giao dịch')
+}
+
+export interface AdminUser {
+  id: string
+  name: string
+  email: string | null
+  role: string
+  credits: number
+  disabled: boolean
+  created_at: string
+  /** Số video đã tạo xong */
+  videos: number
+  deposited_vnd: number
+}
+
+export interface AdminUserPage {
+  items: AdminUser[]
+  total: number
+  page: number
+  page_size: number
+  has_more: boolean
+  counts: { all: number; active: number; locked: number }
+}
+
+export function fetchAdminUsers(params: {
+  q?: string
+  role?: 'all' | 'shop' | 'admin'
+  status?: 'all' | 'active' | 'locked'
+  page?: number
+  pageSize?: number
+}): Promise<AdminUserPage> {
+  const qs = new URLSearchParams()
+  if (params.q?.trim()) qs.set('q', params.q.trim())
+  if (params.role) qs.set('role', params.role)
+  if (params.status) qs.set('status', params.status)
+  if (params.page) qs.set('page', String(params.page))
+  if (params.pageSize) qs.set('page_size', String(params.pageSize))
+  return request(`/api/admin/users?${qs}`, {}, 'Không tải được danh sách người dùng')
+}
+
+export function adjustUserCredits(userId: string, delta: number, reason: string): Promise<{ new_balance: number }> {
+  return post(`/api/admin/users/${encodeURIComponent(userId)}/credits`, { delta, reason }, 'Không điều chỉnh được credit')
+}
+
+export function setUserLocked(userId: string, locked: boolean): Promise<{ status: 'locked' | 'active' }> {
+  return post(`/api/admin/users/${encodeURIComponent(userId)}/lock`, { locked }, 'Không cập nhật được tài khoản')
+}
+
+export interface AuditLog {
+  id: number
+  actor_id: string | null
+  actor_name: string
+  action: string
+  action_label: string
+  target: string | null
+  detail: string | null
+  created_at: string
+}
+
+export function fetchAuditLogs(params: { q?: string; action?: string; page?: number; pageSize?: number }): Promise<{
+  items: AuditLog[]
+  total: number
+  page: number
+  page_size: number
+  has_more: boolean
+  actions: Record<string, string>
+}> {
+  const qs = new URLSearchParams()
+  if (params.q?.trim()) qs.set('q', params.q.trim())
+  if (params.action) qs.set('action', params.action)
+  if (params.page) qs.set('page', String(params.page))
+  if (params.pageSize) qs.set('page_size', String(params.pageSize))
+  return request(`/api/admin/audit?${qs}`, {}, 'Không tải được nhật ký hệ thống')
+}
+
+export interface SupportInfo {
+  hotline: string
+  zalo: string
+  email: string
+}
+
+export function fetchSupportInfo(): Promise<SupportInfo> {
+  return request('/api/support/info', {}, 'Không tải được thông tin hỗ trợ')
+}
+
 export function updateAvatar(
   avatarId: string,
-  data: Partial<Pick<BrandAvatar, 'name' | 'style' | 'height' | 'weight' | 'measurements' | 'avatar_url' | 'badge'>>,
+  data: Partial<Pick<BrandAvatar, 'name' | 'style' | 'height' | 'weight' | 'measurements' | 'avatar_url' | 'badge' | 'gender'>>,
 ): Promise<BrandAvatar> {
   return request(`/api/avatars/${encodeURIComponent(avatarId)}`, { method: 'PATCH', body: JSON.stringify(data) },
     'Không thể cập nhật người mẫu')

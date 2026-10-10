@@ -57,3 +57,12 @@ export function formatDateTime(value?: string | null): string {
   const year = d.getFullYear() === new Date().getFullYear() ? '' : `/${d.getFullYear()}`
   return `${pad(d.getHours())}:${pad(d.getMinutes())} ${pad(d.getDate())}/${pad(d.getMonth() + 1)}${year}`
 }
+
+/** 1.250.000 -> "1,25tr"; 500.000 -> "500k" */
+export function compactVnd(value: number): string {
+  const fmt = (n: number) => n.toLocaleString('vi-VN', { maximumFractionDigits: 2 })
+  if (value >= 1e9) return `${fmt(value / 1e9)} tỷ`
+  if (value >= 1e6) return `${fmt(value / 1e6)}tr`
+  if (value >= 1e3) return `${fmt(value / 1e3)}k`
+  return fmt(value)
+}

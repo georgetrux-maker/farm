@@ -21,7 +21,7 @@ class Setting:
     key: str
     provider: str          # nhóm hiển thị: anthropic, fashn, replicate, vietqr, sepay, tiktok, facebook, pricing
     label: str
-    kind: str              # secret | text | choice | int
+    kind: str              # secret | text | choice | int | bool
     env: str
     current: Callable[[], object]   # giá trị đang có hiệu lực (Admin > .env > mặc định)
     options: tuple = ()
@@ -42,16 +42,22 @@ def _upper_ascii(value: str) -> str:
 
 
 SETTINGS = (
+    Setting("anthropic_enabled", "anthropic", "Bật Claude", "bool", "", config.anthropic_switch,
+            hint="Tắt thì viết kịch bản bằng mẫu câu, không tốn phí AI"),
     Setting("anthropic_api_key", "anthropic", "API key", "secret", "ANTHROPIC_API_KEY", config.anthropic_api_key,
             placeholder="sk-ant-api03-...", hint="Lấy tại platform.claude.com"),
     Setting("anthropic_model", "anthropic", "Model", "choice", "ANTHROPIC_MODEL", config.anthropic_model,
             options=config.ANTHROPIC_MODELS, hint="Opus chất lượng cao nhất; Sonnet rẻ bằng một nửa"),
+    Setting("fashn_enabled", "fashn", "Bật FASHN", "bool", "", config.fashn_switch,
+            hint="Tắt thì chỉ đặt sản phẩm lên phông nền, không có người mẫu mặc đồ"),
     Setting("fashn_api_key", "fashn", "API key", "secret", "FASHN_API_KEY", config.fashn_api_key,
             placeholder="fa-...", hint="Lấy tại app.fashn.ai"),
     Setting("fashn_mode", "fashn", "Chế độ", "choice", "FASHN_MODE", config.fashn_mode,
             options=("performance", "balanced", "quality"), hint="performance nhanh, quality nét nhất"),
     Setting("fashn_model_name", "fashn", "Model", "text", "FASHN_MODEL_NAME", config.fashn_model_name,
             pattern=r"[a-z0-9][a-z0-9.\-]{1,39}", placeholder="tryon-v1.6"),
+    Setting("replicate_enabled", "replicate", "Bật Replicate (Kling)", "bool", "", config.replicate_switch,
+            hint="Tắt thì dùng chuyển động máy quay bằng FFmpeg, không tốn phí"),
     Setting("replicate_api_token", "replicate", "API token", "secret", "REPLICATE_API_TOKEN", config.replicate_api_token,
             placeholder="r8_...", hint="Lấy tại replicate.com/account/api-tokens"),
     Setting("replicate_video_model", "replicate", "Model video", "text", "REPLICATE_VIDEO_MODEL",
@@ -83,6 +89,15 @@ SETTINGS = (
     Setting("signup_bonus_credits", "pricing", "Credit tặng khi đăng ký", "int", "SIGNUP_BONUS_CREDITS",
             config.signup_bonus_credits, minimum=0, maximum=10_000, default=0,
             hint="Chưa có xác minh email nên để 0 nếu sợ bị tạo tài khoản ảo"),
+    Setting("allow_signup", "other", "Cho phép tự đăng ký tài khoản", "bool", "ALLOW_SIGNUP", config.allow_signup,
+            hint="Tắt thì chỉ quản trị viên tạo được tài khoản (python -m backend.manage create-user)"),
+    Setting("support_hotline", "support", "Hotline", "text", "SUPPORT_HOTLINE", config.support_hotline,
+            pattern=r"[0-9+ .]{8,20}", placeholder="0901 234 567"),
+    Setting("support_zalo", "support", "Zalo", "text", "SUPPORT_ZALO", config.support_zalo,
+            pattern=r"https://zalo\.me/[\w./-]+|[0-9+ .]{8,20}", placeholder="https://zalo.me/0901234567",
+            hint="Số điện thoại hoặc link zalo.me"),
+    Setting("support_email", "support", "Email hỗ trợ", "text", "SUPPORT_EMAIL", config.support_email,
+            pattern=r"[^@\s]+@[^@\s]+\.[^@\s]+", placeholder="hotro@cuaban.vn"),
 )
 BY_KEY = {s.key: s for s in SETTINGS}
 
@@ -107,7 +122,7 @@ def describe() -> list:
         value = s.current()
         if admin_config.get(s.key):
             source = "admin"
-        elif config._env(s.env):
+        elif s.env and config._env(s.env):
             source = "env"
         else:
             source = "default" if value not in ("", None) else "none"
@@ -115,6 +130,9 @@ def describe() -> list:
                 "configured": value not in ("", None), "hint": s.hint, "placeholder": s.placeholder}
         if s.kind == "secret":
             item["value"] = mask(str(value or ""))
+        elif s.kind == "bool":
+            item["value"] = bool(value)
+            item["configured"] = True
         else:
             item["value"] = value
         if s.options:
@@ -127,6 +145,10 @@ def describe() -> list:
 
 def _validate(s: Setting, raw) -> str:
     value = s.normalize(str(raw))
+    if s.kind == "bool":
+        if str(raw).lower() not in ("1", "0", "true", "false"):
+            raise SettingError(f"{s.label}: chọn bật hoặc tắt")
+        return "1" if str(raw).lower() in ("1", "true") else "0"
     if s.kind == "int":
         if not re.fullmatch(r"\d+", value):
             raise SettingError(f"{s.label}: phải là số nguyên không âm")
@@ -153,6 +175,8 @@ def update(changes: dict) -> list:
         s = BY_KEY[key]
         if raw is None or (isinstance(raw, str) and not raw.strip()):
             cleaned[key] = None
+        elif isinstance(raw, bool) and s.kind != "bool":
+            raise SettingError(f"{s.label}: giá trị không hợp lệ")
         elif s.kind == "secret" and "•" in str(raw):
             continue  # ô key bí mật chưa sửa (vẫn là bản đã che)
         else:

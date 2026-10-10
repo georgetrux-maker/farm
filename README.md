@@ -12,9 +12,10 @@ Upload ảnh sản phẩm, chọn người mẫu và mẫu video, hệ thống t
 
 | Phần | Trạng thái |
 |---|---|
-| Giao diện phong cách thời trang (nền ngà, chữ serif, nút màu mực, có nền tối) với 5 mục cho shop: **Tạo video**, **Thư viện mẫu**, **Video của tôi**, **Kênh bán hàng**, **Ví & hiệu suất**; số dư và nút nạp luôn ở góc trên; điện thoại có thanh tab dưới | ✅ |
-| **Trang quản trị** riêng (nút **Quản trị** chỉ tài khoản admin thấy): doanh thu hôm nay/tuần/tháng, lịch sử nạp tiền và **duyệt tay**, người mẫu AI (thêm, đổi ảnh, đặt mặc định), **cài đặt API key** | ✅ Key mã hóa Fernet trong DB, ưu tiên hơn `.env`; nút kiểm tra kết nối báo sai key / hết credit |
-| Màn hình **Tạo video** 3 bước: upload ảnh (hoặc dán link sản phẩm, hoặc thử với 3 sản phẩm mẫu) → chọn người mẫu, góc quay (xem trước chuyển động trên ảnh của bạn), giọng đọc (nghe thử), xem và sửa kịch bản → duyệt & tải | ✅ |
+| Giao diện theo bản thiết kế Demo 1: **menu bên trái** (Trang chủ, Tạo video AI, Video của tôi, Thư viện mẫu, Kênh liên kết, Ví Credits, Hỗ trợ), số dư + nút nạp luôn ở góc trên, điện thoại có thanh tab dưới. **2 tông màu** (Hồng đất, Tím) × **sáng/tối**, người dùng chọn trong menu tài khoản và được nhớ lại | ✅ |
+| **Trang chủ**: 3 bước tạo video, số video/sản phẩm/credit/đã đăng, video gần đây, biểu đồ 7 ngày | ✅ |
+| **Admin Panel** (chỉ tài khoản admin): **Tổng quan** (doanh thu hôm nay/tháng, shop mới, video, % so với kỳ trước, biểu đồ doanh thu 7/30 ngày, nguồn doanh thu SePay/duyệt tay), **Người dùng** (tìm, cộng/trừ credit có lý do, khóa/mở khóa), **Giao dịch** (chờ duyệt/thành công/đã hủy, duyệt tay, hủy lệnh treo), **Người mẫu AI** (Nữ/Nam, thêm, sửa, đặt mặc định), **Cài đặt API** (key, công tắc bật/tắt từng AI, thanh toán, mạng xã hội, giá, cho phép đăng ký, liên hệ hỗ trợ), **Nhật ký hệ thống** | ✅ Key mã hóa Fernet trong DB, ưu tiên hơn `.env`; mọi thao tác quản trị được ghi nhật ký |
+| Màn hình **Tạo video** 3 bước: **Sản phẩm** (upload ảnh, dán link hoặc ảnh mẫu → thẻ sản phẩm có giá bán, giá gốc) → **Tùy chỉnh** (người mẫu Nữ/Nam, phong cách video, giọng đọc nghe thử, **kịch bản AI viết sẵn** sửa được) → **Kết quả** (thông tin video, tải về, đăng TikTok/Facebook, **các cảnh trong video**, tạo lại với cài đặt này) | ✅ |
 | **Thư viện mẫu**: 4 phong cách (dạo phố, công sở, tiệc tối, flash sale), bấm "Dùng mẫu này" là chọn sẵn góc quay, người mẫu, giọng, lời văn | ✅ Xem trước mô phỏng chuyển động; đặt video thật vào `backend/samples/showcase/<id>.mp4` thì tự dùng |
 | Chấm chất lượng ảnh đầu vào (độ phân giải, độ nét, ảnh mờ, độ sáng) | ✅ Chạy tại chỗ, miễn phí |
 | Phân tích ảnh sản phẩm (loại, màu, chất liệu, điểm nổi bật) + viết kịch bản, caption, hashtag | ✅ **Claude** khi có `ANTHROPIC_API_KEY`; không có thì dùng mẫu câu |
@@ -25,7 +26,8 @@ Upload ảnh sản phẩm, chọn người mẫu và mẫu video, hệ thống t
 | Lồng tiếng tiếng Việt (+ file phụ đề WebVTT) | ✅ Edge-TTS (cần internet), có phương án dự phòng |
 | Ví credit, hoàn credit khi lỗi, lịch sử credit, upload | ✅ |
 | Hàng đợi tạo video: **Redis + worker Celery** (khởi động lại web không làm dở video), hoặc luồng trong tiến trình khi chạy thử | ✅ `QUEUE_BACKEND=celery` / `thread` |
-| **Video của tôi**: tìm theo tên sản phẩm (không cần gõ dấu), lọc theo trạng thái, sắp xếp, tải thêm theo trang | ✅ |
+| **Video của tôi**: dạng danh sách hoặc lưới, tìm theo tên sản phẩm (không cần gõ dấu), lọc theo trạng thái, sắp xếp, tiến độ, đã đăng ở đâu, **Tạo lại** | ✅ |
+| **Ví Credits**: gói 100/500/1.000/2.500 credit, mã VietQR hiện ngay trên trang, tổng đã nạp/đã dùng/được hoàn, lịch sử giao dịch; **Hỗ trợ**: liên hệ + câu hỏi thường gặp | ✅ |
 | Nạp tiền VietQR, **tự cộng credit khi tiền về** | ✅ qua webhook **SePay** (`SEPAY_WEBHOOK_KEY`); chuyển thiếu tiền thì chờ quản trị viên |
 | Đăng ký / đăng nhập bằng email, đăng xuất | ✅ Mật khẩu băm scrypt, chống dò mật khẩu |
 | Đăng video lên **TikTok** và **Reels Trang Facebook** | ✅ Khi cấu hình app TikTok/Facebook (cần app được nền tảng duyệt, xem bên dưới) |
@@ -33,7 +35,7 @@ Upload ảnh sản phẩm, chọn người mẫu và mẫu video, hệ thống t
 | Lấy tên, giá, chất liệu, ảnh từ **link sản phẩm** | ✅ Đọc dữ liệu Product/OpenGraph của trang; chặn địa chỉ nội bộ. Shopee/TikTok Shop thường chặn đọc tự động nên hay chỉ đoán được tên từ link, người bán tải ảnh lên; điều khoản Shopee không cho cào dữ liệu hàng loạt |
 | Tư vấn size, điểm ghim mua hàng trên video | ❌ Đã gỡ khỏi giao diện vì chưa có dữ liệu thật (API cũ vẫn giữ) |
 
-Tài khoản quản trị có nút **Quản trị** trên thanh trên cùng (trang Admin), và mục **Kiểm tra hệ thống** trong menu tài khoản
+Tài khoản quản trị có nút **Quản trị hệ thống** ở cuối menu trái (trang Admin Panel), và mục **Kiểm tra hệ thống** trong menu tài khoản
 cho biết đang dùng AI thật hay engine tạm cho từng bước. Tài khoản shop không thấy các mục này; máy chủ cũng từ chối mọi API quản trị (403).
 
 ---

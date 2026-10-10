@@ -3,7 +3,7 @@ import math
 import os
 from typing import Optional
 
-from backend.ffmpeg_utils import ffmpeg_has_filter, probe_duration, run_ffmpeg
+from backend.ffmpeg_utils import FFmpegError, ffmpeg_has_filter, probe_duration, run_ffmpeg
 from backend.media_paths import media_path, media_url
 
 log = logging.getLogger(__name__)
@@ -216,3 +216,20 @@ def render_final_video(video_path: str, audio_path: str, output_name: str = "fin
         "subtitles_burned": bool(subtitle_phrases),
         "title_tag": bool(title or price_text),
     }
+
+
+def extract_keyframes(video_path: str, count: int = 5, prefix: str = "scene") -> list:
+    """Ảnh chụp ở các thời điểm đều nhau trong video, cho dải "Các cảnh trong video" (bấm để tua tới)."""
+    duration = probe_duration(video_path)
+    if duration <= 0:
+        return []
+    frames = []
+    for i in range(count):
+        t = round(duration * (i + 0.5) / count, 2)
+        path = media_path(f"{prefix}_{i + 1}.jpg")
+        try:
+            run_ffmpeg(["-ss", f"{t:.2f}", "-i", video_path, "-frames:v", "1", "-vf", "scale=240:-2", "-q:v", "4", path])
+        except FFmpegError:
+            continue
+        frames.append({"time": t, "image_url": media_url(path)})
+    return frames

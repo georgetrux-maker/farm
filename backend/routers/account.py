@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from backend import config
-from backend.auth import bearer_token, get_current_user
+from backend.auth import LOCKED_MESSAGE, bearer_token, get_current_user
 from backend.crypto_utils import hash_password, verify_password
 from backend.database import (
     create_session, delete_session, get_dashboard_summary, get_user_by_email, public_user, register_user,
@@ -56,6 +56,8 @@ def api_login(req: LoginRequest, request: Request):
     user = get_user_by_email(req.email.strip())
     if not user or not user.get("password_hash") or not verify_password(req.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Sai email hoặc mật khẩu")
+    if user.get("disabled"):
+        raise HTTPException(status_code=403, detail=LOCKED_MESSAGE)
     return _session_response(user)
 
 
@@ -76,3 +78,9 @@ def api_get_profile(user: dict = Depends(get_current_user)):
 def api_dashboard_stats(user: dict = Depends(get_current_user)):
     """Thống kê của user đang đăng nhập"""
     return get_dashboard_summary(user["id"])
+
+
+@router.get("/api/support/info")
+def api_support_info():
+    """Liên hệ hỗ trợ cho trang Hỗ trợ (quản trị viên đặt trong Cài đặt API → Khác)."""
+    return {"hotline": config.support_hotline(), "zalo": config.support_zalo(), "email": config.support_email()}

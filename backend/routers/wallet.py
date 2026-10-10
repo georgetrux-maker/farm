@@ -10,7 +10,8 @@ from backend.auth import get_current_user, require_admin_token
 from backend.database import get_user
 from backend.services.bank_webhook import handle_sepay_event
 from backend.services.wallet import (
-    generate_vietqr_deposit, get_transaction, list_transactions, verify_and_credit_transaction, WalletError,
+    generate_vietqr_deposit, get_transaction, list_transactions, verify_and_credit_transaction, wallet_summary,
+    WalletError,
 )
 
 log = logging.getLogger("aura")
@@ -34,6 +35,12 @@ def api_deposit(req: DepositRequest, user: dict = Depends(get_current_user)):
 def api_list_transactions(user: dict = Depends(get_current_user)):
     """Lịch sử credit của người dùng đang đăng nhập"""
     return list_transactions(user["id"])
+
+
+@router.get("/api/wallet/summary")
+def api_wallet_summary(user: dict = Depends(get_current_user)):
+    """Tổng đã nạp / đã dùng / được hoàn cho trang Ví Credits"""
+    return {"balance": get_user(user["id"])["credits"], **wallet_summary(user["id"])}
 
 
 @router.get("/api/wallet/transactions/{transaction_id}")

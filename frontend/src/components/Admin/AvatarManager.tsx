@@ -1,12 +1,20 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { Check, ImagePlus, Loader2, Plus, RefreshCw, Users2 } from 'lucide-react'
+import { Check, ImagePlus, Loader2, Pencil, Plus, RefreshCw, Users2 } from 'lucide-react'
 import { addNewAvatar, fetchAvatars, setDefaultAvatar, updateAvatar, uploadImage } from '../../services/api'
 import type { BrandAvatar } from '../../types'
 import { AvatarImage } from '../ui/AvatarImage'
 import { Modal } from '../ui/Modal'
 import { useToast } from '../ui/toastContext'
 
-const EMPTY_FORM = { name: '', style: '', height: '1m65', weight: '48kg', measurements: '84-60-90', avatar_url: '' }
+type Gender = 'female' | 'male'
+const DEFAULTS: Record<Gender, { height: string; weight: string; measurements: string }> = {
+  female: { height: '1m65', weight: '48kg', measurements: '84-60-90' },
+  male: { height: '1m76', weight: '68kg', measurements: '96-78-94' },
+}
+const EMPTY_FORM = { name: '', style: '', ...DEFAULTS.female, avatar_url: '', gender: 'female' as Gender }
+
+type Tab = 'all' | Gender | 'default'
+const genderOf = (a: BrandAvatar): Gender => a.gender ?? 'female'
 
 /** Kho người mẫu AI (chỉ quản trị viên): thêm người mẫu, đổi ảnh, chọn người mẫu mặc định cho mọi shop. */
 export const AvatarManager: React.FC = () => {
@@ -14,6 +22,8 @@ export const AvatarManager: React.FC = () => {
   const [avatars, setAvatars] = useState<BrandAvatar[] | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
+  const [editing, setEditing] = useState<BrandAvatar | null>(null)
+  const [tab, setTab] = useState<Tab>('all')
   const [form, setForm] = useState(EMPTY_FORM)
   const [uploading, setUploading] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -81,6 +91,29 @@ export const AvatarManager: React.FC = () => {
     }
   }
 
+  const openAdd = () => {
+    setEditing(null)
+    setForm(EMPTY_FORM)
+    setFormError(null)
+    setAdding(true)
+  }
+  const openEdit = (a: BrandAvatar) => {
+    setEditing(a)
+    setForm({
+      name: a.name, style: a.style, height: a.height, weight: a.weight, measurements: a.measurements,
+      avatar_url: a.avatar_url, gender: genderOf(a),
+    })
+    setFormError(null)
+    setAdding(true)
+  }
+  /** Đổi Nữ/Nam: số đo đang để mặc định thì đổi theo, đã sửa thì giữ nguyên */
+  const setGender = (gender: Gender) =>
+    setForm((f) => {
+      const old = DEFAULTS[f.gender]
+      const untouched = f.height === old.height && f.weight === old.weight && f.measurements === old.measurements
+      return { ...f, gender, ...(untouched ? DEFAULTS[gender] : {}) }
+    })
+
   const save = async (e: React.FormEvent) => {
     e.preventDefault()
     setFormError(null)
@@ -88,9 +121,18 @@ export const AvatarManager: React.FC = () => {
     if (!form.avatar_url) return setFormError('Vui lòng tải ảnh toàn thân của người mẫu')
     setSaving(true)
     try {
-      await addNewAvatar({ ...form, name: form.name.trim(), style: form.style.trim(), badge: 'Mới' })
-      toast(`Đã thêm người mẫu ${form.name.trim()}`, 'success')
+      const data = { ...form, name: form.name.trim(), style: form.style.trim() }
+      if (editing) {
+        // Chỉ gửi ảnh khi đã đổi (ảnh mẫu có sẵn có thể là link ngoài)
+        const { avatar_url, ...rest } = data
+        await updateAvatar(editing.id, avatar_url === editing.avatar_url ? rest : data)
+        toast(`Đã cập nhật ${data.name}`, 'success')
+      } else {
+        await addNewAvatar({ ...data, badge: 'Mới' })
+        toast(`Đã thêm người mẫu ${data.name}`, 'success')
+      }
       setAdding(false)
+      setEditing(null)
       setForm(EMPTY_FORM)
       load()
     } catch (err: any) {
@@ -100,19 +142,45 @@ export const AvatarManager: React.FC = () => {
     }
   }
 
-  const set = (key: keyof typeof EMPTY_FORM) => (e: React.ChangeEvent<HTMLInputElement>) =>
+  const set = (key: 'name' | 'style' | 'height' | 'weight' | 'measurements') => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm((f) => ({ ...f, [key]: e.target.value }))
+
+  const count = (t: Tab) =>
+    (avatars ?? []).filter((a) => t === 'all' || (t === 'default' ? !!a.is_default : genderOf(a) === t)).length
+  const shown = (avatars ?? []).filter((a) => tab === 'all' || (tab === 'default' ? !!a.is_default : genderOf(a) === tab))
+  const TABS: { id: Tab; label: string }[] = [
+    { id: 'all', label: 'Tất cả' },
+    { id: 'female', label: 'Nữ' },
+    { id: 'male', label: 'Nam' },
+    { id: 'default', label: 'Mặc định' },
+  ]
 
   return (
     <div className="space-y-6 animate-fade-up">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <p className="text-[var(--text-muted)] max-w-xl">
-          Người mẫu dùng chung cho mọi shop. Người mẫu mặc định được chọn sẵn khi shop tạo video.
-        </p>
-        <button onClick={() => setAdding(true)} className="btn btn-primary">
+        <div className="flex gap-1 p-1 rounded-full bg-[var(--bg-surface)] overflow-x-auto no-scrollbar" role="tablist" aria-label="Lọc người mẫu">
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              role="tab"
+              aria-selected={tab === t.id}
+              onClick={() => setTab(t.id)}
+              className={`px-3.5 py-1.5 rounded-full text-sm font-semibold whitespace-nowrap transition-colors flex items-center gap-1.5 ${
+                tab === t.id ? 'bg-[var(--bg-card)] text-[var(--text-main)] shadow-sm' : 'text-[var(--text-muted)]'
+              }`}
+            >
+              {t.label}
+              <span className="text-xs tabular-nums opacity-70">{count(t.id)}</span>
+            </button>
+          ))}
+        </div>
+        <button onClick={openAdd} className="btn btn-primary">
           <Plus className="w-4 h-4" /> Thêm người mẫu
         </button>
       </div>
+      <p className="text-sm text-[var(--text-muted)] -mt-2">
+        Người mẫu dùng chung cho mọi shop. Người mẫu mặc định được chọn sẵn khi shop tạo video.
+      </p>
 
       {!avatars ? (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-5">
@@ -120,17 +188,17 @@ export const AvatarManager: React.FC = () => {
             <div key={i} className="skeleton rounded-2xl aspect-[3/4]" />
           ))}
         </div>
-      ) : avatars.length === 0 ? (
+      ) : shown.length === 0 ? (
         <div className="card p-10 text-center text-[var(--text-muted)]">
-          <Users2 className="w-8 h-8 mx-auto mb-2" /> Chưa có người mẫu nào.
+          <Users2 className="w-8 h-8 mx-auto mb-2" /> {avatars.length ? 'Không có người mẫu trong nhóm này.' : 'Chưa có người mẫu nào.'}
         </div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-5 gap-y-7">
-          {avatars.map((a) => (
+          {shown.map((a) => (
             <article key={a.id} className="group">
               <div
                 className={`relative rounded-2xl overflow-hidden ring-2 ring-offset-2 ring-offset-[var(--bg-app)] ${
-                  a.is_default ? 'ring-[var(--ink)]' : 'ring-transparent'
+                  a.is_default ? 'ring-[var(--accent-color)]' : 'ring-transparent'
                 }`}
               >
                 <AvatarImage
@@ -143,9 +211,17 @@ export const AvatarManager: React.FC = () => {
                     <Check className="w-3.5 h-3.5" /> Mặc định
                   </span>
                 ) : null}
+                <span className="absolute top-2.5 right-2.5 glass rounded-full px-2.5 py-1 text-xs font-semibold">
+                  {genderOf(a) === 'male' ? 'Nam' : 'Nữ'}
+                </span>
               </div>
               <div className="pt-3">
-                <h3 className="display text-lg">{a.name}</h3>
+                <div className="flex items-start justify-between gap-2">
+                  <h3 className="display text-lg">{a.name}</h3>
+                  <button onClick={() => openEdit(a)} className="icon-btn w-8 h-8 -mr-1.5" aria-label={`Sửa ${a.name}`}>
+                    <Pencil className="w-3.5 h-3.5" />
+                  </button>
+                </div>
                 <p className="text-sm text-[var(--text-muted)] line-clamp-1">{a.style}</p>
                 <p className="text-sm text-[var(--text-muted)]">
                   {[a.height, a.weight, a.measurements].filter(Boolean).join(' · ')}
@@ -184,7 +260,7 @@ export const AvatarManager: React.FC = () => {
         }}
       />
 
-      <Modal open={adding} onClose={() => setAdding(false)} title="Thêm người mẫu AI">
+      <Modal open={adding} onClose={() => setAdding(false)} title={editing ? `Sửa ${editing.name}` : 'Thêm người mẫu AI'}>
         <form onSubmit={save} className="space-y-4" noValidate>
           <div className="flex gap-4 items-start">
             <button
@@ -216,6 +292,25 @@ export const AvatarManager: React.FC = () => {
               }}
             />
           </div>
+          <div>
+            <span className="field-label">Giới tính</span>
+            <div className="grid grid-cols-2 gap-1 p-1 rounded-xl bg-[var(--bg-surface)]" role="radiogroup" aria-label="Giới tính">
+              {(['female', 'male'] as const).map((g) => (
+                <button
+                  key={g}
+                  type="button"
+                  role="radio"
+                  aria-checked={form.gender === g}
+                  onClick={() => setGender(g)}
+                  className={`h-9 rounded-lg text-sm font-semibold transition-colors ${
+                    form.gender === g ? 'bg-[var(--bg-card)] text-[var(--text-main)] shadow-sm' : 'text-[var(--text-muted)]'
+                  }`}
+                >
+                  {g === 'female' ? 'Nữ' : 'Nam'}
+                </button>
+              ))}
+            </div>
+          </div>
           <label className="block">
             <span className="field-label">Tên người mẫu *</span>
             <input className="field" value={form.name} onChange={set('name')} maxLength={80} placeholder="Ví dụ: Hoàng Yến" />
@@ -240,8 +335,8 @@ export const AvatarManager: React.FC = () => {
           </div>
           {formError && <p className="text-sm text-[var(--danger-text)]">{formError}</p>}
           <button type="submit" disabled={saving || uploading} className="btn btn-primary btn-lg w-full">
-            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-            Thêm người mẫu
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : editing ? <Check className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+            {editing ? 'Lưu thay đổi' : 'Thêm người mẫu'}
           </button>
         </form>
       </Modal>
