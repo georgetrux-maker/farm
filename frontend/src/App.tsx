@@ -8,17 +8,19 @@ import { CreateVideoView } from './components/Create/CreateVideoView'
 import { MyVideosView } from './components/Videos/MyVideosView'
 import { ConnectView } from './components/Connect/ConnectView'
 import { StatsView } from './components/Stats/StatsView'
+import { TemplateShowcaseView } from './components/Showcase/TemplateShowcaseView'
+import { AdminDashboardView } from './components/Admin/AdminDashboardView'
 import { VietQRModal } from './components/Wallet/VietQRModal'
 import { AuditModal } from './components/SystemAudit/AuditModal'
 import { useToast } from './components/ui/toastContext'
 import {
   UNAUTHORIZED_EVENT, UnauthorizedError, clearApiToken, fetchDepositStatus, fetchProfile, logout,
-  type DepositInfo, type UserProfile,
+  type DepositInfo, type ShowcaseTemplate, type UserProfile,
 } from './services/api'
 import { formatNumber, formatVnd } from './lib/format'
 import type { View } from './lib/navigation'
 
-const VIEWS: View[] = ['create', 'videos', 'connect', 'stats']
+const VIEWS: View[] = ['create', 'showcase', 'videos', 'connect', 'stats', 'admin']
 const DEPOSIT_WATCH_MS = 30 * 60 * 1000 // theo dõi tiền về tối đa 30 phút
 
 function viewFromHash(): View {
@@ -50,6 +52,7 @@ export default function App() {
   const [depositOpen, setDepositOpen] = useState(false)
   const [pendingDeposit, setPendingDeposit] = useState<DepositInfo | null>(null)
   const [auditOpen, setAuditOpen] = useState(false)
+  const [selectedTemplate, setSelectedTemplate] = useState<ShowcaseTemplate | null>(null)
 
   const isAdmin = user?.role === 'admin'
   const authRef = useRef(authState)
@@ -176,6 +179,13 @@ export default function App() {
   const openDeposit = useCallback(() => setDepositOpen(true), [])
   const openVideos = useCallback(() => setActiveView('videos'), [setActiveView])
   const openCreate = useCallback(() => setActiveView('create'), [setActiveView])
+  const handleUseTemplate = useCallback(
+    (tmpl: ShowcaseTemplate) => {
+      setSelectedTemplate(tmpl)
+      setActiveView('create')
+    },
+    [setActiveView],
+  )
 
   if (authState === 'loading') {
     return (
@@ -215,6 +225,7 @@ export default function App() {
         onOpenAudit={isAdmin ? () => setAuditOpen(true) : undefined}
         userName={user.name}
         userEmail={user.email}
+        isAdmin={isAdmin}
         onLogout={handleLogout}
       />
 
@@ -227,15 +238,19 @@ export default function App() {
             onCreditsChange={setWalletCredits}
             onOpenDeposit={openDeposit}
             onOpenVideos={openVideos}
+            initialTemplate={selectedTemplate}
+            onClearInitialTemplate={() => setSelectedTemplate(null)}
           />
         </div>
         {activeView !== 'create' && (
           <div key={activeView} className="flex-1 min-w-0 flex animate-fade-in">
+            {activeView === 'showcase' && <TemplateShowcaseView onUseTemplate={handleUseTemplate} />}
             {activeView === 'videos' && <MyVideosView onCreate={openCreate} onCreditsChange={setWalletCredits} />}
             {activeView === 'connect' && <ConnectView isAdmin={isAdmin} />}
             {activeView === 'stats' && (
               <StatsView user={user} credits={walletCredits} isAdmin={isAdmin} onOpenDeposit={openDeposit} />
             )}
+            {activeView === 'admin' && <AdminDashboardView />}
           </div>
         )}
       </main>

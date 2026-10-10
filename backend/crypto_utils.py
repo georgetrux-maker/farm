@@ -17,10 +17,17 @@ class SecretKeyMissing(RuntimeError):
     pass
 
 
+def _scrypt(data: bytes, salt: bytes) -> bytes:
+    if hasattr(hashlib, "scrypt"):
+        return hashlib.scrypt(data, salt=salt, **_SCRYPT)
+    from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
+    return Scrypt(salt=salt, length=_SCRYPT["dklen"], n=_SCRYPT["n"], r=_SCRYPT["r"], p=_SCRYPT["p"]).derive(data)
+
+
 # ----------------------------------------------------------------- mật khẩu
 def hash_password(password: str) -> str:
     salt = secrets.token_bytes(16)
-    digest = hashlib.scrypt(password.encode(), salt=salt, **_SCRYPT)
+    digest = _scrypt(password.encode(), salt)
     return "scrypt$" + base64.b64encode(salt).decode() + "$" + base64.b64encode(digest).decode()
 
 
@@ -31,8 +38,9 @@ def verify_password(password: str, stored: str) -> bool:
         return False
     if algo != "scrypt":
         return False
-    digest = hashlib.scrypt(password.encode(), salt=base64.b64decode(salt_b64), **_SCRYPT)
+    digest = _scrypt(password.encode(), base64.b64decode(salt_b64))
     return hmac.compare_digest(digest, base64.b64decode(digest_b64))
+
 
 
 # ----------------------------------------------------------------- mã hóa token

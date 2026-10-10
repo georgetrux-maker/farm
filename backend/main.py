@@ -40,7 +40,9 @@ from backend.database import (
     create_session, delete_session, get_user_by_email, register_user,
     get_dashboard_summary, get_db, get_product, get_system_settings, get_user, init_db, list_products,
     public_user, save_system_settings, set_default_brand_avatar,
+    get_admin_api_config, get_all_admin_api_configs, save_admin_api_config,
 )
+
 from backend.ffmpeg_utils import FFmpegError, ffmpeg_available
 from backend.media_paths import MediaPathError, media_path, media_url, resolve_media_ref, try_resolve_media_ref
 from backend.services.cache_manager import check_tryon_cache, save_tryon_cache
@@ -346,6 +348,7 @@ class PipelineRunRequest(BaseModel):
     template: str = motion_engine.DEFAULT_TEMPLATE
     voice: str = tts_engine.DEFAULT_VOICE
     script_style: str = "genz"
+    custom_script: Optional[str] = None
     duration_sec: int = Field(default=5, ge=3, le=15)
     require_approval: bool = Field(default=False, description="Dừng sau bước thử đồ để người bán duyệt ảnh")
 
@@ -362,6 +365,7 @@ def _pipeline_params(req) -> dict:
         raise HTTPException(status_code=404, detail="Người mẫu không tồn tại")
     return {"avatar_id": avatar_id, "template": req.template, "voice": req.voice,
             "script_style": req.script_style, "duration_sec": req.duration_sec,
+            "custom_script": getattr(req, "custom_script", None),
             "require_approval": bool(getattr(req, "require_approval", False))}
 
 
@@ -526,6 +530,255 @@ def api_get_settings(user: dict = Depends(require_admin_role)):
 @app.post("/api/settings")
 def api_save_settings(req: dict, user: dict = Depends(require_admin_role)):
     return save_system_settings(req)
+
+
+def mask_key(val: str) -> str:
+    if not val:
+        return ""
+    if len(val) <= 8:
+        return "***"
+    return f"{val[:6]}***{val[-4:]}"
+
+
+@app.get("/api/admin/api-keys")
+def api_get_admin_api_keys(user: dict = Depends(require_admin_role)):
+    return {
+        "anthropic": {
+            "is_configured": bool(config.anthropic_api_key()),
+            "masked_key": mask_key(config.anthropic_api_key()),
+            "model": config.anthropic_model(),
+        },
+        "fashn": {
+            "is_configured": bool(config.fashn_api_key()),
+            "masked_key": mask_key(config.fashn_api_key()),
+            "model_name": config.fashn_model_name(),
+            "mode": config.fashn_mode(),
+        },
+        "replicate": {
+            "is_configured": bool(config.replicate_api_token()),
+            "masked_key": mask_key(config.replicate_api_token()),
+            "video_model": config.replicate_video_model(),
+            "kling_mode": config.kling_mode(),
+        },
+        "vietqr": {
+            "bank_id": config.bank_id(),
+            "account_no": config.bank_account_no(),
+            "account_name": config.bank_account_name(),
+            "is_configured": bool(config.bank_account_no()),
+        },
+        "sepay": {
+            "is_configured": bool(config.sepay_webhook_key()),
+            "masked_key": mask_key(config.sepay_webhook_key()),
+        },
+        "tiktok": {
+            "is_configured": bool(config.tiktok_client_key()),
+            "client_key": mask_key(config.tiktok_client_key()),
+            "has_secret": bool(config.tiktok_client_secret()),
+        },
+        "facebook": {
+            "is_configured": bool(config.facebook_app_id()),
+            "app_id": mask_key(config.facebook_app_id()),
+            "has_secret": bool(config.facebook_app_secret()),
+        },
+        "pricing": {
+            "pipeline_cost_credits": config.pipeline_cost_credits(),
+            "tryon_preview_cost_credits": config.tryon_preview_cost_credits(),
+            "signup_bonus_credits": config.signup_bonus_credits(),
+        }
+    }
+
+
+@app.post("/api/admin/api-keys")
+def api_save_admin_api_keys(req: dict, user: dict = Depends(require_admin_role)):
+    for k, v in req.items():
+        if v is not None:
+            if isinstance(v, str) and "***" in v:
+                continue
+            save_admin_api_config(k, str(v).strip())
+    return {"status": "success", "message": "Đã lưu cấu hình API thành công"}
+
+
+@app.post("/api/admin/api-keys/test")
+def api_test_admin_api_key(req: dict, user: dict = Depends(require_admin_role)):
+    provider = req.get("provider", "").lower()
+    if provider == "anthropic":
+        key = config.anthropic_api_key()
+        if not key:
+            return {"ok": False, "message": "Chưa điền Anthropic API Key"}
+        try:
+            import anthropic
+            c = anthropic.Anthropic(api_key=key, timeout=8.0)
+            c.models.list(limit=1)
+            return {"ok": True, "message": "Kết nối Claude Anthropic thành công!"}
+        except Exception as e:
+            return {"ok": False, "message": f"Lỗi Anthropic: {str(e)[:150]}"}
+    elif provider == "fashn":
+        key = config.fashn_api_key()
+        if not key:
+            return {"ok": False, "message": "Chưa điền FASHN API Key"}
+        try:
+            res = httpx.get("https://api.fashn.ai/v1/models", headers={"Authorization": f"Bearer {key}"}, timeout=8.0)
+            if res.status_code == 200:
+                return {"ok": True, "message": "Kết nối FASHN.ai thành công!"}
+            return {"ok": False, "message": f"FASHN báo lỗi xác thực (HTTP {res.status_code})"}
+        except Exception as e:
+            return {"ok": False, "message": f"Không kết nối được FASHN: {str(e)[:150]}"}
+    elif provider == "replicate":
+        token = config.replicate_api_token()
+        if not token:
+            return {"ok": False, "message": "Chưa điền Replicate API Token"}
+        try:
+            res = httpx.get("https://api.replicate.com/v1/account", headers={"Authorization": f"Bearer {token}"}, timeout=8.0)
+            if res.status_code == 200:
+                user_info = res.json().get("username", "")
+                return {"ok": True, "message": f"Kết nối Replicate thành công! Tài khoản: {user_info}"}
+            return {"ok": False, "message": f"Replicate báo lỗi token (HTTP {res.status_code})"}
+        except Exception as e:
+            return {"ok": False, "message": f"Không kết nối được Replicate: {str(e)[:150]}"}
+    elif provider == "sepay":
+        key = config.sepay_webhook_key()
+        if not key:
+            return {"ok": False, "message": "Chưa điền SePay Webhook Key"}
+        return {"ok": True, "message": "SePay Webhook Key sẵn sàng"}
+    return {"ok": False, "message": f"Nhà cung cấp không xác định: {provider}"}
+
+
+@app.get("/api/admin/stats-overview")
+def api_admin_stats_overview(user: dict = Depends(require_admin_role)):
+    conn = get_db()
+    total_users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+    total_credits = conn.execute("SELECT SUM(credits) FROM users").fetchone()[0] or 0
+    total_revenue_vnd = conn.execute(
+        "SELECT SUM(amount_vnd) FROM wallet_transactions WHERE status = 'success' AND transaction_type = 'deposit'"
+    ).fetchone()[0] or 0
+
+    total_jobs = conn.execute("SELECT COUNT(*) FROM ai_jobs").fetchone()[0]
+    completed_jobs = conn.execute("SELECT COUNT(*) FROM ai_jobs WHERE status = 'completed'").fetchone()[0]
+
+    recent_users = conn.execute("SELECT id, name, email, role, credits, created_at FROM users ORDER BY created_at DESC LIMIT 10").fetchall()
+    recent_transactions = conn.execute(
+        "SELECT t.*, u.name as user_name, u.email as user_email FROM wallet_transactions t "
+        "LEFT JOIN users u ON t.user_id = u.id ORDER BY t.created_at DESC LIMIT 20"
+    ).fetchall()
+    conn.close()
+
+    return {
+        "summary": {
+            "total_users": total_users,
+            "total_credits_in_circulation": total_credits,
+            "total_revenue_vnd": total_revenue_vnd,
+            "total_jobs": total_jobs,
+            "completed_jobs": completed_jobs,
+        },
+        "recent_users": [dict(r) for r in recent_users],
+        "recent_transactions": [dict(r) for r in recent_transactions],
+    }
+
+
+@app.get("/api/templates/showcase")
+def api_templates_showcase():
+    return {
+        "templates": [
+            {
+                "id": "tpl_street_summer",
+                "title": "Nàng Thơ Dạo Phố",
+                "category": "Váy hoa / Đồ hè",
+                "badge": "Xu Hướng",
+                "video_url": "/samples/sample_final.mp4",
+                "thumbnail_url": "https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=600&q=80",
+                "motion_template": "street",
+                "voice_id": "vi-VN-HoaiMyNeural",
+                "voice_name": "Hoài My (Nữ ngọt ngào)",
+                "script_style": "genz",
+                "music_name": "Lofi Chill Chic",
+                "description": "Dáng đi dạo phố tự nhiên, tôn nét trẻ trung, bay bổng của váy hoa hoặc set đồ dạo phố.",
+                "tags": ["Dạo phố", "Trẻ trung", "Mùa hè"],
+            },
+            {
+                "id": "tpl_catwalk_office",
+                "title": "Quý Cô Công Sở",
+                "category": "Blazer / Sơ mi / Đầm công sở",
+                "badge": "Thanh Lịch",
+                "video_url": "/samples/sample_final.mp4",
+                "thumbnail_url": "https://images.unsplash.com/photo-1539109136881-3be0616acf4b?auto=format&fit=crop&w=600&q=80",
+                "motion_template": "catwalk",
+                "voice_id": "vi-VN-HoaiMyNeural",
+                "voice_name": "Hoài My (Nữ thanh lịch)",
+                "script_style": "office",
+                "music_name": "Fashion Week Runway",
+                "description": "Bước đi sàn diễn tự tin, toát lên phong thái chuyên nghiệp, thời thượng của set đồ công sở.",
+                "tags": ["Công sở", "Catwalk", "Sang trọng"],
+            },
+            {
+                "id": "tpl_spin_evening",
+                "title": "Đầm Dạ Tiệc Sang Chảnh",
+                "category": "Váy dạ hội / Đầm ôm body",
+                "badge": "Cao Cấp",
+                "video_url": "/samples/sample_final.mp4",
+                "thumbnail_url": "https://images.unsplash.com/photo-1566174053879-31528523f8ae?auto=format&fit=crop&w=600&q=80",
+                "motion_template": "spin_360",
+                "voice_id": "vi-VN-HoaiMyNeural",
+                "voice_name": "Hoài My (Nữ quý phái)",
+                "script_style": "office",
+                "music_name": "Luxury Lounge Ambient",
+                "description": "Góc quay xoay tròn 360 độ khoe trọn đường cong cơ thể và sự lộng lẫy của trang phục dạ tiệc.",
+                "tags": ["Dự tiệc", "Xoay 360", "Quyến rũ"],
+            },
+            {
+                "id": "tpl_fabric_flash_sale",
+                "title": "Xả Kho Flash Sale TikTok",
+                "category": "Áo thun / Polo / Đồ mặc nhà",
+                "badge": "Bán Chạy",
+                "video_url": "/samples/sample_final.mp4",
+                "thumbnail_url": "https://images.unsplash.com/photo-1503342217505-b0a15ec3261c?auto=format&fit=crop&w=600&q=80",
+                "motion_template": "fabric_closeup",
+                "voice_id": "vi-VN-NamMinhNeural",
+                "voice_name": "Nam Minh (Nam dồn dập)",
+                "script_style": "honest",
+                "music_name": "Upbeat TikTok Beat",
+                "description": "Zoom cận cảnh từng thớ vải mềm mịn và form áo, thúc đẩy người xem bấm vào giỏ hàng ngay.",
+                "tags": ["Flash Sale", "Chất vải", "Xả kho"],
+            },
+        ]
+    }
+
+
+@app.get("/api/ai/tts/voices-preview")
+def api_tts_voices_preview():
+    return {
+        "voices": [
+            {
+                "id": "vi-VN-HoaiMyNeural",
+                "label": "Hoài My (Nữ miền Nam, ngọt ngào)",
+                "gender": "female",
+                "preview_url": "/samples/preview_hoaimy.mp3",
+            },
+            {
+                "id": "vi-VN-NamMinhNeural",
+                "label": "Nam Minh (Nam miền Bắc, truyền cảm)",
+                "gender": "male",
+                "preview_url": "/samples/preview_namminh.mp3",
+            },
+        ]
+    }
+
+
+class ScriptPreviewRequest(BaseModel):
+    title: str = "Áo Thun Cotton"
+    price: float = 189000
+    fabric: Optional[str] = None
+    category: Optional[str] = None
+    style: str = "genz"
+
+
+@app.post("/api/ai/script/preview")
+def api_preview_script(req: ScriptPreviewRequest, user: dict = Depends(get_current_user)):
+    """Tạo trước kịch bản review 3 câu để người dùng xem và chỉnh sửa trước khi chạy pipeline"""
+    from backend.ai.script import generate_koc_script
+    if req.style not in STYLES:
+        raise HTTPException(status_code=400, detail="Phong cách kịch bản không hợp lệ")
+    res = generate_koc_script(req.title, req.price, req.fabric, style=req.style, category=req.category)
+    return res
 
 
 class BatchCreateRequest(BaseModel):
