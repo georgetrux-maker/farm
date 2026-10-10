@@ -1,11 +1,8 @@
 """Upload ảnh và sản phẩm"""
 
-import io
 import json
-import os
 from typing import Optional
 
-from PIL import Image, UnidentifiedImageError
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field, HttpUrl
 
@@ -13,8 +10,10 @@ from backend import config
 from backend.ai.product_analysis import analyze_product
 from backend.auth import get_current_user
 from backend.database import create_product, list_products
-from backend.media_paths import media_path, media_url, resolve_media_ref
-from backend.routers.common import owned_product, product_out, unique_name
+from backend.media_paths import media_url, resolve_media_ref
+from backend.routers.common import owned_product, product_out
+from backend.services.image_store import ImageRejected, store_image_bytes
+from backend.services.safe_http import UnsafeURL
 from backend.services.scraper import scrape_product_url
 
 router = APIRouter()
@@ -28,26 +27,10 @@ async def api_upload_image(file: UploadFile = File(...), user: dict = Depends(ge
     if len(data) > limit:
         raise HTTPException(status_code=413, detail=f"Ảnh vượt quá {limit // (1024 * 1024)}MB")
     try:
-        with Image.open(io.BytesIO(data)) as probe:
-            probe.verify()
-        img = Image.open(io.BytesIO(data))
-        if img.format not in ("JPEG", "PNG", "WEBP"):
-            raise HTTPException(status_code=415, detail="Chỉ hỗ trợ ảnh JPG, PNG, WEBP")
-        if img.width * img.height > 40_000_000:
-            raise HTTPException(status_code=413, detail="Ảnh có độ phân giải quá lớn")
-        img.load()
-    except (UnidentifiedImageError, OSError, Image.DecompressionBombError):
-        raise HTTPException(status_code=415, detail="File không phải ảnh hợp lệ")
-
-    has_alpha = img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info)
-    os.makedirs(media_path("uploads"), exist_ok=True)
-    if has_alpha:
-        name = os.path.join("uploads", unique_name("img", "png"))
-        img.convert("RGBA").save(media_path(name), "PNG")
-    else:
-        name = os.path.join("uploads", unique_name("img", "jpg"))
-        img.convert("RGB").save(media_path(name), "JPEG", quality=92)
-    return {"status": "success", "media_url": media_url(media_path(name)), "width": img.width, "height": img.height}
+        saved = store_image_bytes(data)
+    except ImageRejected as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e))
+    return {"status": "success", **saved}
 
 
 class ProductCreateRequest(BaseModel):
@@ -98,13 +81,16 @@ def api_get_product(product_id: str, user: dict = Depends(get_current_user)):
 
 
 class ScrapeRequest(BaseModel):
-    url: HttpUrl
+    url: str = Field(min_length=8, max_length=2000)
 
 
 @router.post("/api/scraper/product")
 def api_scrape(req: ScrapeRequest, user: dict = Depends(get_current_user)):
-    """Task 11: Nhận diện link Shopee / TikTok Shop (chưa cào dữ liệu thật)"""
-    return scrape_product_url(str(req.url))
+    """Đọc tên, giá, chất liệu, ảnh từ link sản phẩm (Shopee, TikTok Shop, website thời trang)."""
+    try:
+        return scrape_product_url(req.url)
+    except UnsafeURL as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/api/products/{product_id}/hotspots")

@@ -79,7 +79,7 @@ def handle_sepay_event(payload: dict) -> dict:
         conn.close()
 
     if result == "credited":
-        res = verify_and_credit_transaction(tx_id)
+        res = verify_and_credit_transaction(tx_id, confirmed_by="sepay")
         if res["status"] != "success":
             result = res["status"]
     return {"result": result, "transaction_id": tx_id}

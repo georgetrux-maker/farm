@@ -59,18 +59,16 @@ def cors_origins() -> list:
     return [o.strip() for o in raw.split(",") if o.strip()]
 
 
-def _admin_config(name: str) -> str:
-    try:
-        import sqlite3
-        conn = sqlite3.connect(db_path(), timeout=1)
-        row = conn.execute("SELECT value_enc FROM admin_api_configs WHERE key = ?", (name,)).fetchone()
-        conn.close()
-        if row and row[0]:
-            from backend import crypto_utils
-            return crypto_utils.decrypt(row[0]).strip()
-    except Exception:
-        pass
-    return ""
+def _admin(name: str) -> str:
+    """Giá trị quản trị viên đã lưu trong trang Admin (ưu tiên hơn backend/.env)."""
+    from backend import admin_config
+
+    return admin_config.get(name)
+
+
+def _admin_int(name: str, env_name: str, default: int) -> int:
+    raw = _admin(name)
+    return int(raw) if raw.isdigit() else _env_int(env_name, default)
 
 
 def rate_limit_per_minute() -> int:
@@ -78,10 +76,7 @@ def rate_limit_per_minute() -> int:
 
 
 def pipeline_cost_credits() -> int:
-    cfg = _admin_config("pipeline_cost_credits")
-    if cfg and cfg.isdigit():
-        return int(cfg)
-    return _env_int("PIPELINE_COST_CREDITS", 30)
+    return _admin_int("pipeline_cost_credits", "PIPELINE_COST_CREDITS", 30)
 
 
 def max_upload_bytes() -> int:
@@ -96,7 +91,6 @@ def ffmpeg_bin() -> str:
         if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
             return candidate
     return "ffmpeg"
-
 
 
 def ffmpeg_timeout_sec() -> int:
@@ -124,46 +118,51 @@ def stale_job_minutes() -> int:
 
 
 # --- Nhà cung cấp AI (để trống = dùng engine tạm, không tốn phí) ---
+# Model chọn được trong trang Admin (đều hỗ trợ effort, structured output và fallbacks="default")
+ANTHROPIC_MODELS = ("claude-opus-5-5", "claude-sonnet-5-5")
+
+
 def anthropic_api_key() -> str:
-    return _admin_config("anthropic_api_key") or _env("ANTHROPIC_API_KEY") or _env("ANTHROPIC_AUTH_TOKEN")
+    """Key nhập trong trang Admin, nếu không có thì ANTHROPIC_API_KEY trong .env."""
+    return _admin("anthropic_api_key") or _env("ANTHROPIC_API_KEY")
 
 
 def anthropic_enabled() -> bool:
-    """SDK Anthropic tự đọc ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN từ môi trường."""
-    return bool(anthropic_api_key())
+    """Có key, hoặc ANTHROPIC_AUTH_TOKEN mà SDK tự đọc từ môi trường."""
+    return bool(anthropic_api_key() or _env("ANTHROPIC_AUTH_TOKEN"))
 
 
 def anthropic_model() -> str:
-    return _admin_config("anthropic_model") or _env("ANTHROPIC_MODEL", "claude-opus-5-5")
+    chosen = _admin("anthropic_model")
+    return chosen if chosen in ANTHROPIC_MODELS else _env("ANTHROPIC_MODEL", "claude-opus-5-5")
 
 
 def fashn_api_key() -> str:
-    return _admin_config("fashn_api_key") or _env("FASHN_API_KEY")
+    return _admin("fashn_api_key") or _env("FASHN_API_KEY")
 
 
 def fashn_model_name() -> str:
-    return _admin_config("fashn_model_name") or _env("FASHN_MODEL_NAME", "tryon-v1.6")
+    return _admin("fashn_model_name") or _env("FASHN_MODEL_NAME", "tryon-v1.6")
 
 
 def fashn_mode() -> str:
-    return _admin_config("fashn_mode") or _env("FASHN_MODE", "balanced")
+    return _admin("fashn_mode") or _env("FASHN_MODE", "balanced")
 
 
 def replicate_api_token() -> str:
-    return _admin_config("replicate_api_token") or _env("REPLICATE_API_TOKEN")
+    return _admin("replicate_api_token") or _env("REPLICATE_API_TOKEN")
 
 
 def replicate_video_model() -> str:
-    return _admin_config("replicate_video_model") or _env("REPLICATE_VIDEO_MODEL", "kwaivgi/kling-v3-video")
+    return _admin("replicate_video_model") or _env("REPLICATE_VIDEO_MODEL", "kwaivgi/kling-v3-video")
 
 
 def kling_mode() -> str:
-    return _admin_config("kling_mode") or _env("KLING_MODE", "standard")
+    return _admin("kling_mode") or _env("KLING_MODE", "standard")
 
 
 def ai_timeout_sec() -> int:
     return _env_int("AI_TIMEOUT_SEC", 600)
-
 
 
 def public_base_url() -> str:
@@ -173,10 +172,7 @@ def public_base_url() -> str:
 
 def tryon_preview_cost_credits() -> int:
     """Phần credit không hoàn lại khi khách từ chối ảnh thử đồ (đã tốn phí thử đồ)."""
-    cfg = _admin_config("tryon_preview_cost_credits")
-    if cfg and cfg.isdigit():
-        return int(cfg)
-    return _env_int("TRYON_PREVIEW_COST_CREDITS", 5)
+    return _admin_int("tryon_preview_cost_credits", "TRYON_PREVIEW_COST_CREDITS", 5)
 
 
 # --- Tài khoản & bảo mật ---
@@ -190,10 +186,7 @@ def session_days() -> int:
 
 
 def signup_bonus_credits() -> int:
-    cfg = _admin_config("signup_bonus_credits")
-    if cfg and cfg.isdigit():
-        return int(cfg)
-    return _env_int("SIGNUP_BONUS_CREDITS", 0)
+    return _admin_int("signup_bonus_credits", "SIGNUP_BONUS_CREDITS", 0)
 
 
 def allow_signup() -> bool:
@@ -207,16 +200,16 @@ def frontend_url() -> str:
 
 # --- Webhook ngân hàng (SePay) ---
 def sepay_webhook_key() -> str:
-    return _admin_config("sepay_webhook_key") or _env("SEPAY_WEBHOOK_KEY")
+    return _admin("sepay_webhook_key") or _env("SEPAY_WEBHOOK_KEY")
 
 
 # --- Đăng video lên mạng xã hội ---
 def tiktok_client_key() -> str:
-    return _admin_config("tiktok_client_key") or _env("TIKTOK_CLIENT_KEY")
+    return _admin("tiktok_client_key") or _env("TIKTOK_CLIENT_KEY")
 
 
 def tiktok_client_secret() -> str:
-    return _admin_config("tiktok_client_secret") or _env("TIKTOK_CLIENT_SECRET")
+    return _admin("tiktok_client_secret") or _env("TIKTOK_CLIENT_SECRET")
 
 
 def tiktok_label_aigc() -> bool:
@@ -225,11 +218,11 @@ def tiktok_label_aigc() -> bool:
 
 
 def facebook_app_id() -> str:
-    return _admin_config("facebook_app_id") or _env("FACEBOOK_APP_ID")
+    return _admin("facebook_app_id") or _env("FACEBOOK_APP_ID")
 
 
 def facebook_app_secret() -> str:
-    return _admin_config("facebook_app_secret") or _env("FACEBOOK_APP_SECRET")
+    return _admin("facebook_app_secret") or _env("FACEBOOK_APP_SECRET")
 
 
 def facebook_graph_version() -> str:
@@ -243,16 +236,15 @@ def oauth_redirect_uri(platform: str) -> str:
 
 # Thông tin nhận tiền VietQR (phải trùng với tài khoản thật của shop)
 def bank_id() -> str:
-    return _admin_config("vietqr_bank_id") or _env("VIETQR_BANK_ID", "MB")
+    return _admin("vietqr_bank_id") or _env("VIETQR_BANK_ID", "MB")
 
 
 def bank_account_no() -> str:
-    return _admin_config("vietqr_account_no") or _env("VIETQR_ACCOUNT_NO")
+    return _admin("vietqr_account_no") or _env("VIETQR_ACCOUNT_NO")
 
 
 def bank_account_name() -> str:
-    return _admin_config("vietqr_account_name") or _env("VIETQR_ACCOUNT_NAME", "AURA FASHION AI")
-
+    return _admin("vietqr_account_name") or _env("VIETQR_ACCOUNT_NAME", "AURA FASHION AI")
 
 
 MIN_DEPOSIT_VND = 10_000

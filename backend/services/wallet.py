@@ -85,8 +85,11 @@ def list_transactions(user_id: str, limit: int = 30) -> list:
     return [dict(r) for r in rows]
 
 
-def verify_and_credit_transaction(transaction_id: str) -> dict:
-    """Xác nhận đã nhận tiền và cộng credit. Chỉ gọi từ luồng quản trị/webhook đã xác thực."""
+def verify_and_credit_transaction(transaction_id: str, confirmed_by: str = "admin") -> dict:
+    """Xác nhận đã nhận tiền và cộng credit. Chỉ gọi từ luồng quản trị/webhook đã xác thực.
+
+    confirmed_by ghi lại nguồn xác nhận ("sepay", "admin:<user_id>", "cli") để đối soát.
+    """
     conn = get_db()
     try:
         cursor = conn.cursor()
@@ -99,8 +102,8 @@ def verify_and_credit_transaction(transaction_id: str) -> dict:
             return {"status": "error", "message": "Giao dịch không tồn tại"}
 
         # Chỉ chuyển pending -> success đúng một lần, kể cả khi bị gọi đồng thời
-        cursor.execute("UPDATE wallet_transactions SET status = 'success' WHERE id = ? AND status = 'pending'",
-                       (transaction_id,))
+        cursor.execute("UPDATE wallet_transactions SET status = 'success', confirmed_at = CURRENT_TIMESTAMP, "
+                       "confirmed_by = ? WHERE id = ? AND status = 'pending'", (confirmed_by[:64], transaction_id))
         if cursor.rowcount == 0:
             conn.rollback()
             return {"status": "already_processed", "message": "Giao dịch đã được ghi nhận trước đó"}

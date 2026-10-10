@@ -1,24 +1,27 @@
 """Quản trị: người mẫu AI, cấu hình hệ thống, kiểm tra sức khỏe máy chủ"""
 
+import logging
 import os
 import sqlite3
-from typing import Optional
+from datetime import datetime, timedelta, timezone
+from typing import Dict, Literal, Optional, Union
 
-import httpx
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from pydantic import BaseModel, Field, StrictInt
 
 from backend import config
 from backend.ai import motion as motion_engine, script as script_engine, segmentation as seg_engine, vton as vton_engine
 from backend.auth import require_admin_role
 from backend.database import (
-    add_brand_avatar_entry, get_brand_avatars_list, get_db, get_system_settings, save_admin_api_config, save_system_settings,
-    set_default_brand_avatar,
+    add_brand_avatar_entry, get_brand_avatars_list, get_db, get_system_settings, save_system_settings,
+    set_default_brand_avatar, update_brand_avatar,
 )
-from backend.ffmpeg_utils import ffmpeg_available
+from backend.ffmpeg_utils import ffmpeg_available, ffmpeg_has_filter
 from backend.media_paths import media_url, resolve_media_ref
-from backend.services import task_queue
+from backend.services import admin_settings, provider_check, task_queue
+from backend.services.wallet import verify_and_credit_transaction
 
+log = logging.getLogger("aura")
 router = APIRouter()
 
 
@@ -40,13 +43,38 @@ class AddAvatarRequest(BaseModel):
 
 @router.post("/api/avatars")
 def api_add_avatar(req: AddAvatarRequest, user: dict = Depends(require_admin_role)):
-    url = req.avatar_url.strip()
-    if not url.startswith("https://"):
-        url = media_url(resolve_media_ref(url))
+    url = _avatar_image_url(req.avatar_url)
     return add_brand_avatar_entry(
         name=req.name, style=req.style, height=req.height, weight=req.weight,
         measurements=req.measurements, avatar_url=url, badge=req.badge or "Tùy Chỉnh",
     )
+
+
+def _avatar_image_url(url: str) -> str:
+    url = url.strip()
+    return url if url.startswith("https://") else media_url(resolve_media_ref(url))
+
+
+class UpdateAvatarRequest(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=80)
+    style: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    height: Optional[str] = Field(default=None, max_length=20)
+    weight: Optional[str] = Field(default=None, max_length=20)
+    measurements: Optional[str] = Field(default=None, max_length=40)
+    avatar_url: Optional[str] = Field(default=None, max_length=1000, description="URL https hoặc /media/... đã upload")
+    badge: Optional[str] = Field(default=None, max_length=40)
+
+
+@router.patch("/api/avatars/{avatar_id}")
+def api_update_avatar(avatar_id: str, req: UpdateAvatarRequest, user: dict = Depends(require_admin_role)):
+    """Đổi ảnh hoặc thông tin người mẫu AI"""
+    fields = req.model_dump(exclude_none=True)
+    if "avatar_url" in fields:
+        fields["avatar_url"] = _avatar_image_url(fields["avatar_url"])
+    res = update_brand_avatar(avatar_id, **fields)
+    if res is None:
+        raise HTTPException(status_code=404, detail="Người mẫu không tồn tại")
+    return res
 
 
 class SetDefaultAvatarRequest(BaseModel):
@@ -85,6 +113,11 @@ def _health_report() -> list:
         add("Cơ sở dữ liệu", "FAILED", "database.py", str(e))
     add("FFmpeg", "PASSED" if ffmpeg_available() else "FAILED", "ffmpeg_utils.py",
         "" if ffmpeg_available() else "Chưa cài ffmpeg, không tạo được video")
+    if ffmpeg_available():
+        has_ass = ffmpeg_has_filter("ass")
+        add("Phụ đề in trong video (libass)", "PASSED" if has_ass else "WARNING", "ai/render.py",
+            "" if has_ass else "FFmpeg thiếu libass: video vẫn tạo được nhưng không có phụ đề. "
+                               "Cài bản ffmpeg đầy đủ (vd brew install ffmpeg-full) rồi khởi động lại")
     try:
         import edge_tts  # noqa: F401
         add("Lồng tiếng edge-tts", "PASSED", "ai/tts.py", "Cần internet để gọi dịch vụ")
@@ -131,144 +164,121 @@ def api_system_audit(user: dict = Depends(require_admin_role)):
     }
 
 
-def mask_key(val: str) -> str:
-    if not val:
-        return ""
-    if len(val) <= 8:
-        return "***"
-    return f"{val[:6]}***{val[-4:]}"
-
-
+# ----------------------------------------------------------------- cài đặt API & hệ thống
 @router.get("/api/admin/api-keys")
 def api_get_admin_api_keys(user: dict = Depends(require_admin_role)):
-    return {
-        "anthropic": {
-            "is_configured": bool(config.anthropic_api_key()),
-            "masked_key": mask_key(config.anthropic_api_key()),
-            "model": config.anthropic_model(),
-        },
-        "fashn": {
-            "is_configured": bool(config.fashn_api_key()),
-            "masked_key": mask_key(config.fashn_api_key()),
-            "model_name": config.fashn_model_name(),
-            "mode": config.fashn_mode(),
-        },
-        "replicate": {
-            "is_configured": bool(config.replicate_api_token()),
-            "masked_key": mask_key(config.replicate_api_token()),
-            "video_model": config.replicate_video_model(),
-            "kling_mode": config.kling_mode(),
-        },
-        "vietqr": {
-            "bank_id": config.bank_id(),
-            "account_no": config.bank_account_no(),
-            "account_name": config.bank_account_name(),
-            "is_configured": bool(config.bank_account_no()),
-        },
-        "sepay": {
-            "is_configured": bool(config.sepay_webhook_key()),
-            "masked_key": mask_key(config.sepay_webhook_key()),
-        },
-        "tiktok": {
-            "is_configured": bool(config.tiktok_client_key()),
-            "client_key": mask_key(config.tiktok_client_key()),
-            "has_secret": bool(config.tiktok_client_secret()),
-        },
-        "facebook": {
-            "is_configured": bool(config.facebook_app_id()),
-            "app_id": mask_key(config.facebook_app_id()),
-            "has_secret": bool(config.facebook_app_secret()),
-        },
-        "pricing": {
-            "pipeline_cost_credits": config.pipeline_cost_credits(),
-            "tryon_preview_cost_credits": config.tryon_preview_cost_credits(),
-            "signup_bonus_credits": config.signup_bonus_credits(),
-        }
-    }
+    """Cấu hình đang có hiệu lực. Key bí mật chỉ trả về dạng đã che; source cho biết lấy từ Admin hay .env."""
+    return {"secret_key_ready": admin_settings.secret_key_ready(), "settings": admin_settings.describe()}
 
 
 @router.post("/api/admin/api-keys")
-def api_save_admin_api_keys(req: dict, user: dict = Depends(require_admin_role)):
-    for k, v in req.items():
-        if v is not None:
-            if isinstance(v, str) and "***" in v:
-                continue
-            save_admin_api_config(k, str(v).strip())
-    return {"status": "success", "message": "Đã lưu cấu hình API thành công"}
+def api_save_admin_api_keys(req: Dict[str, Union[StrictInt, str, None]] = Body(...),
+                            user: dict = Depends(require_admin_role)):
+    """Chỉ gửi các ô đã sửa. Giá trị rỗng/null = xóa khỏi Admin, quay về dùng backend/.env."""
+    if not admin_settings.secret_key_ready():
+        raise HTTPException(status_code=400, detail="Chưa đặt APP_SECRET_KEY (ít nhất 32 ký tự) trong backend/.env "
+                                                    "nên chưa thể mã hóa và lưu cấu hình. Đặt biến này rồi khởi động lại máy chủ.")
+    try:
+        saved = admin_settings.update(req)
+    except admin_settings.SettingError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    log.info("Quản trị viên %s đã đổi cấu hình: %s", user["id"], ", ".join(saved) or "(không có)")
+    return {"status": "success", "saved": saved,
+            "message": "Đã lưu cấu hình" if saved else "Không có thay đổi nào để lưu",
+            "settings": admin_settings.describe()}
+
+
+class ProviderTestRequest(BaseModel):
+    provider: Literal["anthropic", "fashn", "replicate", "sepay", "tiktok", "facebook"]
+    values: Dict[str, str] = Field(default_factory=dict, description="Các ô vừa gõ (chưa lưu) để thử trước khi lưu")
 
 
 @router.post("/api/admin/api-keys/test")
-def api_test_admin_api_key(req: dict, user: dict = Depends(require_admin_role)):
-    provider = req.get("provider", "").lower()
-    if provider == "anthropic":
-        key = config.anthropic_api_key()
-        if not key:
-            return {"ok": False, "message": "Chưa điền Anthropic API Key"}
-        try:
-            import anthropic
-            c = anthropic.Anthropic(api_key=key, timeout=8.0)
-            c.models.list(limit=1)
-            return {"ok": True, "message": "Kết nối Claude Anthropic thành công!"}
-        except Exception as e:
-            return {"ok": False, "message": f"Lỗi Anthropic: {str(e)[:150]}"}
-    elif provider == "fashn":
-        key = config.fashn_api_key()
-        if not key:
-            return {"ok": False, "message": "Chưa điền FASHN API Key"}
-        try:
-            res = httpx.get("https://api.fashn.ai/v1/models", headers={"Authorization": f"Bearer {key}"}, timeout=8.0)
-            if res.status_code == 200:
-                return {"ok": True, "message": "Kết nối FASHN.ai thành công!"}
-            return {"ok": False, "message": f"FASHN báo lỗi xác thực (HTTP {res.status_code})"}
-        except Exception as e:
-            return {"ok": False, "message": f"Không kết nối được FASHN: {str(e)[:150]}"}
-    elif provider == "replicate":
-        token = config.replicate_api_token()
-        if not token:
-            return {"ok": False, "message": "Chưa điền Replicate API Token"}
-        try:
-            res = httpx.get("https://api.replicate.com/v1/account", headers={"Authorization": f"Bearer {token}"}, timeout=8.0)
-            if res.status_code == 200:
-                user_info = res.json().get("username", "")
-                return {"ok": True, "message": f"Kết nối Replicate thành công! Tài khoản: {user_info}"}
-            return {"ok": False, "message": f"Replicate báo lỗi token (HTTP {res.status_code})"}
-        except Exception as e:
-            return {"ok": False, "message": f"Không kết nối được Replicate: {str(e)[:150]}"}
-    elif provider == "sepay":
-        key = config.sepay_webhook_key()
-        if not key:
-            return {"ok": False, "message": "Chưa điền SePay Webhook Key"}
-        return {"ok": True, "message": "SePay Webhook Key sẵn sàng"}
-    return {"ok": False, "message": f"Nhà cung cấp không xác định: {provider}"}
+def api_test_admin_api_key(req: ProviderTestRequest, user: dict = Depends(require_admin_role)):
+    return provider_check.run(req.provider, req.values)
+
+
+# ----------------------------------------------------------------- tổng quan doanh thu & người dùng
+VN_TZ = timedelta(hours=7)
+
+
+def _period_starts(now_utc: datetime = None) -> dict:
+    """Mốc đầu ngày / tuần (thứ Hai) / tháng theo giờ Việt Nam, đổi về UTC để so với CURRENT_TIMESTAMP."""
+    local = (now_utc or datetime.now(timezone.utc).replace(tzinfo=None)) + VN_TZ
+    day = local.replace(hour=0, minute=0, second=0, microsecond=0)
+    starts = {"today": day, "week": day - timedelta(days=day.weekday()), "month": day.replace(day=1)}
+    return {k: (v - VN_TZ).strftime("%Y-%m-%d %H:%M:%S") for k, v in starts.items()}
 
 
 @router.get("/api/admin/stats-overview")
 def api_admin_stats_overview(user: dict = Depends(require_admin_role)):
+    starts = _period_starts()
     conn = get_db()
-    total_users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-    total_credits = conn.execute("SELECT SUM(credits) FROM users").fetchone()[0] or 0
-    total_revenue_vnd = conn.execute(
-        "SELECT SUM(amount_vnd) FROM wallet_transactions WHERE status = 'success' AND transaction_type = 'deposit'"
-    ).fetchone()[0] or 0
+    try:
+        def periods(sql: str, time_col: str) -> dict:
+            """Tổng toàn thời gian và từ đầu hôm nay / tuần này / tháng này (giờ Việt Nam)."""
+            out = {"total": conn.execute(sql).fetchone()[0] or 0}
+            for name, since in starts.items():
+                out[name] = conn.execute(f"{sql} AND {time_col} >= ?", (since,)).fetchone()[0] or 0
+            return out
 
-    total_jobs = conn.execute("SELECT COUNT(*) FROM ai_jobs").fetchone()[0]
-    completed_jobs = conn.execute("SELECT COUNT(*) FROM ai_jobs WHERE status = 'completed'").fetchone()[0]
+        revenue = periods("SELECT SUM(amount_vnd) FROM wallet_transactions WHERE transaction_type = 'deposit' "
+                          "AND status = 'success'", "COALESCE(confirmed_at, created_at)")
+        shops = periods("SELECT COUNT(*) FROM users WHERE role != 'admin'", "created_at")
+        videos = periods("SELECT COUNT(*) FROM ai_jobs WHERE status = 'completed'", "COALESCE(completed_at, created_at)")
+        summary = {
+            "revenue_vnd": revenue, "new_shops": shops, "completed_videos": videos,
+            "total_jobs": conn.execute("SELECT COUNT(*) FROM ai_jobs").fetchone()[0],
+            "credits_in_wallets": conn.execute("SELECT COALESCE(SUM(credits), 0) FROM users "
+                                               "WHERE role != 'admin'").fetchone()[0],
+            "pending_deposits": conn.execute("SELECT COUNT(*) FROM wallet_transactions WHERE "
+                                             "transaction_type = 'deposit' AND status = 'pending'").fetchone()[0],
+        }
+        recent_users = conn.execute("SELECT id, name, email, role, credits, created_at FROM users "
+                                    "ORDER BY created_at DESC LIMIT 10").fetchall()
+    finally:
+        conn.close()
+    return {"summary": summary, "recent_users": [dict(r) for r in recent_users]}
 
-    recent_users = conn.execute("SELECT id, name, email, role, credits, created_at FROM users ORDER BY created_at DESC LIMIT 10").fetchall()
-    recent_transactions = conn.execute(
-        "SELECT t.*, u.name as user_name, u.email as user_email FROM wallet_transactions t "
-        "LEFT JOIN users u ON t.user_id = u.id ORDER BY t.created_at DESC LIMIT 20"
-    ).fetchall()
-    conn.close()
 
-    return {
-        "summary": {
-            "total_users": total_users,
-            "total_credits_in_circulation": total_credits,
-            "total_revenue_vnd": total_revenue_vnd,
-            "total_jobs": total_jobs,
-            "completed_jobs": completed_jobs,
-        },
-        "recent_users": [dict(r) for r in recent_users],
-        "recent_transactions": [dict(r) for r in recent_transactions],
-    }
+# ----------------------------------------------------------------- lịch sử nạp tiền & duyệt tay
+@router.get("/api/admin/deposits")
+def api_admin_deposits(status: Literal["pending", "success", "all"] = "pending",
+                       q: Optional[str] = Query(None, max_length=100, description="Tìm theo mã nạp, tên hoặc email"),
+                       page: int = Query(1, ge=1, le=10_000), page_size: int = Query(20, ge=1, le=100),
+                       user: dict = Depends(require_admin_role)):
+    """Chỉ các lệnh nạp tiền (không lẫn giao dịch trừ/hoàn credit khi tạo video)."""
+    where, args = ["t.transaction_type = 'deposit'"], []
+    if status != "all":
+        where.append("t.status = ?")
+        args.append(status)
+    if q and q.strip():
+        like = "%" + q.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        where.append("(t.qr_code_ref LIKE ? ESCAPE '\\' OR t.id LIKE ? ESCAPE '\\' OR u.email LIKE ? ESCAPE '\\' "
+                     "OR u.name LIKE ? ESCAPE '\\')")
+        args += [like] * 4
+    sql_where = " AND ".join(where)
+    conn = get_db()
+    try:
+        total = conn.execute(f"SELECT COUNT(*) FROM wallet_transactions t LEFT JOIN users u ON u.id = t.user_id "
+                             f"WHERE {sql_where}", args).fetchone()[0]
+        rows = conn.execute(
+            f"SELECT t.id, t.user_id, u.name AS user_name, u.email AS user_email, t.amount_vnd, t.amount_credits, "
+            f"t.qr_code_ref, t.status, t.created_at, t.confirmed_at, t.confirmed_by "
+            f"FROM wallet_transactions t LEFT JOIN users u ON u.id = t.user_id WHERE {sql_where} "
+            f"ORDER BY t.created_at DESC, t.id DESC LIMIT ? OFFSET ?",
+            args + [page_size, (page - 1) * page_size]).fetchall()
+    finally:
+        conn.close()
+    return {"items": [dict(r) for r in rows], "total": total, "page": page, "page_size": page_size,
+            "has_more": page * page_size < total}
+
+
+@router.post("/api/admin/deposits/{transaction_id}/verify")
+def api_admin_verify_deposit(transaction_id: str, user: dict = Depends(require_admin_role)):
+    """Duyệt tay khi khách chuyển sai nội dung (sau khi đã kiểm tra sao kê ngân hàng)."""
+    res = verify_and_credit_transaction(transaction_id, confirmed_by=f"admin:{user['id']}")
+    if res["status"] == "error":
+        raise HTTPException(status_code=404, detail=res["message"])
+    log.info("Quản trị viên %s duyệt tay giao dịch nạp %s: %s", user["id"], transaction_id, res["status"])
+    return res

@@ -54,7 +54,7 @@ class VerifyDepositRequest(BaseModel):
 @router.post("/api/admin/wallet/verify", dependencies=[Depends(require_admin_token)])
 def api_verify_deposit(req: VerifyDepositRequest):
     """Task 9: Quản trị viên xác nhận đã nhận tiền (Đợt 3 thay bằng webhook ngân hàng)"""
-    res = verify_and_credit_transaction(req.transaction_id)
+    res = verify_and_credit_transaction(req.transaction_id, confirmed_by="admin-token")
     if res["status"] == "error":
         raise HTTPException(status_code=404, detail=res["message"])
     return res

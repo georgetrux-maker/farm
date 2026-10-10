@@ -252,6 +252,9 @@ def init_db():
     _add_column_if_missing(cursor, "ai_jobs", "refunded", "INTEGER DEFAULT 0")
     _add_column_if_missing(cursor, "ai_jobs", "updated_at", "TIMESTAMP")  # SQLite không cho DEFAULT động khi ALTER
     _add_column_if_missing(cursor, "wallet_transactions", "amount_vnd", "INTEGER")
+    # Ai xác nhận tiền về và lúc nào: "sepay", "admin:<id>", "cli"
+    _add_column_if_missing(cursor, "wallet_transactions", "confirmed_at", "TIMESTAMP")
+    _add_column_if_missing(cursor, "wallet_transactions", "confirmed_by", "TEXT")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_user ON ai_jobs(user_id, created_at)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_tx_user ON wallet_transactions(user_id, created_at)")
     cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_token ON users(api_token_hash)")
@@ -313,6 +316,8 @@ def init_db():
 
     conn.commit()
     conn.close()
+    from backend import admin_config
+    admin_config.invalidate()  # DB có thể vừa được tạo lại (test, khôi phục bản sao lưu)
 
 
 def create_user(name: str, email: str, role: str = "shop", credits: int = 0) -> dict:
@@ -419,53 +424,27 @@ def save_system_settings(settings_dict: dict):
     return get_system_settings()
 
 
-def get_admin_api_config(key: str):
+def save_admin_api_configs(changes: dict):
+    """Lưu nhiều cấu hình trong một giao dịch: chuỗi rỗng/None = xóa (quay về giá trị trong .env).
+
+    Mã hóa trước khi mở giao dịch để thiếu APP_SECRET_KEY thì không ghi gì cả.
+    """
+    from backend import admin_config, crypto_utils
+
+    rows = {key: crypto_utils.encrypt(str(value).strip()) if value not in (None, "") else None
+            for key, value in changes.items()}
     conn = get_db()
-    row = conn.execute("SELECT value_enc FROM admin_api_configs WHERE key = ?", (key,)).fetchone()
-    conn.close()
-    if not row or not row["value_enc"]:
-        return None
-    from backend import crypto_utils
     try:
-        return crypto_utils.decrypt(row["value_enc"])
-    except Exception:
-        return None
-
-
-def get_all_admin_api_configs() -> dict:
-    conn = get_db()
-    rows = conn.execute("SELECT key, value_enc FROM admin_api_configs").fetchall()
-    conn.close()
-    from backend import crypto_utils
-    out = {}
-    for r in rows:
-        try:
-            val = crypto_utils.decrypt(r["value_enc"])
-            if val:
-                out[r["key"]] = val
-        except Exception:
-            pass
-    return out
-
-
-def save_admin_api_config(key: str, value: str):
-    from backend import crypto_utils
-    val = (value or "").strip()
-    conn = get_db()
-    if not val:
-        conn.execute("DELETE FROM admin_api_configs WHERE key = ?", (key,))
-    else:
-        enc = crypto_utils.encrypt(val)
-        conn.execute("INSERT OR REPLACE INTO admin_api_configs (key, value_enc, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)", (key, enc))
-    conn.commit()
-    conn.close()
-
-
-def save_admin_api_configs_batch(configs: dict):
-    for k, v in configs.items():
-        if isinstance(v, str):
-            save_admin_api_config(k, v)
-
+        for key, enc in rows.items():
+            if enc is None:
+                conn.execute("DELETE FROM admin_api_configs WHERE key = ?", (key,))
+            else:
+                conn.execute("INSERT OR REPLACE INTO admin_api_configs (key, value_enc, updated_at) "
+                             "VALUES (?, ?, CURRENT_TIMESTAMP)", (key, enc))
+        conn.commit()
+    finally:
+        conn.close()
+    admin_config.invalidate()
 
 
 def get_brand_avatars_list():
@@ -492,6 +471,24 @@ def add_brand_avatar_entry(name: str, style: str, height: str, weight: str, meas
     conn.commit()
     conn.close()
     return {"id": avatar_id, "name": name, "style": style, "height": height, "weight": weight, "measurements": measurements, "avatar_url": avatar_url, "badge": badge, "renders_count": 0, "is_default": 0}
+
+
+_AVATAR_FIELDS = ("name", "style", "height", "weight", "measurements", "avatar_url", "badge")
+
+
+def update_brand_avatar(avatar_id: str, **fields):
+    """Sửa thông tin/ảnh người mẫu. Trả về bản ghi mới, hoặc None nếu không tồn tại."""
+    fields = {k: v for k, v in fields.items() if k in _AVATAR_FIELDS}
+    conn = get_db()
+    try:
+        if fields:
+            sets = ", ".join(f"{k} = ?" for k in fields)
+            conn.execute(f"UPDATE brand_avatars SET {sets} WHERE id = ?", (*fields.values(), avatar_id))
+            conn.commit()
+        row = conn.execute("SELECT * FROM brand_avatars WHERE id = ?", (avatar_id,)).fetchone()
+    finally:
+        conn.close()
+    return dict(row) if row else None
 
 
 def set_default_brand_avatar(avatar_id: str):

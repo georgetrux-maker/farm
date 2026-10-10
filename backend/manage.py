@@ -29,7 +29,7 @@ def main():
         print(f"Đã tạo {user['id']} ({user['role']}).")
         print(f"API token (chỉ hiện một lần, hãy lưu lại): {user['api_token']}")
     else:
-        print(verify_and_credit_transaction(args.transaction_id))
+        print(verify_and_credit_transaction(args.transaction_id, confirmed_by="cli"))
 
 
 if __name__ == "__main__":
