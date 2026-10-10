@@ -1,16 +1,9 @@
-import React, { useState } from 'react'
-import { BarChart3, CheckCircle2, Film, Link2, LogOut, Menu, Moon, QrCode, Sun, Wand2, X } from 'lucide-react'
+import React, { useEffect, useRef, useState } from 'react'
+import { LogOut, Moon, Plus, ShieldCheck, Sun, Wallet } from 'lucide-react'
 import { useEscapeKey } from '../hooks/useEscapeKey'
 import { formatNumber } from '../lib/format'
-
-export type View = 'create' | 'videos' | 'connect' | 'stats'
-
-const NAV_ITEMS: { id: View; label: string; icon: React.ElementType }[] = [
-  { id: 'create', label: 'Tạo video', icon: Wand2 },
-  { id: 'videos', label: 'Video của tôi', icon: Film },
-  { id: 'connect', label: 'Kết nối', icon: Link2 },
-  { id: 'stats', label: 'Thống kê', icon: BarChart3 },
-]
+import { NAV_ITEMS, type View } from '../lib/navigation'
+import { Wordmark } from './ui/Wordmark'
 
 interface HeaderProps {
   activeView: View
@@ -20,12 +13,10 @@ interface HeaderProps {
   onToggleTheme: () => void
   onOpenDeposit: () => void
   onOpenAudit?: () => void
-  userName?: string
+  userName: string
+  userEmail: string
   onLogout: () => void
 }
-
-const iconButton =
-  'w-9 h-9 shrink-0 rounded-xl bg-[var(--bg-surface)] hover:bg-[var(--border-strong)] border border-[var(--border-subtle)] flex items-center justify-center text-[var(--text-main)] transition-colors'
 
 export const Header: React.FC<HeaderProps> = ({
   activeView,
@@ -36,146 +27,128 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenDeposit,
   onOpenAudit,
   userName,
+  userEmail,
   onLogout,
 }) => {
   const [menuOpen, setMenuOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
   useEscapeKey(menuOpen, () => setMenuOpen(false))
 
-  const go = (view: View) => {
-    setActiveView(view)
-    setMenuOpen(false)
-  }
+  // Bấm ra ngoài thì đóng menu tài khoản
+  useEffect(() => {
+    if (!menuOpen) return
+    const onDown = (e: MouseEvent) => {
+      if (!menuRef.current?.contains(e.target as Node)) setMenuOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [menuOpen])
+
+  const initial = (userName.trim()[0] ?? '?').toUpperCase()
+  const menuItem =
+    'w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-[var(--text-sub)] hover:bg-[var(--bg-surface)] hover:text-[var(--text-main)] transition-colors'
 
   return (
-    <header className="relative h-14 shrink-0 z-30 border-b border-[var(--border-subtle)] bg-[var(--bg-card)] px-3 sm:px-5 flex items-center justify-between gap-3">
-      {/* Thương hiệu */}
-      <button onClick={() => go('create')} className="flex items-center gap-2.5 shrink-0" aria-label="Về trang tạo video">
-        <span className="w-8 h-8 rounded-lg bg-[var(--accent-color)] flex items-center justify-center text-black font-extrabold text-sm">
-          A
-        </span>
-        <span className="font-display font-bold text-base tracking-wider text-[var(--text-main)]">AURA</span>
+    <header className="relative z-30 h-14 lg:h-16 shrink-0 border-b border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--bg-card)_88%,transparent)] backdrop-blur-md px-4 lg:px-8 flex items-center justify-between gap-4">
+      <button onClick={() => setActiveView('create')} aria-label="Aura, về trang tạo video" className="shrink-0">
+        <Wordmark className="text-xl lg:text-[1.4rem]" />
       </button>
 
-      {/* Menu trên máy tính */}
-      <nav className="hidden lg:flex items-center gap-1 bg-[var(--bg-surface)] p-1 rounded-xl border border-[var(--border-subtle)]">
-        {NAV_ITEMS.map(({ id, label, icon: Icon }) => (
-          <button
-            key={id}
-            onClick={() => go(id)}
-            aria-current={activeView === id ? 'page' : undefined}
-            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-sm font-semibold whitespace-nowrap transition-colors ${
-              activeView === id
-                ? 'bg-[var(--bg-card)] text-[var(--text-main)] shadow-sm border border-[var(--border-subtle)]'
-                : 'text-[var(--text-muted)] hover:text-[var(--text-main)] border border-transparent'
-            }`}
-          >
-            <Icon className="w-4 h-4 text-[var(--accent-text)]" />
-            {label}
-          </button>
-        ))}
+      {/* Menu chính trên máy tính: chữ có gạch chân như tạp chí thời trang */}
+      <nav className="hidden lg:flex items-center gap-9 h-full">
+        {NAV_ITEMS.map(({ id, label }) => {
+          const active = activeView === id
+          return (
+            <button
+              key={id}
+              onClick={() => setActiveView(id)}
+              aria-current={active ? 'page' : undefined}
+              className={`relative h-full text-sm font-medium transition-colors ${
+                active ? 'text-[var(--text-main)]' : 'text-[var(--text-muted)] hover:text-[var(--text-main)]'
+              }`}
+            >
+              {label}
+              <span
+                className={`absolute left-0 right-0 -bottom-px h-[2px] rounded-full bg-[var(--text-main)] transition-transform duration-300 origin-center ${
+                  active ? 'scale-x-100' : 'scale-x-0'
+                }`}
+              />
+            </button>
+          )
+        })}
       </nav>
 
-      <div className="flex items-center gap-2 min-w-0">
-        <button
-          onClick={onToggleTheme}
-          className={`${iconButton} hidden lg:flex`}
-          title={theme === 'dark' ? 'Chuyển sang nền sáng' : 'Chuyển sang nền tối'}
-          aria-label={theme === 'dark' ? 'Chuyển sang nền sáng' : 'Chuyển sang nền tối'}
-        >
-          {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-        </button>
-        {onOpenAudit && (
-          <button onClick={onOpenAudit} className={`${iconButton} hidden lg:flex`} title="Kiểm tra hệ thống" aria-label="Kiểm tra hệ thống">
-            <CheckCircle2 className="w-4 h-4 text-[var(--accent-text)]" />
-          </button>
-        )}
-
+      <div className="flex items-center gap-2 sm:gap-3 min-w-0">
         {/* Số dư: luôn hiện, bấm để nạp */}
         <button
           onClick={onOpenDeposit}
-          className="flex items-center gap-2 h-9 pl-3 pr-2 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] hover:border-[var(--border-strong)] transition-colors min-w-0"
           title="Nạp credit"
+          aria-label={`Số dư ${formatNumber(walletCredits)} credit, bấm để nạp`}
+          className="flex items-center gap-2 h-10 pl-1.5 pr-1.5 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-card)] hover:border-[var(--border-strong)] transition-colors"
         >
-          <span className="text-sm font-bold tabular-nums text-[var(--text-main)] whitespace-nowrap">
-            {formatNumber(walletCredits)} <span className="text-[var(--accent-text)] font-semibold">credit</span>
+          <span className="w-7 h-7 rounded-full bg-[var(--gold-soft)] text-[var(--gold)] flex items-center justify-center">
+            <Wallet className="w-4 h-4" />
           </span>
-          <span className="flex items-center gap-1 px-2 py-1 rounded-lg bg-[var(--accent-color)] text-black text-xs font-bold whitespace-nowrap">
-            <QrCode className="w-3.5 h-3.5" />
+          <span className="text-sm font-semibold tabular-nums whitespace-nowrap">
+            {formatNumber(walletCredits)}
+            <span className="hidden sm:inline font-normal text-[var(--text-muted)]"> credit</span>
+          </span>
+          <span className="h-7 px-2.5 sm:px-3 rounded-full bg-[var(--ink)] text-[var(--on-ink)] text-xs font-semibold flex items-center gap-1">
+            <Plus className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">Nạp</span>
           </span>
         </button>
 
-        <div className="hidden lg:flex items-center gap-2 pl-2 border-l border-[var(--border-subtle)]">
-          {userName && <span className="hidden xl:inline text-sm text-[var(--text-muted)] max-w-[160px] truncate">{userName}</span>}
-          <button onClick={onLogout} className={iconButton} title="Đăng xuất" aria-label="Đăng xuất">
-            <LogOut className="w-4 h-4" />
+        {/* Tài khoản: giao diện sáng/tối, kiểm tra hệ thống, đăng xuất */}
+        <div ref={menuRef} className="relative">
+          <button
+            onClick={() => setMenuOpen((v) => !v)}
+            aria-label="Tài khoản"
+            aria-expanded={menuOpen}
+            className="w-10 h-10 rounded-full bg-[var(--accent-soft)] text-[var(--accent-text)] font-display text-lg font-semibold flex items-center justify-center ring-1 ring-[var(--accent-border)] hover:ring-[var(--accent-color)] transition"
+          >
+            {initial}
           </button>
-        </div>
-
-        {/* Nút menu trên điện thoại / máy tính bảng */}
-        <button
-          onClick={() => setMenuOpen((v) => !v)}
-          className={`${iconButton} lg:hidden`}
-          aria-label={menuOpen ? 'Đóng menu' : 'Mở menu'}
-          aria-expanded={menuOpen}
-        >
-          {menuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-        </button>
-      </div>
-
-      {menuOpen && (
-        <>
-          <div className="fixed inset-0 top-14 bg-black/50 lg:hidden" onClick={() => setMenuOpen(false)} />
-          <div className="absolute left-0 right-0 top-14 lg:hidden bg-[var(--bg-card)] border-b border-[var(--border-subtle)] shadow-2xl p-3 space-y-1">
-            {userName && <div className="px-3 pt-1 pb-2 text-sm text-[var(--text-muted)] truncate">Xin chào, {userName}</div>}
-            {NAV_ITEMS.map(({ id, label, icon: Icon }) => (
+          {menuOpen && (
+            <div className="absolute right-0 top-12 w-72 card p-2 animate-scale-in origin-top-right">
+              <div className="px-3 pt-2 pb-3 border-b border-[var(--border-subtle)] mb-1">
+                <div className="font-semibold truncate">{userName}</div>
+                <div className="text-sm text-[var(--text-muted)] truncate">{userEmail}</div>
+              </div>
               <button
-                key={id}
-                onClick={() => go(id)}
-                aria-current={activeView === id ? 'page' : undefined}
-                className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-base font-semibold ${
-                  activeView === id ? 'bg-[var(--bg-surface)] text-[var(--text-main)]' : 'text-[var(--text-muted)]'
-                }`}
-              >
-                <Icon className="w-5 h-5 text-[var(--accent-text)]" />
-                {label}
-              </button>
-            ))}
-            <div className="grid grid-cols-2 gap-2 pt-2 mt-1 border-t border-[var(--border-subtle)]">
-              <button
+                className={menuItem}
                 onClick={() => {
                   onToggleTheme()
                   setMenuOpen(false)
                 }}
-                className="flex items-center justify-center gap-2 py-2.5 rounded-xl bg-[var(--bg-surface)] text-sm font-medium"
               >
                 {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-                {theme === 'dark' ? 'Nền sáng' : 'Nền tối'}
-              </button>
-              <button
-                onClick={() => {
-                  setMenuOpen(false)
-                  onLogout()
-                }}
-                className="flex items-center justify-center gap-2 py-2.5 rounded-xl bg-[var(--bg-surface)] text-sm font-medium"
-              >
-                <LogOut className="w-4 h-4" /> Đăng xuất
+                {theme === 'dark' ? 'Giao diện sáng' : 'Giao diện tối'}
               </button>
               {onOpenAudit && (
                 <button
+                  className={menuItem}
                   onClick={() => {
                     setMenuOpen(false)
                     onOpenAudit()
                   }}
-                  className="col-span-2 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-[var(--bg-surface)] text-sm font-medium"
                 >
-                  <CheckCircle2 className="w-4 h-4 text-[var(--accent-text)]" /> Kiểm tra hệ thống
+                  <ShieldCheck className="w-4 h-4" /> Kiểm tra hệ thống
                 </button>
               )}
+              <button
+                className={menuItem}
+                onClick={() => {
+                  setMenuOpen(false)
+                  onLogout()
+                }}
+              >
+                <LogOut className="w-4 h-4" /> Đăng xuất
+              </button>
             </div>
-          </div>
-        </>
-      )}
+          )}
+        </div>
+      </div>
     </header>
   )
 }

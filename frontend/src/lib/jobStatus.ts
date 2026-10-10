@@ -1,11 +1,11 @@
-export type StatusTone = 'ok' | 'warn' | 'danger' | 'muted' | 'busy'
+export type StatusTone = 'ok' | 'warn' | 'danger' | 'muted' | 'busy' | 'accent'
 type StatusMap = Record<string, { label: string; tone: StatusTone }>
 
 export const JOB_STATUS: StatusMap = {
   queued: { label: 'Đang chờ', tone: 'busy' },
   pending: { label: 'Đang chờ', tone: 'busy' },
   processing: { label: 'Đang tạo', tone: 'busy' },
-  awaiting_approval: { label: 'Chờ bạn duyệt', tone: 'warn' },
+  awaiting_approval: { label: 'Chờ bạn duyệt', tone: 'accent' },
   completed: { label: 'Hoàn tất', tone: 'ok' },
   failed: { label: 'Lỗi', tone: 'danger' },
   rejected: { label: 'Đã hủy', tone: 'muted' },

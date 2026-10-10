@@ -12,14 +12,14 @@ Upload ảnh sản phẩm, chọn người mẫu và mẫu video, hệ thống t
 
 | Phần | Trạng thái |
 |---|---|
-| Giao diện 4 mục: **Tạo video**, **Video của tôi**, **Kết nối**, **Thống kê**; số dư và nút nạp luôn ở góc trên; dùng tốt trên điện thoại | ✅ |
+| Giao diện phong cách thời trang (nền ngà, chữ serif, nút màu mực, có nền tối) với 4 mục: **Tạo video**, **Video của tôi**, **Kết nối**, **Thống kê**; số dư và nút nạp luôn ở góc trên; điện thoại có thanh tab dưới | ✅ |
 | Màn hình **Tạo video** 3 bước: upload ảnh → chọn người mẫu, kiểu video → duyệt & tải (tên file tải về theo tên sản phẩm) | ✅ |
 | Chấm chất lượng ảnh đầu vào (độ phân giải, độ nét, ảnh mờ, độ sáng) | ✅ Chạy tại chỗ, miễn phí |
 | Phân tích ảnh sản phẩm (loại, màu, chất liệu, điểm nổi bật) + viết kịch bản, caption, hashtag | ✅ **Claude** khi có `ANTHROPIC_API_KEY`; không có thì dùng mẫu câu |
 | Thử đồ lên đúng người mẫu đã chọn | ✅ **FASHN** khi có `FASHN_API_KEY`; không có thì chỉ đặt sản phẩm lên phông nền |
 | 4 kiểu video (catwalk, xoay, dạo phố, cận chất liệu) | ✅ **Kling 3.0 qua Replicate** khi có `REPLICATE_API_TOKEN`; không có thì chuyển động máy quay bằng FFmpeg |
 | Duyệt ảnh thử đồ trước khi tạo video, từ chối được hoàn credit | ✅ |
-| Video dọc 720x1280, 30 fps, chuyển cảnh mượt, **phụ đề tiếng Việt in sẵn trong video** | ✅ Cần FFmpeg có libass và font DejaVu (Dockerfile đã cài) |
+| Video dọc 720x1280, 30 fps, chuyển cảnh mượt, **phụ đề tiếng Việt in sẵn trong video**, thẻ tên sản phẩm + giá ở đầu video | ✅ Cần FFmpeg có libass; font Be Vietnam Pro và Playfair Display (giấy phép SIL OFL) đóng gói sẵn trong `backend/assets/fonts` |
 | Lồng tiếng tiếng Việt (+ file phụ đề WebVTT) | ✅ Edge-TTS (cần internet), có phương án dự phòng |
 | Ví credit, hoàn credit khi lỗi, lịch sử credit, upload, hàng đợi | ✅ |
 | Nạp tiền VietQR, **tự cộng credit khi tiền về** | ✅ qua webhook **SePay** (`SEPAY_WEBHOOK_KEY`); chuyển thiếu tiền thì chờ quản trị viên |

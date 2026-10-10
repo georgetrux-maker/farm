@@ -30,7 +30,7 @@ const CopyRow: React.FC<CopyRowProps> = ({ label, value, copyValue, highlight })
   const toast = useToast()
   const [copied, setCopied] = useState(false)
   return (
-    <div className="flex items-center justify-between gap-3 p-3 rounded-xl bg-[var(--bg-surface)]">
+    <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-2xl bg-[var(--bg-surface)]">
       <div className="min-w-0">
         <span className="text-xs text-[var(--text-muted)] block">{label}</span>
         <span className={`font-semibold break-all ${highlight ? 'text-[var(--accent-text)] font-mono' : ''}`}>{value}</span>
@@ -46,10 +46,10 @@ const CopyRow: React.FC<CopyRowProps> = ({ label, value, copyValue, highlight })
             })
             .catch(() => toast('Trình duyệt không cho sao chép, hãy chép tay', 'error'))
         }
-        className="p-2 rounded-lg hover:bg-[var(--bg-card)] text-[var(--text-muted)] shrink-0"
+        className="icon-btn"
         aria-label={`Sao chép ${label.toLowerCase()}`}
       >
-        {copied ? <Check className="w-4 h-4 text-[var(--accent-text)]" /> : <Copy className="w-4 h-4" />}
+        {copied ? <Check className="w-4 h-4 text-[var(--ok-text)]" /> : <Copy className="w-4 h-4" />}
       </button>
     </div>
   )
@@ -93,13 +93,13 @@ export const VietQRModal: React.FC<VietQRModalProps> = ({ open, onClose, pending
       open={open}
       onClose={onClose}
       title="Nạp credit qua VietQR"
-      icon={<QrCode className="w-5 h-5 text-[var(--accent-text)]" />}
+      icon={<QrCode className="w-5 h-5 text-[var(--gold)]" />}
     >
       {!pending ? (
         <div className="space-y-4">
           <div>
-            <span className="text-sm font-medium text-[var(--text-muted)] block mb-2">Chọn số tiền</span>
-            <div className="grid grid-cols-2 gap-2">
+            <span className="field-label">Chọn số tiền</span>
+            <div className="grid grid-cols-2 gap-2.5">
               {PACKAGES.map((amt) => {
                 const active = !custom && amount === amt
                 return (
@@ -110,30 +110,34 @@ export const VietQRModal: React.FC<VietQRModalProps> = ({ open, onClose, pending
                       setCustom('')
                     }}
                     aria-pressed={active}
-                    className={`py-3 rounded-xl text-sm font-semibold border transition-colors ${
+                    className={`py-3.5 rounded-2xl border text-left px-4 transition-colors ${
                       active
-                        ? 'bg-[var(--accent-soft)] border-[var(--accent-color)] text-[var(--accent-text)]'
-                        : 'bg-[var(--bg-surface)] border-[var(--border-subtle)] text-[var(--text-main)]'
+                        ? 'border-[var(--ink)] bg-[var(--accent-soft)]'
+                        : 'border-[var(--border-subtle)] bg-[var(--bg-card)] hover:border-[var(--border-strong)]'
                     }`}
                   >
-                    {formatVnd(amt)}
+                    <span className="block font-display text-lg font-semibold">{formatVnd(amt)}</span>
+                    <span className="block text-xs text-[var(--text-muted)]">
+                      {formatNumber(amt / VND_PER_CREDIT)} credit
+                      {videoCost ? ` · khoảng ${formatNumber(Math.floor(amt / VND_PER_CREDIT / videoCost))} video` : ''}
+                    </span>
                   </button>
                 )
               })}
             </div>
           </div>
           <label className="block">
-            <span className="text-sm font-medium text-[var(--text-muted)] block mb-1.5">Hoặc nhập số tiền khác (đồng)</span>
+            <span className="field-label">Hoặc nhập số tiền khác (đồng)</span>
             <input
               inputMode="numeric"
               value={custom}
               onChange={(e) => setCustom(e.target.value.replace(/[^\d.]/g, ''))}
               placeholder="Ví dụ: 30000"
-              className="w-full bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[var(--accent-color)]"
+              className="field"
             />
           </label>
 
-          <div className="p-3 rounded-xl bg-[var(--bg-surface)] text-sm space-y-1">
+          <div className="px-4 py-3 rounded-2xl bg-[var(--bg-surface)] text-sm space-y-1">
             <div className="flex justify-between">
               <span className="text-[var(--text-muted)]">Bạn nhận</span>
               <strong>{formatNumber(credits)} credit</strong>
@@ -150,11 +154,7 @@ export const VietQRModal: React.FC<VietQRModalProps> = ({ open, onClose, pending
           </div>
 
           {error && <p className="text-sm text-[var(--danger-text)]">{error}</p>}
-          <button
-            onClick={handleCreate}
-            disabled={loading}
-            className="w-full py-3 rounded-xl bg-[var(--accent-color)] text-black font-semibold text-sm flex items-center justify-center gap-2 disabled:opacity-60"
-          >
+          <button onClick={handleCreate} disabled={loading} className="btn btn-primary btn-lg w-full">
             {loading && <Loader2 className="w-4 h-4 animate-spin" />}
             Tạo mã QR thanh toán
           </button>
@@ -162,11 +162,11 @@ export const VietQRModal: React.FC<VietQRModalProps> = ({ open, onClose, pending
       ) : (
         <div className="space-y-3">
           {qrFailed === pending.transaction_id ? (
-            <p className="text-sm p-3 rounded-xl border border-[var(--warn-border)] bg-[var(--warn-bg)] text-[var(--warn-text)]">
+            <p className="text-sm p-3 rounded-2xl border border-[var(--warn-border)] bg-[var(--warn-bg)] text-[var(--warn-text)]">
               Không tải được ảnh mã QR. Bạn chuyển khoản theo đúng thông tin bên dưới, nhớ ghi đúng nội dung chuyển khoản.
             </p>
           ) : (
-            <div className="flex flex-col items-center p-4 rounded-2xl bg-white">
+            <div className="flex flex-col items-center p-4 rounded-3xl bg-white border border-[var(--border-subtle)]">
               <img
                 src={pending.qr_code_url}
                 alt="Mã VietQR"
@@ -179,7 +179,7 @@ export const VietQRModal: React.FC<VietQRModalProps> = ({ open, onClose, pending
           <div className="space-y-2 text-sm">
             <CopyRow label={`Số tài khoản (${pending.bank_id})`} value={pending.account_number} />
             {pending.account_holder && (
-              <div className="p-3 rounded-xl bg-[var(--bg-surface)]">
+              <div className="px-4 py-3 rounded-2xl bg-[var(--bg-surface)]">
                 <span className="text-xs text-[var(--text-muted)] block">Chủ tài khoản</span>
                 <span className="font-semibold">{pending.account_holder}</span>
               </div>
@@ -187,14 +187,14 @@ export const VietQRModal: React.FC<VietQRModalProps> = ({ open, onClose, pending
             <CopyRow label="Số tiền" value={formatVnd(pending.amount_vnd)} copyValue={String(pending.amount_vnd)} />
             <CopyRow label="Nội dung chuyển khoản (bắt buộc)" value={pending.transfer_content} highlight />
           </div>
-          <div className="flex items-start gap-2 text-sm text-[var(--text-muted)] p-3 rounded-xl border border-[var(--border-subtle)]">
+          <div className="flex items-start gap-2 text-sm text-[var(--text-muted)] px-4 py-3 rounded-2xl border border-[var(--border-subtle)]">
             <Loader2 className="w-4 h-4 animate-spin text-[var(--accent-text)] shrink-0 mt-0.5" />
             <span>
               Đang chờ tiền về. Credit được cộng tự động sau khi chuyển khoản, bạn có thể đóng cửa sổ này và tiếp tục làm
               việc.
             </span>
           </div>
-          <button onClick={onDiscard} className="text-sm text-[var(--accent-text)] font-medium">
+          <button onClick={onDiscard} className="text-sm text-[var(--accent-text)] font-semibold underline underline-offset-2">
             Nạp số tiền khác
           </button>
         </div>

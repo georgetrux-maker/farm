@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Loader2, RefreshCw } from 'lucide-react'
-import { Header, type View } from './components/Header'
+import { Header } from './components/Header'
+import { BottomNav } from './components/BottomNav'
+import { Wordmark } from './components/ui/Wordmark'
 import { LoginView } from './components/Auth/LoginView'
 import { CreateVideoView } from './components/Create/CreateVideoView'
 import { MyVideosView } from './components/Videos/MyVideosView'
@@ -14,6 +16,7 @@ import {
   type DepositInfo, type UserProfile,
 } from './services/api'
 import { formatNumber, formatVnd } from './lib/format'
+import type { View } from './lib/navigation'
 
 const VIEWS: View[] = ['create', 'videos', 'connect', 'stats']
 const DEPOSIT_WATCH_MS = 30 * 60 * 1000 // theo dõi tiền về tối đa 30 phút
@@ -28,14 +31,13 @@ function initialView(): View {
   return new URLSearchParams(window.location.search).has('social') ? 'connect' : viewFromHash()
 }
 
+/** Mặc định nền sáng (đúng phong cách thời trang); người dùng chọn nền tối thì nhớ lại */
 function savedTheme(): 'dark' | 'light' {
   try {
-    const saved = localStorage.getItem('aura_theme')
-    if (saved === 'light' || saved === 'dark') return saved
+    return localStorage.getItem('aura_theme') === 'dark' ? 'dark' : 'light'
   } catch {
-    // bỏ qua
+    return 'light'
   }
-  return window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
 }
 
 export default function App() {
@@ -125,9 +127,8 @@ export default function App() {
 
   // Giao diện sáng / tối
   useEffect(() => {
-    document.documentElement.classList.toggle('light', theme === 'light')
     document.documentElement.classList.toggle('dark', theme === 'dark')
-    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'light' ? '#FFFFFF' : '#0A0B10')
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#1B1714' : '#FBF8F4')
     try {
       localStorage.setItem('aura_theme', theme)
     } catch {
@@ -178,21 +179,20 @@ export default function App() {
 
   if (authState === 'loading') {
     return (
-      <div className="flex-1 flex items-center justify-center bg-[var(--bg-app)]">
-        <Loader2 className="w-6 h-6 animate-spin text-[var(--text-muted)]" />
+      <div className="flex-1 flex flex-col items-center justify-center gap-4 text-[var(--text-main)]">
+        <Wordmark className="text-3xl animate-fade-in" />
+        <Loader2 className="w-5 h-5 animate-spin text-[var(--text-muted)]" />
       </div>
     )
   }
   if (authState === 'offline') {
     return (
-      <div className="flex-1 flex items-center justify-center bg-[var(--bg-app)] text-[var(--text-main)] px-4">
-        <div className="max-w-sm text-center space-y-3">
-          <h1 className="font-display font-bold text-lg">Không kết nối được máy chủ</h1>
+      <div className="flex-1 flex items-center justify-center text-[var(--text-main)] px-4">
+        <div className="max-w-sm text-center space-y-4 animate-fade-up">
+          <Wordmark className="text-2xl" />
+          <h1 className="display text-2xl">Không kết nối được máy chủ</h1>
           <p className="text-sm text-[var(--text-muted)]">Kiểm tra mạng của bạn rồi thử lại.</p>
-          <button
-            onClick={loadProfile}
-            className="px-4 py-2.5 rounded-xl bg-[var(--accent-color)] text-black font-semibold text-sm inline-flex items-center gap-2"
-          >
+          <button onClick={loadProfile} className="btn btn-primary">
             <RefreshCw className="w-4 h-4" /> Thử lại
           </button>
         </div>
@@ -204,7 +204,7 @@ export default function App() {
   }
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col bg-[var(--bg-app)] text-[var(--text-main)]">
+    <div className="flex-1 min-h-0 flex flex-col text-[var(--text-main)]">
       <Header
         activeView={activeView}
         setActiveView={setActiveView}
@@ -214,12 +214,13 @@ export default function App() {
         onOpenDeposit={openDeposit}
         onOpenAudit={isAdmin ? () => setAuditOpen(true) : undefined}
         userName={user.name}
+        userEmail={user.email}
         onLogout={handleLogout}
       />
 
       <main className="flex-1 min-h-0 flex">
         {/* Giữ trang Tạo video khi chuyển trang để không mất ảnh/thông tin đang nhập hoặc tiến độ */}
-        <div className={activeView === 'create' ? 'flex-1 min-w-0 flex' : 'hidden'}>
+        <div className={activeView === 'create' ? 'flex-1 min-w-0 flex animate-fade-in' : 'hidden'}>
           <CreateVideoView
             credits={walletCredits}
             isAdmin={isAdmin}
@@ -228,12 +229,18 @@ export default function App() {
             onOpenVideos={openVideos}
           />
         </div>
-        {activeView === 'videos' && <MyVideosView onCreate={openCreate} onCreditsChange={setWalletCredits} />}
-        {activeView === 'connect' && <ConnectView isAdmin={isAdmin} />}
-        {activeView === 'stats' && (
-          <StatsView user={user} credits={walletCredits} isAdmin={isAdmin} onOpenDeposit={openDeposit} />
+        {activeView !== 'create' && (
+          <div key={activeView} className="flex-1 min-w-0 flex animate-fade-in">
+            {activeView === 'videos' && <MyVideosView onCreate={openCreate} onCreditsChange={setWalletCredits} />}
+            {activeView === 'connect' && <ConnectView isAdmin={isAdmin} />}
+            {activeView === 'stats' && (
+              <StatsView user={user} credits={walletCredits} isAdmin={isAdmin} onOpenDeposit={openDeposit} />
+            )}
+          </div>
         )}
       </main>
+
+      <BottomNav activeView={activeView} setActiveView={setActiveView} />
 
       <VietQRModal
         open={depositOpen}

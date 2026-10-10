@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react'
-import { Loader2, Send, Link2 } from 'lucide-react'
+import { Loader2, Send } from 'lucide-react'
 import {
   fetchCreatorInfo, fetchPublications, fetchSocialStatus, publishVideo, startSocialConnect,
   type Publication, type SocialStatus, type TikTokCreatorInfo,
 } from '../../services/api'
+import { FacebookLogo, TikTokLogo } from '../ui/BrandLogos'
 import { StatusBadge } from '../ui/StatusBadge'
 import { useToast } from '../ui/toastContext'
 
@@ -93,8 +94,8 @@ export const PublishPanel: React.FC<PublishPanelProps> = ({ jobId, defaultCaptio
   const canPublish = account && caption.trim() && (account.platform !== 'tiktok' || (creator && privacy)) && !busy
 
   return (
-    <div className="space-y-3 p-4 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)]">
-      <div className="font-semibold text-sm">Đăng lên mạng xã hội</div>
+    <section className="card p-5 space-y-4">
+      <h3 className="font-semibold">Đăng lên mạng xã hội</h3>
 
       {status.accounts.length === 0 ? (
         <div className="space-y-2">
@@ -105,9 +106,10 @@ export const PublishPanel: React.FC<PublishPanelProps> = ({ jobId, defaultCaptio
                 <button
                   key={p}
                   onClick={() => startSocialConnect(p).catch((e) => setError(e.message))}
-                  className="px-3 py-2 rounded-lg border border-[var(--border-strong)] text-sm flex items-center gap-1.5"
+                  className="btn btn-secondary btn-sm"
                 >
-                  <Link2 className="w-4 h-4" /> Kết nối {p === 'tiktok' ? 'TikTok' : 'Trang Facebook'}
+                  {p === 'tiktok' ? <TikTokLogo className="w-4 h-4" /> : <FacebookLogo className="w-4 h-4 text-[#1877F2]" />}
+                  Kết nối {p === 'tiktok' ? 'TikTok' : 'Trang Facebook'}
                 </button>
               ) : null,
             )}
@@ -129,13 +131,10 @@ export const PublishPanel: React.FC<PublishPanelProps> = ({ jobId, defaultCaptio
                   setCreator(null)
                 }}
                 aria-pressed={accountId === a.id}
-                className={`px-3 py-2 rounded-lg border text-sm ${
-                  accountId === a.id
-                    ? 'border-[var(--accent-color)] bg-[var(--accent-soft)] font-medium'
-                    : 'border-[var(--border-subtle)] bg-[var(--bg-card)]'
-                }`}
+                className="chip"
               >
-                {a.platform === 'tiktok' ? 'TikTok' : 'Facebook'}: {a.display_name}
+                {a.platform === 'tiktok' ? <TikTokLogo className="w-4 h-4" /> : <FacebookLogo className="w-4 h-4" />}
+                {a.display_name}
               </button>
             ))}
           </div>
@@ -143,13 +142,13 @@ export const PublishPanel: React.FC<PublishPanelProps> = ({ jobId, defaultCaptio
           {account && (
             <>
               <label className="block">
-                <span className="text-sm text-[var(--text-muted)] block mb-1">Nội dung bài đăng</span>
+                <span className="field-label">Nội dung bài đăng</span>
                 <textarea
                   value={caption}
                   onChange={(e) => setCaption(e.target.value)}
                   maxLength={2200}
                   rows={3}
-                  className="w-full bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-sm outline-none"
+                  className="field resize-y"
                 />
               </label>
 
@@ -160,12 +159,8 @@ export const PublishPanel: React.FC<PublishPanelProps> = ({ jobId, defaultCaptio
                       <div className="text-[var(--text-muted)]">Đăng lên tài khoản: @{creator.creator_nickname}</div>
                     )}
                     <label className="block">
-                      <span className="text-[var(--text-muted)] block mb-1">Ai có thể xem video này *</span>
-                      <select
-                        value={privacy}
-                        onChange={(e) => setPrivacy(e.target.value)}
-                        className="w-full bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-lg px-3 py-2 outline-none"
-                      >
+                      <span className="field-label">Ai có thể xem video này *</span>
+                      <select value={privacy} onChange={(e) => setPrivacy(e.target.value)} className="field">
                         <option value="" disabled>
                           Chọn chế độ hiển thị
                         </option>
@@ -213,11 +208,7 @@ export const PublishPanel: React.FC<PublishPanelProps> = ({ jobId, defaultCaptio
                   </div>
                 ))}
 
-              <button
-                onClick={handlePublish}
-                disabled={!canPublish}
-                className="w-full py-2.5 rounded-xl bg-[var(--accent-color)] text-black font-semibold text-sm flex items-center justify-center gap-2 disabled:opacity-50"
-              >
+              <button onClick={handlePublish} disabled={!canPublish} className="btn btn-primary w-full">
                 {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
                 Đăng lên {account.platform === 'tiktok' ? 'TikTok' : 'Facebook Reels'}
               </button>
@@ -242,6 +233,6 @@ export const PublishPanel: React.FC<PublishPanelProps> = ({ jobId, defaultCaptio
           ))}
         </ul>
       )}
-    </div>
+    </section>
   )
 }

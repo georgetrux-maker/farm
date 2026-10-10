@@ -107,9 +107,10 @@ def test_render_burns_subtitles_720p_without_jump_cuts(client, monkeypatch, tmp_
                                  output_name="speech.mp3")
     assert speech["phrases"] and speech["duration_sec"] > clip["duration_sec"]
 
-    with_subs = render_final_video(clip["video_path"], speech["audio_path"], "with_subs.mp4", speech["phrases"])
+    with_subs = render_final_video(clip["video_path"], speech["audio_path"], "with_subs.mp4", speech["phrases"],
+                                   title="Áo khoác dạ", price_text="350.000đ")
     without = render_final_video(clip["video_path"], speech["audio_path"], "without_subs.mp4")
-    assert with_subs["resolution"] == "720x1280" and with_subs["subtitles_burned"]
+    assert with_subs["resolution"] == "720x1280" and with_subs["subtitles_burned"] and with_subs["title_tag"]
     assert abs(with_subs["duration_sec"] - (speech["duration_sec"] + 0.4)) < 0.2
 
     # Phụ đề nằm trong hình: vùng chữ ở phần dưới khung khác hẳn bản không có phụ đề
@@ -119,6 +120,10 @@ def test_render_burns_subtitles_720p_without_jump_cuts(client, monkeypatch, tmp_
     band = (0, 800, 720, 1100)
     diff = [abs(x - y) for x, y in zip(a.crop(band).tobytes(), b.crop(band).tobytes())]
     assert sum(1 for d in diff if d > 60) > 2000
+    # Thẻ tên + giá ở phần trên khung trong vài giây đầu
+    top = (0, 60, 720, 260)
+    diff = [abs(x - y) for x, y in zip(a.crop(top).tobytes(), b.crop(top).tobytes())]
+    assert sum(1 for d in diff if d > 60) > 1500
 
     # Đoạn 2 giây được nối bằng mờ chéo: không có khung nào nhảy đột ngột (cách lặp cũ cho độ chênh ~37)
     frames = _gray_frames(without["output_path"])
@@ -142,7 +147,21 @@ def test_ass_subtitles_escape_control_characters():
     line = [x for x in ass.splitlines() if x.startswith("Dialogue:")][0]
     assert "{" not in line and "\\" not in line
     assert line.startswith("Dialogue: 0,0:00:00.00,0:00:01.50,Default")
-    assert "PlayResX: 720" in ass and "DejaVu Sans" in ass
+    assert "PlayResX: 720" in ass and "Be Vietnam Pro ExtraBold" in ass
+
+
+def test_title_and_price_tags_fit_on_one_line():
+    from backend.ai import render
+
+    assert render._bundled_fonts() and render._fonts_dir_for_filter() == render.FONTS_DIR
+    ass = render.build_ass([], title="Áo {dạ} " + "rất dài " * 20, price="350.000đ")
+    title = [x for x in ass.splitlines() if x.startswith("Dialogue: 1,") and ",Title," in x][0]
+    price = [x for x in ass.splitlines() if x.startswith("Dialogue: 1,") and ",Price," in x][0]
+    text = title.split(",,", 1)[1]
+    assert "\\q2" in text and text.endswith("…") and "{dạ}" not in text  # không xuống dòng, quá dài thì cắt
+    assert price.endswith("350.000đ") and int(price.split(",")[7]) > 96  # thẻ giá nằm dưới thẻ tên
+    short = render.build_ass([], title="Áo khoác dạ")
+    assert "\\fs51}Áo khoác dạ" in short and ",Price," not in short
 
 
 def test_long_phrases_break_by_time():

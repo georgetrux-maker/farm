@@ -71,15 +71,20 @@ def _ffmpeg_motion(image_path: Optional[str], duration_sec: float, template: str
     # Phóng ảnh lớn hơn khung ra 1,5 lần để khi zoom vẫn nét
     big_w, big_h = WIDTH * 3 // 2, HEIGHT * 3 // 2
     if image_path:
-        vf = (
-            f"scale={big_w}:{big_h}:force_original_aspect_ratio=decrease,"
-            f"pad={big_w}:{big_h}:(ow-iw)/2:(oh-ih)/2:color=0x12141D,"
+        # Ảnh không đúng tỉ lệ 9:16 thì phần trống là chính ảnh đó phóng to và làm mờ (như TikTok),
+        # thay vì dải màu đen
+        graph = (
+            "[0:v]split=2[bg][fg];"
+            f"[bg]scale={big_w}:{big_h}:force_original_aspect_ratio=increase,crop={big_w}:{big_h},"
+            "boxblur=40:3,eq=brightness=0.04:saturation=0.85[blur];"
+            f"[fg]scale={big_w}:{big_h}:force_original_aspect_ratio=decrease[sharp];"
+            "[blur][sharp]overlay=(W-w)/2:(H-h)/2,"
             f"zoompan=z='{tpl['z']}':x='{tpl['x']}':y='{tpl['y']}':d={frames}:s={WIDTH}x{HEIGHT}:fps={FPS},"
-            "format=yuv420p"
+            "format=yuv420p[v]"
         )
-        args = ["-i", image_path, "-vf", vf, "-frames:v", str(frames)]
+        args = ["-i", image_path, "-filter_complex", graph, "-map", "[v]", "-frames:v", str(frames)]
     else:
-        args = ["-f", "lavfi", "-i", f"color=c=0x12141D:s={WIDTH}x{HEIGHT}:r={FPS}", "-t", f"{duration_sec:.3f}",
+        args = ["-f", "lavfi", "-i", f"color=c=0xF6F1EB:s={WIDTH}x{HEIGHT}:r={FPS}", "-t", f"{duration_sec:.3f}",
                 "-pix_fmt", "yuv420p"]
     run_ffmpeg([*args, "-c:v", "libx264", "-preset", "veryfast", "-r", str(FPS), output_path])
 
@@ -147,7 +152,7 @@ def _replicate_motion(image_path: str, duration_sec: int, template: str, output_
     out = media_path(output_name)
     run_ffmpeg(["-i", raw_path, "-an",
                 "-vf", f"scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=decrease,"
-                       f"pad={WIDTH}:{HEIGHT}:(ow-iw)/2:(oh-ih)/2:color=0x12141D,fps={FPS},format=yuv420p",
+                       f"pad={WIDTH}:{HEIGHT}:(ow-iw)/2:(oh-ih)/2:color=0x16120F,fps={FPS},format=yuv420p",
                 "-c:v", "libx264", "-preset", "veryfast", out])
     return out
 

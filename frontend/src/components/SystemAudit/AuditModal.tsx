@@ -10,7 +10,7 @@ interface AuditModalProps {
 }
 
 const ITEM_STATUS: Record<string, { label: string; icon: React.ElementType; className: string }> = {
-  PASSED: { label: 'Đạt', icon: CheckCircle2, className: 'text-[var(--accent-text)]' },
+  PASSED: { label: 'Đạt', icon: CheckCircle2, className: 'text-[var(--ok-text)]' },
   WARNING: { label: 'Cần chú ý', icon: AlertTriangle, className: 'text-[var(--warn-text)]' },
   FAILED: { label: 'Lỗi', icon: XCircle, className: 'text-[var(--danger-text)]' },
 }
@@ -66,11 +66,7 @@ export const AuditModal: React.FC<AuditModalProps> = ({ open, onClose }) => {
             'Kiểm tra trực tiếp trên máy chủ'
           )}
         </p>
-        <button
-          onClick={load}
-          disabled={loading}
-          className="px-3 py-2 rounded-lg border border-[var(--border-strong)] text-sm flex items-center gap-2 shrink-0 disabled:opacity-60"
-        >
+        <button onClick={load} disabled={loading} className="btn btn-secondary btn-sm shrink-0">
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /> Kiểm tra lại
         </button>
       </div>
@@ -88,7 +84,7 @@ export const AuditModal: React.FC<AuditModalProps> = ({ open, onClose }) => {
             const st = ITEM_STATUS[item.status] ?? ITEM_STATUS.WARNING
             const Icon = st.icon
             return (
-              <li key={item.task} className="flex items-start gap-3 p-3 rounded-xl bg-[var(--bg-surface)]">
+              <li key={item.task} className="flex items-start gap-3 px-4 py-3 rounded-2xl bg-[var(--bg-surface)]">
                 <Icon className={`w-5 h-5 shrink-0 mt-0.5 ${st.className}`} />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between gap-2">

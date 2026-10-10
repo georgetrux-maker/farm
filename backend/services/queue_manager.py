@@ -159,8 +159,9 @@ def _run_video_stage(job_id: str, params: dict, product: dict, tryon_path: str):
                              fill_duration_sec=tts["duration_sec"] + 0.4)
 
     _update_job(job_id, 'processing', 85, 'Bước 5/5: Ghép video, phụ đề và âm thanh')
+    price_text = f"{int(product['price']):,}đ".replace(",", ".") if product.get("price") else None
     final = render_final_video(motion["video_path"], tts["audio_path"], output_name=f"final_{job_id}.mp4",
-                               subtitle_phrases=tts["phrases"])
+                               subtitle_phrases=tts["phrases"], title=product["title"], price_text=price_text)
     script.update({"motion_engine": motion["engine"], "video_resolution": final["resolution"],
                    "video_duration_sec": final["duration_sec"], "subtitles_burned": final["subtitles_burned"]})
 

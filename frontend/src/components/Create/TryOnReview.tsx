@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Loader2, ThumbsDown, ThumbsUp } from 'lucide-react'
+import { Check, Loader2, ThumbsDown, ThumbsUp } from 'lucide-react'
 import { approveJob, rejectJob } from '../../services/api'
 import { useToast } from '../ui/toastContext'
 
@@ -12,6 +12,8 @@ interface TryOnReviewProps {
   onApproved: () => void
   onRejected: (remainingCredits: number) => void
 }
+
+const CHECKS = ['Màu sắc giống sản phẩm thật', 'Họa tiết, chi tiết không bị sai', 'Phom dáng vừa vặn với người mẫu']
 
 /** Xem ảnh thử đồ rồi chọn: tạo video, hoặc hủy (có bước xác nhận vì tốn phí thử đồ). */
 export const TryOnReview: React.FC<TryOnReviewProps> = ({
@@ -53,56 +55,47 @@ export const TryOnReview: React.FC<TryOnReviewProps> = ({
   }
 
   return (
-    <div className="grid sm:grid-cols-2 gap-5 sm:gap-6 items-center">
-      <img
-        src={imageUrl}
-        alt="Ảnh thử đồ"
-        className="w-full max-h-[60dvh] object-contain rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)]"
-      />
-      <div className="space-y-4">
-        <h2 className="font-semibold text-lg">Ảnh thử đồ đã xong</h2>
-        <p className="text-sm text-[var(--text-muted)]">
-          Kiểm tra màu sắc, họa tiết và phom dáng có đúng với sản phẩm thật không. Video sẽ được tạo từ ảnh này.
-        </p>
+    <div className="grid sm:grid-cols-2 gap-6 sm:gap-10 items-center">
+      <div className="rounded-3xl overflow-hidden bg-[var(--bg-surface)]">
+        <img src={imageUrl} alt="Ảnh thử đồ" className="w-full max-h-[64vh] object-contain" />
+      </div>
+      <div>
+        <p className="eyebrow">Bước duyệt</p>
+        <h2 className="display text-2xl sm:text-3xl mt-1.5">Ảnh thử đồ đã xong</h2>
+        <p className="text-[var(--text-muted)] mt-2">Video sẽ được tạo từ ảnh này. Bạn kiểm tra giúp:</p>
+        <ul className="mt-4 space-y-2.5 text-sm">
+          {CHECKS.map((c) => (
+            <li key={c} className="flex items-center gap-2.5">
+              <span className="w-5 h-5 shrink-0 rounded-full bg-[var(--accent-soft)] text-[var(--accent-text)] flex items-center justify-center">
+                <Check className="w-3 h-3" />
+              </span>
+              {c}
+            </li>
+          ))}
+        </ul>
 
         {!confirmReject ? (
-          <>
-            <button
-              onClick={approve}
-              disabled={busy !== null}
-              className="w-full py-3 rounded-xl bg-[var(--accent-color)] text-black font-semibold text-sm flex items-center justify-center gap-2 disabled:opacity-50"
-            >
+          <div className="mt-7 flex flex-col gap-2.5">
+            <button onClick={approve} disabled={busy !== null} className="btn btn-primary btn-lg w-full">
               {busy === 'approve' ? <Loader2 className="w-4 h-4 animate-spin" /> : <ThumbsUp className="w-4 h-4" />}
               Ưng ý, tạo video
             </button>
-            <button
-              onClick={() => setConfirmReject(true)}
-              disabled={busy !== null}
-              className="w-full py-3 rounded-xl border border-[var(--border-strong)] text-sm flex items-center justify-center gap-2 disabled:opacity-50"
-            >
+            <button onClick={() => setConfirmReject(true)} disabled={busy !== null} className="btn btn-secondary btn-lg w-full">
               <ThumbsDown className="w-4 h-4" /> Không ưng, hủy video này
             </button>
-          </>
+          </div>
         ) : (
-          <div className="p-4 rounded-xl border border-[var(--warn-border)] bg-[var(--warn-bg)] space-y-3">
+          <div className="mt-7 p-4 rounded-2xl border border-[var(--warn-border)] bg-[var(--warn-bg)] space-y-3 animate-fade-up">
             <p className="text-sm text-[var(--text-main)]">
               Hủy video này? Bạn được hoàn <strong>{refundCredits} credit</strong>
               {previewCost > 0 && <> (giữ lại {previewCost} credit phí thử đồ đã dùng)</>}.
             </p>
             <div className="flex gap-2">
-              <button
-                onClick={reject}
-                disabled={busy !== null}
-                className="flex-1 py-2.5 rounded-xl bg-[var(--danger-solid)] text-white text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-50"
-              >
+              <button onClick={reject} disabled={busy !== null} className="btn btn-danger flex-1">
                 {busy === 'reject' && <Loader2 className="w-4 h-4 animate-spin" />}
                 Hủy video
               </button>
-              <button
-                onClick={() => setConfirmReject(false)}
-                disabled={busy !== null}
-                className="flex-1 py-2.5 rounded-xl border border-[var(--border-strong)] text-sm font-medium"
-              >
+              <button onClick={() => setConfirmReject(false)} disabled={busy !== null} className="btn btn-secondary flex-1">
                 Quay lại
               </button>
             </div>

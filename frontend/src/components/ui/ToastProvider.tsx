@@ -8,10 +8,10 @@ interface Toast {
   kind: ToastKind
 }
 
-const STYLE: Record<ToastKind, string> = {
-  success: 'border-[var(--accent-border)] text-[var(--text-main)]',
-  error: 'border-[var(--danger-border)] text-[var(--text-main)]',
-  info: 'border-[var(--border-strong)] text-[var(--text-main)]',
+const ICON: Record<ToastKind, React.ReactNode> = {
+  success: <CheckCircle2 className="w-5 h-5 shrink-0 text-[#8BD3AC]" />,
+  error: <AlertTriangle className="w-5 h-5 shrink-0 text-[#F4A49C]" />,
+  info: <Info className="w-5 h-5 shrink-0 text-[#E3A1B4]" />,
 }
 
 export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -23,7 +23,7 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const show = useCallback(
     (text: string, kind: ToastKind = 'info') => {
       const id = nextId.current++
-      setToasts((list) => [...list.slice(-3), { id, text, kind }])
+      setToasts((list) => [...list.slice(-2), { id, text, kind }])
       setTimeout(() => dismiss(id), kind === 'error' ? 7000 : 4500)
     },
     [dismiss],
@@ -32,27 +32,22 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   return (
     <ToastContext.Provider value={show}>
       {children}
+      {/* Điện thoại: nằm trên thanh tab dưới; máy tính: góc phải dưới */}
       <div
-        className="fixed z-[60] bottom-4 left-4 right-4 sm:left-auto sm:right-6 sm:bottom-6 sm:w-96 flex flex-col gap-2 pointer-events-none"
+        className="fixed z-[60] left-3 right-3 bottom-[calc(5rem+env(safe-area-inset-bottom))] lg:left-auto lg:right-6 lg:bottom-6 lg:w-[380px] flex flex-col gap-2 pointer-events-none"
         role="status"
         aria-live="polite"
       >
         {toasts.map((t) => (
           <div
             key={t.id}
-            className={`pointer-events-auto flex items-start gap-2.5 p-3.5 rounded-xl border bg-[var(--bg-card)] shadow-2xl text-sm ${STYLE[t.kind]}`}
+            className="pointer-events-auto flex items-start gap-3 py-3 pl-4 pr-2 rounded-2xl bg-[#1E1916] text-[#F6F1EB] shadow-[var(--shadow-pop)] text-sm animate-fade-up ring-1 ring-white/10"
           >
-            {t.kind === 'success' ? (
-              <CheckCircle2 className="w-5 h-5 shrink-0 text-[var(--accent-text)]" />
-            ) : t.kind === 'error' ? (
-              <AlertTriangle className="w-5 h-5 shrink-0 text-[var(--danger-text)]" />
-            ) : (
-              <Info className="w-5 h-5 shrink-0 text-[var(--text-muted)]" />
-            )}
-            <span className="flex-1">{t.text}</span>
+            {ICON[t.kind]}
+            <span className="flex-1 pt-0.5 leading-snug">{t.text}</span>
             <button
               onClick={() => dismiss(t.id)}
-              className="text-[var(--text-muted)] hover:text-[var(--text-main)]"
+              className="p-1 rounded-full text-[#F6F1EB]/60 hover:text-[#F6F1EB]"
               aria-label="Đóng thông báo"
             >
               <X className="w-4 h-4" />

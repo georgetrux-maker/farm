@@ -1,69 +1,136 @@
 @import "tailwindcss";
 
+/* Chế độ tối bật bằng class .dark trên <html> (không theo hệ điều hành) */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
-  --font-sans: "Plus Jakarta Sans", system-ui, sans-serif;
-  --font-display: "Be Vietnam Pro", "Plus Jakarta Sans", system-ui, sans-serif;
+  --font-sans: "Be Vietnam Pro", system-ui, sans-serif;
+  --font-display: "Playfair Display", "Times New Roman", serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --animate-fade-up: fade-up 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-fade-in: fade-in 0.25s ease-out both;
+  --animate-scale-in: scale-in 0.3s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-sheet-up: sheet-up 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-float: float 7s ease-in-out infinite;
+  --animate-float-slow: float 9s ease-in-out infinite;
+
+  @keyframes fade-up {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes scale-in {
+    from { opacity: 0; transform: translateY(10px) scale(0.98); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes sheet-up {
+    from { transform: translateY(100%); }
+    to { transform: none; }
+  }
+  @keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-10px); }
+  }
 }
 
+/* ------------------------------------------------------------------ Bảng màu
+   Sáng: nền ngà, chữ mực ấm, điểm nhấn hồng đất; nút chính màu mực như các trang thời trang.
+   Tối: nâu espresso, điểm nhấn hồng phấn. Mọi cặp chữ/nền đạt tương phản tối thiểu 4.5:1. */
 :root {
-  --bg-app: #0A0B10;
-  --bg-card: #12141D;
-  --bg-surface: #1A1D29;
-  --border-subtle: rgba(255, 255, 255, 0.09);
-  --border-strong: rgba(255, 255, 255, 0.2);
-  --text-main: #F8FAFC;
-  --text-muted: #9AA1B1;
-  --text-sub: #CBD5E1;
-  --accent-color: #00F5A0;
-  /* Chữ dùng màu nhấn: tách riêng để đủ tương phản ở chế độ sáng */
-  --accent-text: #00F5A0;
-  --accent-soft: rgba(0, 245, 160, 0.1);
-  --accent-border: rgba(0, 245, 160, 0.35);
-  --warn-text: #FCD34D;
-  --warn-bg: rgba(251, 191, 36, 0.1);
-  --warn-border: rgba(251, 191, 36, 0.35);
-  --danger-text: #FCA5A5;
-  --danger-bg: rgba(239, 68, 68, 0.12);
-  --danger-border: rgba(239, 68, 68, 0.4);
-  --danger-solid: #DC2626; /* nền nút nguy hiểm, chữ trắng */
-  color-scheme: dark;
+  --bg-app: #F6F1EB;
+  --bg-card: #FFFEFC;
+  --bg-surface: #F2ECE5;
+  --border-subtle: #E7DED4;
+  --border-strong: #D3C5B7;
+  --text-main: #1E1916;
+  --text-sub: #3D3530;
+  --text-muted: #6B615A;
+
+  --ink: #1E1916;          /* nền nút chính */
+  --ink-hover: #3A302A;
+  --on-ink: #FFFFFF;
+
+  --accent-color: #A8506A; /* hồng đất: thanh tiến độ, lựa chọn, điểm nhấn */
+  --on-accent: #FFFFFF;
+  --accent-text: #9B4560;
+  --accent-soft: #F8EBEF;
+  --accent-border: #E5BFCC;
+  --gold: #A07A3F;
+  --gold-soft: #F5EDE0;
+
+  --ok-text: #2E6B4F;
+  --ok-bg: #EAF4EE;
+  --ok-border: #BBDCC8;
+  --warn-text: #865708;
+  --warn-bg: #FBF3E4;
+  --warn-border: #EBCF98;
+  --danger-text: #A2281F;
+  --danger-bg: #FBECEA;
+  --danger-border: #EDBAB4;
+  --danger-solid: #B3261E;
+
+  --shadow-card: 0 1px 2px rgba(30, 25, 22, 0.04), 0 10px 30px -18px rgba(30, 25, 22, 0.18);
+  --shadow-pop: 0 24px 60px -20px rgba(30, 25, 22, 0.35);
+  --glow: radial-gradient(900px 520px at 100% -10%, rgba(214, 150, 172, 0.22), transparent 65%),
+    radial-gradient(700px 480px at -10% 110%, rgba(214, 186, 150, 0.22), transparent 60%);
+  color-scheme: light;
 }
 
-/* Chế độ sáng: chữ phụ và viền đậm hơn để đọc rõ trên nền trắng (tương phản tối thiểu 4.5:1) */
-html.light {
-  --bg-app: #F4F6F9;
-  --bg-card: #FFFFFF;
-  --bg-surface: #EEF2F6;
-  --border-subtle: rgba(15, 23, 42, 0.12);
-  --border-strong: rgba(15, 23, 42, 0.24);
-  --text-main: #0F172A;
-  --text-muted: #475569;
-  --text-sub: #334155;
-  --accent-color: #00B377;
-  --accent-text: #047857;
-  --accent-soft: #ECFDF5;
-  --accent-border: #6EE7B7;
-  --warn-text: #92400E;
-  --warn-bg: #FFFBEB;
-  --warn-border: #FCD34D;
-  --danger-text: #B91C1C;
-  --danger-bg: #FEF2F2;
-  --danger-border: #FCA5A5;
-  --danger-solid: #B91C1C;
-  color-scheme: light;
+html.dark {
+  --bg-app: #12100E;
+  --bg-card: #1B1714;
+  --bg-surface: #251F1B;
+  --border-subtle: #2E2722;
+  --border-strong: #463C35;
+  --text-main: #F4EEE8;
+  --text-sub: #D9CFC6;
+  --text-muted: #A69B92;
+
+  --ink: #F4EEE8;
+  --ink-hover: #FFFFFF;
+  --on-ink: #1B1714;
+
+  --accent-color: #E3A1B4;
+  --on-accent: #1B1714;
+  --accent-text: #EBB3C3;
+  --accent-soft: rgba(227, 161, 180, 0.12);
+  --accent-border: rgba(227, 161, 180, 0.38);
+  --gold: #D4B27A;
+  --gold-soft: rgba(212, 178, 122, 0.12);
+
+  --ok-text: #8BD3AC;
+  --ok-bg: rgba(139, 211, 172, 0.1);
+  --ok-border: rgba(139, 211, 172, 0.32);
+  --warn-text: #F0C674;
+  --warn-bg: rgba(240, 198, 116, 0.1);
+  --warn-border: rgba(240, 198, 116, 0.32);
+  --danger-text: #F4A49C;
+  --danger-bg: rgba(244, 164, 156, 0.1);
+  --danger-border: rgba(244, 164, 156, 0.35);
+  --danger-solid: #C8443A;
+
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 30px -18px rgba(0, 0, 0, 0.6);
+  --shadow-pop: 0 24px 60px -20px rgba(0, 0, 0, 0.75);
+  --glow: radial-gradient(900px 520px at 100% -10%, rgba(227, 161, 180, 0.08), transparent 65%),
+    radial-gradient(700px 480px at -10% 110%, rgba(212, 178, 122, 0.06), transparent 60%);
+  color-scheme: dark;
 }
 
 body {
   margin: 0;
   padding: 0;
-  background-color: var(--bg-app);
+  background: var(--glow), var(--bg-app);
+  background-attachment: fixed;
   color: var(--text-main);
   font-family: var(--font-sans);
   overflow: hidden;
   height: 100vh;
   height: 100dvh; /* điện thoại: không bị thanh địa chỉ che */
-  transition: background-color 0.25s ease, color 0.25s ease;
+  -webkit-tap-highlight-color: transparent;
 }
 
 #root {
@@ -73,15 +140,283 @@ body {
   flex-direction: column;
 }
 
+/* Playfair mặc định dùng số kiểu cổ (số 0 trông như chữ o): ép số đứng thẳng hàng cho giá tiền, điểm số */
+.font-display,
+.display {
+  font-variant-numeric: lining-nums;
+}
+
+h1,
+h2,
+h3 {
+  text-wrap: balance;
+}
+p {
+  text-wrap: pretty;
+}
+
+::selection {
+  background: var(--accent-soft);
+  color: var(--text-main);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 2px;
+}
+
 /* Thanh cuộn mảnh */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
   background: var(--border-strong);
-  border-radius: 4px;
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+/* ------------------------------------------------------------------ Thành phần dùng chung */
+@layer components {
+  .display {
+    font-family: var(--font-display);
+    letter-spacing: -0.01em;
+    font-weight: 600;
+  }
+
+  /* Nhãn nhỏ phía trên tiêu đề, kiểu tạp chí */
+  .eyebrow {
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent-text);
+  }
+
+  .card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: 1.25rem;
+    box-shadow: var(--shadow-card);
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border-radius: 9999px;
+    font-size: 0.875rem;
+    font-weight: 600;
+    line-height: 1.25rem;
+    padding: 0.7rem 1.25rem;
+    white-space: nowrap;
+    transition: background-color 0.2s, color 0.2s, border-color 0.2s, transform 0.15s, box-shadow 0.2s, opacity 0.2s;
+  }
+  .btn:active:not(:disabled) {
+    transform: scale(0.98);
+  }
+  .btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .btn-sm {
+    padding: 0.45rem 0.9rem;
+  }
+  .btn-lg {
+    padding: 0.9rem 1.5rem;
+    font-size: 0.95rem;
+  }
+  .btn-primary {
+    background: var(--ink);
+    color: var(--on-ink);
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: var(--ink-hover);
+    box-shadow: 0 10px 24px -12px rgba(30, 25, 22, 0.55);
+  }
+  .btn-accent {
+    background: var(--accent-color);
+    color: var(--on-accent);
+  }
+  .btn-accent:hover:not(:disabled) {
+    filter: brightness(1.06);
+  }
+  .btn-secondary {
+    background: var(--bg-card);
+    color: var(--text-main);
+    border: 1px solid var(--border-strong);
+  }
+  .btn-secondary:hover:not(:disabled) {
+    border-color: var(--text-main);
+  }
+  .btn-ghost {
+    color: var(--text-sub);
+  }
+  .btn-ghost:hover:not(:disabled) {
+    background: var(--bg-surface);
+    color: var(--text-main);
+  }
+  .btn-danger {
+    background: var(--danger-solid);
+    color: #FFFFFF;
+  }
+
+  .icon-btn {
+    width: 2.5rem;
+    height: 2.5rem;
+    flex-shrink: 0;
+    border-radius: 9999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-sub);
+    transition: background-color 0.2s, color 0.2s;
+  }
+  .icon-btn:hover {
+    background: var(--bg-surface);
+    color: var(--text-main);
+  }
+
+  .field {
+    width: 100%;
+    background: var(--bg-card);
+    border: 1px solid var(--border-strong);
+    border-radius: 0.875rem;
+    padding: 0.7rem 0.9rem;
+    font-size: 0.9rem;
+    color: var(--text-main);
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  .field::placeholder {
+    color: var(--text-muted);
+    opacity: 0.85;
+  }
+  .field:focus {
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  .field-label {
+    display: block;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--text-sub);
+    margin-bottom: 0.4rem;
+  }
+
+  /* Ô lựa chọn dạng viên (giọng đọc, giọng văn, gói nạp...) */
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    border-radius: 9999px;
+    border: 1px solid var(--border-strong);
+    background: var(--bg-card);
+    color: var(--text-sub);
+    font-size: 0.875rem;
+    font-weight: 500;
+    padding: 0.55rem 1rem;
+    transition: background-color 0.2s, color 0.2s, border-color 0.2s;
+  }
+  .chip:hover {
+    border-color: var(--text-main);
+    color: var(--text-main);
+  }
+  .chip[aria-pressed="true"] {
+    background: var(--ink);
+    border-color: var(--ink);
+    color: var(--on-ink);
+  }
+
+  /* Khung hiệu ứng "đang tải" lấp lánh */
+  .skeleton {
+    position: relative;
+    overflow: hidden;
+    background: var(--bg-surface);
+  }
+  .skeleton::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.45), transparent);
+    animation: shimmer 1.6s infinite;
+  }
+  html.dark .skeleton::after {
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.06), transparent);
+  }
+
+  /* Vệt sáng chạy qua ảnh đang được AI xử lý */
+  .shimmer {
+    position: relative;
+    overflow: hidden;
+  }
+  .shimmer::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(100deg, transparent 20%, rgba(255, 255, 255, 0.5), transparent 80%);
+    animation: shimmer 2s infinite;
+  }
+
+  /* Thanh tiến độ có vệt sáng chạy */
+  .progress-bar {
+    position: relative;
+    overflow: hidden;
+    background: linear-gradient(90deg, var(--accent-color), var(--gold));
+    border-radius: 9999px;
+    transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .progress-bar::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.55), transparent);
+    animation: shimmer 1.8s infinite;
+  }
+
+  /* Khung điện thoại bao video 9:16 */
+  .phone-frame {
+    border-radius: 2.25rem;
+    padding: 0.55rem;
+    background: #141110;
+    box-shadow: var(--shadow-pop), inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  }
+  .phone-frame > * {
+    border-radius: 1.75rem;
+  }
+
+  /* Nhãn mờ đặt trên ảnh */
+  .glass {
+    background: rgba(255, 254, 252, 0.82);
+    color: #1E1916;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+  }
+}
+
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+/* Người dùng bật "giảm chuyển động": tắt hiệu ứng */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

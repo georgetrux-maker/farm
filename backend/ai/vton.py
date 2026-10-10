@@ -6,7 +6,7 @@
 import logging
 from typing import Optional
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter
 
 from backend import config
 from backend.ai import http_utils
@@ -115,14 +115,22 @@ def _placeholder_tryon(garment_path: Optional[str], output_name: str) -> str:
     width, height = 720, 1280
     base = Image.new("RGB", (width, height))
     draw = ImageDraw.Draw(base)
+    # Phông studio màu ngà chuyển dần sang be, như ảnh chụp sản phẩm thời trang
+    top, bottom = (246, 241, 235), (228, 214, 198)
     for y in range(height):
-        ratio = y / height
-        draw.line([(0, y), (width, y)], fill=(int(18 + 22 * ratio), int(20 + 22 * ratio), int(29 + 26 * ratio)))
+        ratio = y / (height - 1)
+        draw.line([(0, y), (width, y)], fill=tuple(int(a + (b - a) * ratio) for a, b in zip(top, bottom)))
     if garment_path:
         with Image.open(garment_path) as g:
             garment = g.convert("RGBA")
         garment.thumbnail((int(width * 0.8), int(height * 0.7)))
-        base.paste(garment, ((width - garment.width) // 2, (height - garment.height) // 2), garment)
+        x, y = (width - garment.width) // 2, (height - garment.height) // 2
+        # Bóng đổ mềm dưới chân sản phẩm
+        shadow = Image.new("L", (width, height), 0)
+        ImageDraw.Draw(shadow).ellipse(
+            [width * 0.22, y + garment.height - 12, width * 0.78, y + garment.height + 28], fill=110)
+        base.paste((150, 128, 110), mask=shadow.filter(ImageFilter.GaussianBlur(20)))
+        base.paste(garment, (x, y), garment)
     base.save(output_path, "JPEG", quality=90)
     return output_path
 
