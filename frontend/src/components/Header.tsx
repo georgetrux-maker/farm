@@ -101,18 +101,20 @@ export const Header: React.FC<HeaderProps> = ({
           </span>
         </button>
 
-        {/* Quản trị hệ thống (chỉ admin thấy) */}
+        {/* Quản trị hệ thống: chỉ tài khoản admin thấy */}
         {isAdmin && (
           <button
             onClick={() => setActiveView('admin')}
+            aria-label="Quản trị hệ thống"
+            aria-current={activeView === 'admin' ? 'page' : undefined}
             className={`h-10 px-3 sm:px-3.5 rounded-full text-xs font-semibold flex items-center gap-1.5 transition-colors border ${
               activeView === 'admin'
-                ? 'bg-rose-600 text-white border-rose-700 shadow-sm'
-                : 'bg-rose-500/10 text-rose-600 border-rose-500/20 hover:bg-rose-500/20'
+                ? 'bg-[var(--ink)] text-[var(--on-ink)] border-[var(--ink)]'
+                : 'bg-[var(--bg-card)] text-[var(--text-main)] border-[var(--border-subtle)] hover:border-[var(--border-strong)]'
             }`}
           >
-            <ShieldCheck className="w-4 h-4 shrink-0" />
-            <span className="hidden sm:inline">Admin</span>
+            <ShieldCheck className={`w-4 h-4 shrink-0 ${activeView === 'admin' ? '' : 'text-[var(--gold)]'}`} />
+            <span className="hidden sm:inline">Quản trị</span>
           </button>
         )}
 
@@ -150,7 +152,7 @@ export const Header: React.FC<HeaderProps> = ({
                     setActiveView('admin')
                   }}
                 >
-                  <ShieldCheck className="w-4 h-4 text-rose-500" /> Cài đặt Admin & API
+                  <ShieldCheck className="w-4 h-4 text-[var(--gold)]" /> Quản trị hệ thống
                 </button>
               )}
               {onOpenAudit && (

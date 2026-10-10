@@ -11,7 +11,7 @@ from backend import config
 from backend.database import init_db
 from backend.ffmpeg_utils import FFmpegError
 from backend.media_paths import MediaPathError
-from backend.routers import account, admin, ai, jobs, products, shopper, social, static, wallet
+from backend.routers import account, admin, ai, jobs, products, shopper, showcase, social, static, wallet
 from backend.services import social as social_service
 from backend.services.queue_manager import recover_stale_jobs
 from backend.services.security import check_rate_limit
@@ -68,7 +68,7 @@ async def ffmpeg_error_handler(request: Request, exc: FFmpegError):
     return JSONResponse(status_code=500, content={"detail": "Lỗi xử lý video trên máy chủ"})
 
 
-for module in (account, products, ai, jobs, wallet, admin, shopper, social):
+for module in (account, products, ai, showcase, jobs, wallet, admin, shopper, social):
     app.include_router(module.router)
 
 static.mount_static(app)

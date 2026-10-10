@@ -141,107 +141,17 @@ def api_render(req: RenderRequest, user: dict = Depends(get_current_user)):
                               output_name=unique_name("final", "mp4"))
 
 
-@router.get("/api/templates/showcase")
-def api_templates_showcase():
-    return {
-        "templates": [
-            {
-                "id": "tpl_street_summer",
-                "title": "Nàng Thơ Dạo Phố",
-                "category": "Váy hoa / Đồ hè",
-                "badge": "Xu Hướng",
-                "video_url": "/samples/sample_final.mp4",
-                "thumbnail_url": "https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=600&q=80",
-                "motion_template": "street",
-                "voice_id": "vi-VN-HoaiMyNeural",
-                "voice_name": "Hoài My (Nữ ngọt ngào)",
-                "script_style": "genz",
-                "music_name": "Lofi Chill Chic",
-                "description": "Dáng đi dạo phố tự nhiên, tôn nét trẻ trung, bay bổng của váy hoa hoặc set đồ dạo phố.",
-                "tags": ["Dạo phố", "Trẻ trung", "Mùa hè"],
-            },
-            {
-                "id": "tpl_catwalk_office",
-                "title": "Quý Cô Công Sở",
-                "category": "Blazer / Sơ mi / Đầm công sở",
-                "badge": "Thanh Lịch",
-                "video_url": "/samples/sample_final.mp4",
-                "thumbnail_url": "https://images.unsplash.com/photo-1539109136881-3be0616acf4b?auto=format&fit=crop&w=600&q=80",
-                "motion_template": "catwalk",
-                "voice_id": "vi-VN-HoaiMyNeural",
-                "voice_name": "Hoài My (Nữ thanh lịch)",
-                "script_style": "office",
-                "music_name": "Fashion Week Runway",
-                "description": "Bước đi sàn diễn tự tin, toát lên phong thái chuyên nghiệp, thời thượng của set đồ công sở.",
-                "tags": ["Công sở", "Catwalk", "Sang trọng"],
-            },
-            {
-                "id": "tpl_spin_evening",
-                "title": "Đầm Dạ Tiệc Sang Chảnh",
-                "category": "Váy dạ hội / Đầm ôm body",
-                "badge": "Cao Cấp",
-                "video_url": "/samples/sample_final.mp4",
-                "thumbnail_url": "https://images.unsplash.com/photo-1566174053879-31528523f8ae?auto=format&fit=crop&w=600&q=80",
-                "motion_template": "spin_360",
-                "voice_id": "vi-VN-HoaiMyNeural",
-                "voice_name": "Hoài My (Nữ quý phái)",
-                "script_style": "office",
-                "music_name": "Luxury Lounge Ambient",
-                "description": "Góc quay xoay tròn 360 độ khoe trọn đường cong cơ thể và sự lộng lẫy của trang phục dạ tiệc.",
-                "tags": ["Dự tiệc", "Xoay 360", "Quyến rũ"],
-            },
-            {
-                "id": "tpl_fabric_flash_sale",
-                "title": "Xả Kho Flash Sale TikTok",
-                "category": "Áo thun / Polo / Đồ mặc nhà",
-                "badge": "Bán Chạy",
-                "video_url": "/samples/sample_final.mp4",
-                "thumbnail_url": "https://images.unsplash.com/photo-1503342217505-b0a15ec3261c?auto=format&fit=crop&w=600&q=80",
-                "motion_template": "fabric_closeup",
-                "voice_id": "vi-VN-NamMinhNeural",
-                "voice_name": "Nam Minh (Nam dồn dập)",
-                "script_style": "honest",
-                "music_name": "Upbeat TikTok Beat",
-                "description": "Zoom cận cảnh từng thớ vải mềm mịn và form áo, thúc đẩy người xem bấm vào giỏ hàng ngay.",
-                "tags": ["Flash Sale", "Chất vải", "Xả kho"],
-            },
-        ]
-    }
-
-
-@router.get("/api/ai/tts/voices-preview")
-def api_tts_voices_preview():
-    return {
-        "voices": [
-            {
-                "id": "vi-VN-HoaiMyNeural",
-                "label": "Hoài My (Nữ miền Nam, ngọt ngào)",
-                "gender": "female",
-                "preview_url": "/samples/preview_hoaimy.mp3",
-            },
-            {
-                "id": "vi-VN-NamMinhNeural",
-                "label": "Nam Minh (Nam miền Bắc, truyền cảm)",
-                "gender": "male",
-                "preview_url": "/samples/preview_namminh.mp3",
-            },
-        ]
-    }
-
-
 class ScriptPreviewRequest(BaseModel):
-    title: str = "Áo Thun Cotton"
-    price: float = 189000
-    fabric: Optional[str] = None
-    category: Optional[str] = None
+    title: str = Field(min_length=2, max_length=200)
+    price: int = Field(gt=0, le=1_000_000_000)
+    fabric: Optional[str] = Field(default=None, max_length=100)
+    category: Optional[str] = Field(default=None, max_length=100)
     style: str = "genz"
 
 
 @router.post("/api/ai/script/preview")
 def api_preview_script(req: ScriptPreviewRequest, user: dict = Depends(get_current_user)):
-    """Tạo trước kịch bản review 3 câu để người dùng xem và chỉnh sửa trước khi chạy pipeline"""
-    from backend.ai.script import generate_koc_script
+    """Viết trước kịch bản để người bán xem và sửa (thêm tên shop, hotline...) trước khi tạo video"""
     if req.style not in STYLES:
         raise HTTPException(status_code=400, detail="Phong cách kịch bản không hợp lệ")
-    res = generate_koc_script(req.title, req.price, req.fabric, style=req.style, category=req.category)
-    return res
+    return generate_koc_script(req.title, req.price, req.fabric, style=req.style, category=req.category)

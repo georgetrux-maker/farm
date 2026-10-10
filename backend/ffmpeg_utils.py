@@ -1,3 +1,4 @@
+import functools
 import os
 import shutil
 import subprocess
@@ -48,10 +49,14 @@ def probe_duration(path: str) -> float:
 
 
 def ffmpeg_has_filter(filter_name: str) -> bool:
-    try:
-        proc = subprocess.run([config.ffmpeg_bin(), "-filters"], capture_output=True, text=True, timeout=5)
-        names = {line.split()[1] for line in proc.stdout.splitlines() if len(line.split()) >= 2}
-        return filter_name in names
-    except Exception:
-        return False
+    return filter_name in _ffmpeg_filters(config.ffmpeg_bin())
 
+
+@functools.lru_cache(maxsize=4)
+def _ffmpeg_filters(binary: str) -> frozenset:
+    """Danh sách filter của bản ffmpeg đang dùng (hỏi một lần cho mỗi đường dẫn ffmpeg)."""
+    try:
+        proc = subprocess.run([binary, "-hide_banner", "-filters"], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return frozenset()
+    return frozenset(line.split()[1] for line in proc.stdout.splitlines() if len(line.split()) >= 2)

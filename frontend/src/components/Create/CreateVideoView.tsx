@@ -2,10 +2,13 @@ import React, { useEffect, useRef, useState } from 'react'
 import { AlertTriangle, Film, Info, Loader2, Plus, RefreshCw, RotateCcw, Sparkles } from 'lucide-react'
 import {
   ApiError, analyzeProduct, createAnalyzedProduct, fetchAvatars, fetchJobStatus, fetchProfile, fetchStudioOptions,
-  previewScript, triggerPipelineRun, uploadImage, type ProductAnalysis, type ShowcaseTemplate, type StudioOptions,
+  previewScript, triggerPipelineRun, uploadImage, type ProductAnalysis, type ProductPrefill, type ShowcaseTemplate,
+  type StudioOptions,
 } from '../../services/api'
 import type { AIJob, BrandAvatar } from '../../types'
-import { formatNumber, suggestTitleFromFileName } from '../../lib/format'
+import { formatNumber, formatVnd, suggestTitleFromFileName } from '../../lib/format'
+import { STYLE_LABELS } from '../../lib/labels'
+import { useVoicePreview } from '../../lib/useVoicePreview'
 import { useToast } from '../ui/toastContext'
 import { ChipGroup, ModelPicker, TemplatePicker, Toggle, VoicePicker } from './Pickers'
 import { JobProgress } from './JobProgress'
@@ -25,12 +28,6 @@ interface CreateVideoViewProps {
 }
 
 type Phase = 'upload' | 'configure' | 'running' | 'review' | 'done' | 'failed'
-
-const STYLE_LABELS: Record<string, string> = {
-  genz: 'GenZ trẻ trung',
-  office: 'Công sở thanh lịch',
-  honest: 'Review thật lòng',
-}
 
 const DURATIONS = [
   { id: 5, label: '5 giây' },
@@ -145,14 +142,19 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
   const fileRef = useRef<HTMLInputElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  // Tự động nhận template khi người dùng chọn từ Thư viện mẫu
-  useEffect(() => {
-    if (initialTemplate) {
-      setTemplate(initialTemplate.motion_template)
-      if (initialTemplate.voice_id) setVoice(initialTemplate.voice_id)
-      if (initialTemplate.script_style) setStyle(initialTemplate.script_style)
-    }
-  }, [initialTemplate])
+  // Chọn "Dùng mẫu này" ở Thư viện mẫu: điền sẵn góc quay, giọng đọc, lời văn và người mẫu của mẫu đó
+  const [appliedTemplateId, setAppliedTemplateId] = useState<string | null>(null)
+  if (initialTemplate && initialTemplate.id !== appliedTemplateId) {
+    setAppliedTemplateId(initialTemplate.id)
+    setTemplate(initialTemplate.motion_template)
+    setVoice(initialTemplate.voice_id)
+    setStyle(initialTemplate.script_style)
+    if (initialTemplate.avatar_id) setAvatarId(initialTemplate.avatar_id)
+  }
+
+  // Tên/giá lấy được từ link nhưng trang không cho lấy ảnh: chờ người dùng tải ảnh lên
+  const [pendingPrefill, setPendingPrefill] = useState<ProductPrefill | null>(null)
+  const voicePreview = useVoicePreview((msg) => toast(msg, 'info'))
 
   // Sang bước mới thì đưa về đầu trang (nút bấm nằm ở cuối trang nên đang cuộn xuống dưới)
   useEffect(() => {
@@ -165,7 +167,8 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
         setOptions(opts)
         setAvatars(list)
         const def = list.find((a) => a.is_default) ?? list[0]
-        if (def) setAvatarId(def.id)
+        // Giữ người mẫu do mẫu video chọn sẵn nếu có, không thì dùng người mẫu mặc định
+        setAvatarId((current) => (current && list.some((a) => a.id === current) ? current : (def?.id ?? '')))
       })
       .catch((e) => toast(e.message, 'error'))
     return () => {
@@ -184,6 +187,7 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
       setImageUrl(up.media_url)
       setPhase('configure')
       setSavedProduct(null)
+      setPendingPrefill(null)
       // Chưa có tên: gợi ý tạm từ tên file, AI (nếu có) sẽ điền lại chính xác hơn
       const suggestion = suggestTitleFromFileName(file.name)
       if (suggestion && (!title || titleFromFile)) {
@@ -207,30 +211,31 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
     }
   }
 
-  const handleProductLoaded = async (data: {
-    title: string
-    price: number
-    fabric?: string
-    category?: string
-    image_url: string
-  }) => {
+  /** Thông tin từ link sản phẩm hoặc ảnh mẫu. Không tự bịa giá/chất liệu: thiếu thì để trống cho người bán điền. */
+  const handleProductLoaded = async (data: ProductPrefill, note: string | null) => {
     setUploadError(null)
-    setImageUrl(data.image_url)
-    setTitle(data.title)
-    setTitleFromFile(false)
-    if (data.price) setPrice(String(data.price))
-    if (data.fabric) setFabric(data.fabric)
-    if (data.category) setCategory(data.category)
-    setPhase('configure')
+    if (data.title) {
+      setTitle(data.title)
+      setTitleFromFile(false)
+    }
+    setPrice(data.price ? String(data.price) : '')
+    setFabric(data.fabric ?? '')
+    setCategory(data.category ?? '')
     setSavedProduct(null)
-
-    // Phân tích chất lượng ảnh
+    if (note) toast(note, 'info')
+    if (!data.image_url) {
+      setPendingPrefill(data)
+      return
+    }
+    setPendingPrefill(null)
+    setImageUrl(data.image_url)
+    setAnalysis(null)
+    setPhase('configure')
     setUploading('analyze')
     try {
-      const res = await analyzeProduct(data.image_url, data.title)
-      setAnalysis(res)
-    } catch (e) {
-      console.warn('Analysis fallback', e)
+      setAnalysis(await analyzeProduct(data.image_url, data.title || undefined))
+    } catch {
+      // Chấm điểm ảnh chỉ để tham khảo, không chặn việc tạo video
     } finally {
       setUploading(null)
     }
@@ -242,6 +247,10 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
       return
     }
     const priceNum = Number(price.replace(/\D/g, '')) || 0
+    if (!priceNum) {
+      toast('Vui lòng nhập giá bán trước để kịch bản nhắc đúng giá', 'error')
+      return
+    }
     setIsGeneratingScript(true)
     try {
       const res = await previewScript({
@@ -253,7 +262,7 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
       })
       setCustomScript(res.full_script)
       setIsScriptEditing(true)
-      toast('Đã tạo kịch bản review 3 câu chuẩn KOC!', 'success')
+      toast('Đã viết kịch bản, bạn có thể sửa trực tiếp', 'success')
     } catch (e: any) {
       toast(e.message, 'error')
     } finally {
@@ -282,8 +291,8 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
     }, 1500)
   }
 
-  const cost = options?.pipeline_cost_credits ?? 30
-  const previewCost = options?.tryon_preview_cost_credits ?? 5
+  const cost = options?.pipeline_cost_credits ?? 0
+  const previewCost = options?.tryon_preview_cost_credits ?? 0
   const missingCredits = Math.max(0, cost - credits)
 
   const handleCreate = async () => {
@@ -415,6 +424,7 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
             uploading={uploading === 'upload'}
             error={uploadError}
             onProductLoaded={handleProductLoaded}
+            pendingPrefill={pendingPrefill}
           />
         )}
 
@@ -528,7 +538,7 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
                 </Section>
 
                 <Section n="03" title="Kiểu video">
-                  <TemplatePicker templates={options?.templates ?? []} value={template} onChange={setTemplate} />
+                  <TemplatePicker templates={options?.templates ?? []} value={template} onChange={setTemplate} image={imageUrl} />
                   {options?.engines.video.startsWith('replicate') && (
                     <div className="mt-5">
                       <span className="field-label">Độ dài đoạn AI chuyển động</span>
@@ -538,15 +548,13 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
                 </Section>
 
                 <Section n="04" title="Giọng đọc & lời review">
-                  <span className="field-label">Giọng đọc tiếng Việt (nghe thử 3s)</span>
+                  <span className="field-label">Giọng đọc</span>
                   <VoicePicker
-                    voices={(options?.voices ?? []).map((v) => ({
-                      id: v.id,
-                      label: v.label,
-                      preview_url: v.id.toLowerCase().includes('namminh') ? '/samples/preview_namminh.mp3' : '/samples/preview_hoaimy.mp3',
-                    }))}
+                    voices={options?.voices ?? []}
                     value={voice}
                     onChange={setVoice}
+                    playing={voicePreview.playing}
+                    onPreview={voicePreview.toggle}
                   />
 
                   <span className="field-label mt-5">Phong cách lời review</span>
@@ -589,21 +597,25 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
                     {isScriptEditing && (
                       <div className="space-y-2 animate-fade-up">
                         <textarea
-                          rows={3}
+                          rows={4}
+                          maxLength={600}
+                          aria-label="Kịch bản lời review"
                           value={customScript}
                           onChange={(e) => setCustomScript(e.target.value)}
                           placeholder="Ví dụ: Dạ em đầm hoa nhí này vừa cập bến xinh xắn lắm các nàng ơi..."
                           className="w-full text-sm p-3 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-card)] focus:outline-none focus:ring-2 focus:ring-[var(--ink)] leading-relaxed resize-y"
                         />
                         <div className="flex items-center justify-between text-xs text-[var(--text-muted)]">
-                          <span>AI sẽ đọc chính xác văn bản này bằng giọng bạn chọn</span>
+                          <span>
+                            AI đọc đúng nguyên văn, có thể thêm tên shop, hotline · {customScript.length}/600
+                          </span>
                           <button
                             type="button"
                             onClick={() => {
                               setCustomScript('')
                               setIsScriptEditing(false)
                             }}
-                            className="text-[var(--text-muted)] hover:text-red-500 underline"
+                            className="text-[var(--text-muted)] hover:text-[var(--danger-text)] underline shrink-0"
                           >
                             Dùng lại kịch bản tự động
                           </button>
@@ -639,18 +651,18 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
                   <div className="text-sm leading-snug min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="text-[var(--text-muted)]">Chi phí:</span>
-                      <strong>{cost} credit</strong>
-                      <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 font-medium">
-                        ~{cost * 100}đ
-                      </span>
+                      <strong>{options ? `${formatNumber(cost)} credit` : '...'}</strong>
+                      {options && (
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-[var(--ok-bg)] text-[var(--ok-text)] font-medium">
+                          ≈ {formatVnd(cost * 100)}
+                        </span>
+                      )}
                     </div>
                     <div className="mt-0.5">
                       <span className="text-[var(--text-muted)]">Số dư: </span>
                       <strong className={missingCredits > 0 ? 'text-[var(--danger-text)]' : ''}>{formatNumber(credits)} credit</strong>
-                      {credits >= cost && (
-                        <span className="text-xs text-[var(--text-muted)] ml-1">
-                          (đủ tạo {Math.floor(credits / (cost || 30))} video)
-                        </span>
+                      {cost > 0 && credits >= cost && (
+                        <span className="text-xs text-[var(--text-muted)] ml-1">(đủ tạo {formatNumber(Math.floor(credits / cost))} video)</span>
                       )}
                     </div>
                   </div>

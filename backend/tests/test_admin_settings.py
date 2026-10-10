@@ -220,6 +220,9 @@ def test_deposit_list_and_manual_verify(client, shop):
 
     pending = client.get("/api/admin/deposits", headers=DEMO_AUTH).json()
     assert [d["id"] for d in pending["items"]] == [dep["transaction_id"]] and pending["total"] == 1
+    assert pending["items"][0]["transfer_content"] == f"NAPTIEN {dep['transaction_id']}"
+    code = dep["transaction_id"][2:8]
+    assert client.get(f"/api/admin/deposits?q=NAPTIEN%20TX{code}", headers=DEMO_AUTH).json()["total"] == 1
     assert client.get("/api/admin/deposits?status=all&q=shop@test", headers=DEMO_AUTH).json()["total"] == 1
     assert client.get("/api/admin/deposits?status=all&q=khong-ai-ca", headers=DEMO_AUTH).json()["total"] == 0
 

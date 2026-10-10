@@ -1,9 +1,12 @@
+import logging
 import math
 import os
 from typing import Optional
 
 from backend.ffmpeg_utils import ffmpeg_has_filter, probe_duration, run_ffmpeg
 from backend.media_paths import media_path, media_url
+
+log = logging.getLogger(__name__)
 
 # Khung chuẩn cho TikTok / Reels / Shorts
 WIDTH, HEIGHT = 720, 1280
@@ -140,7 +143,9 @@ def _video_graph(n_inputs: int, clip_sec: float, total_sec: float, subtitle_file
         prev = f"x{i}"
     covered = clip_sec + (n_inputs - 1) * (clip_sec - fade)
     tail = [f"tpad=stop_mode=clone:stop_duration={max(0.0, total_sec - covered) + 0.5:.3f}"]
-    if subtitle_file and ffmpeg_has_filter("ass"):
+    if subtitle_file and not ffmpeg_has_filter("ass"):
+        log.warning("FFmpeg thiếu libass: video sẽ không có phụ đề in sẵn")
+    elif subtitle_file:
         fonts_dir = _fonts_dir_for_filter()
         tail.append(f"ass={subtitle_file}" + (f":fontsdir={fonts_dir}" if fonts_dir else ""))
     tail.append(f"trim=duration={total_sec:.3f},setpts=PTS-STARTPTS")

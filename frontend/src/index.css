@@ -426,3 +426,65 @@ input[type="search"]::-webkit-search-cancel-button {
   -webkit-appearance: none;
   appearance: none;
 }
+
+/* Thanh tab cuộn ngang trên điện thoại mà không hiện thanh cuộn */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Mô phỏng góc quay trên ảnh (Thư viện mẫu, chọn góc quay) */
+.motion-preview {
+  transform-origin: 50% 40%;
+  transform: scale(1.04);
+  will-change: transform;
+}
+.motion-preview.is-playing {
+  animation-duration: 4.4s;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+  animation-direction: alternate;
+}
+.motion-catwalk.is-playing { animation-name: motion-catwalk; }
+.motion-spin_360.is-playing { animation-name: motion-spin; animation-direction: normal; animation-duration: 3.6s; }
+.motion-street.is-playing { animation-name: motion-street; }
+.motion-fabric_closeup.is-playing { animation-name: motion-closeup; }
+@keyframes motion-catwalk {
+  0% { transform: scale(1.02) translateY(3%); }
+  25% { transform: scale(1.06) translateY(1.5%) rotate(0.4deg); }
+  50% { transform: scale(1.1) translateY(0.5%) rotate(-0.4deg); }
+  100% { transform: scale(1.16) translateY(-1%); }
+}
+@keyframes motion-spin {
+  0% { transform: perspective(900px) rotateY(0deg) scale(1.06); }
+  25% { transform: perspective(900px) rotateY(-16deg) scale(1.08); }
+  50% { transform: perspective(900px) rotateY(0deg) scale(1.1); }
+  75% { transform: perspective(900px) rotateY(16deg) scale(1.08); }
+  100% { transform: perspective(900px) rotateY(0deg) scale(1.06); }
+}
+@keyframes motion-street {
+  0% { transform: scale(1.18) translate(-5%, 1%); }
+  50% { transform: scale(1.18) translate(0%, 0%); }
+  100% { transform: scale(1.18) translate(5%, 1%); }
+}
+@keyframes motion-closeup {
+  0% { transform: scale(1.02); }
+  100% { transform: scale(1.65) translate(-3%, -4%); }
+}
+.motion-caption {
+  max-width: 100%;
+  padding: 0.3em 0.6em;
+  border-radius: 0.5em;
+  background: rgba(20, 16, 14, 0.55);
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.82rem;
+  line-height: 1.3;
+  text-align: center;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+@media (prefers-reduced-motion: reduce) {
+  .motion-preview.is-playing { animation: none; }
+}

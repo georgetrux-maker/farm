@@ -254,7 +254,7 @@ def api_admin_deposits(status: Literal["pending", "success", "all"] = "pending",
         args.append(status)
     if q and q.strip():
         like = "%" + q.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
-        where.append("(t.qr_code_ref LIKE ? ESCAPE '\\' OR t.id LIKE ? ESCAPE '\\' OR u.email LIKE ? ESCAPE '\\' "
+        where.append("(t.description LIKE ? ESCAPE '\\' OR t.id LIKE ? ESCAPE '\\' OR u.email LIKE ? ESCAPE '\\' "
                      "OR u.name LIKE ? ESCAPE '\\')")
         args += [like] * 4
     sql_where = " AND ".join(where)
@@ -264,7 +264,7 @@ def api_admin_deposits(status: Literal["pending", "success", "all"] = "pending",
                              f"WHERE {sql_where}", args).fetchone()[0]
         rows = conn.execute(
             f"SELECT t.id, t.user_id, u.name AS user_name, u.email AS user_email, t.amount_vnd, t.amount_credits, "
-            f"t.qr_code_ref, t.status, t.created_at, t.confirmed_at, t.confirmed_by "
+            f"t.description AS transfer_content, t.status, t.created_at, t.confirmed_at, t.confirmed_by "
             f"FROM wallet_transactions t LEFT JOIN users u ON u.id = t.user_id WHERE {sql_where} "
             f"ORDER BY t.created_at DESC, t.id DESC LIMIT ? OFFSET ?",
             args + [page_size, (page - 1) * page_size]).fetchall()

@@ -1,8 +1,8 @@
-import React, { useEffect, useRef, useState } from 'react'
-import { Check, Clapperboard, Footprints, MapPin, Play, RotateCw, Square, Volume2, ZoomIn } from 'lucide-react'
+import React from 'react'
+import { Check, Clapperboard, Footprints, MapPin, Play, RotateCw, Square, ZoomIn } from 'lucide-react'
 import type { BrandAvatar } from '../../types'
+import { MotionPreview } from '../ui/MotionPreview'
 import { AvatarImage } from '../ui/AvatarImage'
-
 
 const TEMPLATE_ICONS: Record<string, React.ElementType> = {
   catwalk: Footprints,
@@ -62,7 +62,9 @@ export const TemplatePicker: React.FC<{
   templates: { id: string; label: string }[]
   value: string
   onChange: (id: string) => void
-}> = ({ templates, value, onChange }) => (
+  /** Ảnh sản phẩm: có thì mỗi ô mô phỏng góc quay ngay trên ảnh này */
+  image?: string | null
+}> = ({ templates, value, onChange, image }) => (
   <div className="grid grid-cols-2 gap-3">
     {templates.map((t) => {
       const [title, rawDesc] = t.label.split(':').map((s) => s.trim())
@@ -74,21 +76,30 @@ export const TemplatePicker: React.FC<{
           key={t.id}
           onClick={() => onChange(t.id)}
           aria-pressed={selected}
-          className={`text-left p-3.5 sm:p-4 rounded-2xl border transition-colors ${
+          className={`group text-left p-3 sm:p-3.5 rounded-2xl border transition-colors flex gap-3 ${
             selected
               ? 'border-[var(--ink)] bg-[var(--accent-soft)]'
               : 'border-[var(--border-subtle)] bg-[var(--bg-card)] hover:border-[var(--border-strong)]'
           }`}
         >
-          <span
-            className={`w-9 h-9 rounded-full flex items-center justify-center transition-colors ${
-              selected ? 'bg-[var(--ink)] text-[var(--on-ink)]' : 'bg-[var(--bg-surface)] text-[var(--text-sub)]'
-            }`}
-          >
-            <Icon className="w-4 h-4" />
+          {image ? (
+            <MotionPreview image={image} template={t.id} playing={selected} className="w-12 sm:w-14 shrink-0 rounded-xl" />
+          ) : (
+            <span
+              className={`w-9 h-9 rounded-full flex items-center justify-center transition-colors shrink-0 ${
+                selected ? 'bg-[var(--ink)] text-[var(--on-ink)]' : 'bg-[var(--bg-surface)] text-[var(--text-sub)]'
+              }`}
+            >
+              <Icon className="w-4 h-4" />
+            </span>
+          )}
+          <span className="min-w-0">
+            <span className="font-semibold text-sm sm:text-base flex items-center gap-1.5">
+              {image && <Icon className="w-3.5 h-3.5 shrink-0 text-[var(--text-muted)]" />}
+              {title}
+            </span>
+            {desc && <span className="block text-sm text-[var(--text-muted)] mt-0.5 leading-snug">{desc}</span>}
           </span>
-          <div className="font-semibold mt-3 text-sm sm:text-base">{title}</div>
-          {desc && <div className="text-sm text-[var(--text-muted)] mt-0.5 leading-snug">{desc}</div>}
         </button>
       )
     })}
@@ -144,112 +155,54 @@ export const Toggle: React.FC<{
   </button>
 )
 
-/** Bộ chọn giọng đọc tiếng Việt kèm nút nghe thử 3s */
+/** Chọn giọng đọc, mỗi giọng có nút nghe thử đúng giọng đó (file do máy chủ tạo) */
 export const VoicePicker: React.FC<{
-  voices: Array<{ id: string; label: string; desc?: string; preview_url?: string }>
+  voices: { id: string; label: string }[]
   value: string
   onChange: (id: string) => void
-}> = ({ voices, value, onChange }) => {
-  const [playingVoice, setPlayingVoice] = useState<string | null>(null)
-  const audioRef = useRef<HTMLAudioElement | null>(null)
-
-  useEffect(() => {
-    return () => {
-      if (audioRef.current) {
-        audioRef.current.pause()
-        audioRef.current = null
-      }
-    }
-  }, [])
-
-  const handlePlayPreview = (e: React.MouseEvent, voiceId: string, previewUrl?: string) => {
-    e.stopPropagation()
-    const url = previewUrl || (voiceId.toLowerCase().includes('namminh') ? '/samples/preview_namminh.mp3' : '/samples/preview_hoaimy.mp3')
-
-    if (playingVoice === voiceId) {
-      if (audioRef.current) {
-        audioRef.current.pause()
-        audioRef.current = null
-      }
-      setPlayingVoice(null)
-      return
-    }
-
-    if (audioRef.current) {
-      audioRef.current.pause()
-    }
-
-    try {
-      const audio = new Audio(url)
-      audioRef.current = audio
-      setPlayingVoice(voiceId)
-      audio.play().catch(() => setPlayingVoice(null))
-      audio.onended = () => {
-        setPlayingVoice(null)
-        audioRef.current = null
-      }
-    } catch {
-      setPlayingVoice(null)
-    }
-  }
-
-  return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-      {voices.map((v) => {
-        const isSelected = value === v.id
-        const isPlaying = playingVoice === v.id
-        return (
-          <div
-            key={v.id}
+  playing: string | null
+  onPreview: (id: string) => void
+}> = ({ voices, value, onChange, playing, onPreview }) => (
+  <div role="radiogroup" aria-label="Giọng đọc" className="grid grid-cols-1 min-[420px]:grid-cols-2 gap-3">
+    {voices.map((v) => {
+      const selected = value === v.id
+      const isPlaying = playing === v.id
+      return (
+        <div
+          key={v.id}
+          className={`flex items-center gap-2 p-1.5 pl-2 rounded-2xl border transition-colors ${
+            selected ? 'border-[var(--ink)] bg-[var(--accent-soft)]' : 'border-[var(--border-subtle)] bg-[var(--bg-card)]'
+          }`}
+        >
+          <button
+            type="button"
+            role="radio"
+            aria-checked={selected}
             onClick={() => onChange(v.id)}
-            className={`group relative p-3.5 rounded-2xl border transition-all cursor-pointer flex items-center justify-between gap-3 ${
-              isSelected
-                ? 'border-[var(--ink)] bg-[var(--bg-card)] shadow-sm ring-1 ring-[var(--ink)]'
-                : 'border-[var(--border-subtle)] bg-[var(--bg-card)] hover:border-[var(--border-strong)]'
-            }`}
+            className="flex-1 min-w-0 flex items-center gap-2.5 py-1.5 text-left"
           >
-            <div className="flex items-center gap-3 min-w-0">
-              <div
-                className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 transition-colors ${
-                  isSelected ? 'bg-[var(--ink)] text-white' : 'bg-[var(--bg-subtle)] text-[var(--text-muted)]'
-                }`}
-              >
-                {isSelected ? <Check className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
-              </div>
-              <div className="min-w-0">
-                <p className="text-sm font-semibold text-[var(--text-main)] truncate">{v.label}</p>
-                <p className="text-xs text-[var(--text-muted)] truncate">
-                  {v.desc || (v.id.includes('HoaiMy') ? 'Nữ miền Bắc truyền cảm' : 'Nam miền Bắc ấm áp')}
-                </p>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={(e) => handlePlayPreview(e, v.id, v.preview_url)}
-              title={isPlaying ? 'Dừng nghe thử' : 'Nghe thử giọng đọc'}
-              className={`shrink-0 px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors ${
-                isPlaying
-                  ? 'bg-amber-500/10 text-amber-600 border border-amber-500/20 animate-pulse'
-                  : 'bg-[var(--bg-subtle)] text-[var(--text-muted)] hover:text-[var(--text-main)] hover:bg-[var(--bg-hover,rgba(0,0,0,0.05))]'
+            <span
+              className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 border ${
+                selected ? 'bg-[var(--ink)] text-[var(--on-ink)] border-[var(--ink)]' : 'border-[var(--border-strong)]'
               }`}
             >
-              {isPlaying ? (
-                <>
-                  <Square className="w-3 h-3 fill-current" />
-                  <span>Dừng</span>
-                </>
-              ) : (
-                <>
-                  <Play className="w-3 h-3 fill-current" />
-                  <span>Nghe thử</span>
-                </>
-              )}
-            </button>
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
+              {selected && <Check className="w-3.5 h-3.5" />}
+            </span>
+            <span className="font-semibold text-sm truncate">{v.label}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => onPreview(v.id)}
+            aria-label={isPlaying ? `Dừng nghe ${v.label}` : `Nghe thử ${v.label}`}
+            className={`shrink-0 h-9 px-3 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors ${
+              isPlaying ? 'bg-[var(--ink)] text-[var(--on-ink)]' : 'bg-[var(--bg-surface)] text-[var(--text-sub)] hover:text-[var(--text-main)]'
+            }`}
+          >
+            {isPlaying ? <Square className="w-3 h-3 fill-current" /> : <Play className="w-3 h-3 fill-current" />}
+            {isPlaying ? 'Dừng' : 'Nghe thử'}
+          </button>
+        </div>
+      )
+    })}
+  </div>
+)

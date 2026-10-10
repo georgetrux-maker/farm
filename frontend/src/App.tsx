@@ -55,6 +55,8 @@ export default function App() {
   const [selectedTemplate, setSelectedTemplate] = useState<ShowcaseTemplate | null>(null)
 
   const isAdmin = user?.role === 'admin'
+  // Trang Admin chỉ dành cho quản trị viên: tài khoản thường gõ #admin thì vẫn ở trang Tạo video
+  const view: View = activeView === 'admin' && !isAdmin ? 'create' : activeView
   const authRef = useRef(authState)
   useEffect(() => {
     authRef.current = authState
@@ -216,7 +218,7 @@ export default function App() {
   return (
     <div className="flex-1 min-h-0 flex flex-col text-[var(--text-main)]">
       <Header
-        activeView={activeView}
+        activeView={view}
         setActiveView={setActiveView}
         walletCredits={walletCredits}
         theme={theme}
@@ -231,7 +233,7 @@ export default function App() {
 
       <main className="flex-1 min-h-0 flex">
         {/* Giữ trang Tạo video khi chuyển trang để không mất ảnh/thông tin đang nhập hoặc tiến độ */}
-        <div className={activeView === 'create' ? 'flex-1 min-w-0 flex animate-fade-in' : 'hidden'}>
+        <div className={view === 'create' ? 'flex-1 min-w-0 flex animate-fade-in' : 'hidden'}>
           <CreateVideoView
             credits={walletCredits}
             isAdmin={isAdmin}
@@ -242,20 +244,20 @@ export default function App() {
             onClearInitialTemplate={() => setSelectedTemplate(null)}
           />
         </div>
-        {activeView !== 'create' && (
-          <div key={activeView} className="flex-1 min-w-0 flex animate-fade-in">
-            {activeView === 'showcase' && <TemplateShowcaseView onUseTemplate={handleUseTemplate} />}
-            {activeView === 'videos' && <MyVideosView onCreate={openCreate} onCreditsChange={setWalletCredits} />}
-            {activeView === 'connect' && <ConnectView isAdmin={isAdmin} />}
-            {activeView === 'stats' && (
-              <StatsView user={user} credits={walletCredits} isAdmin={isAdmin} onOpenDeposit={openDeposit} />
+        {view !== 'create' && (
+          <div key={view} className="flex-1 min-w-0 flex animate-fade-in">
+            {view === 'showcase' && <TemplateShowcaseView onUseTemplate={handleUseTemplate} />}
+            {view === 'videos' && <MyVideosView onCreate={openCreate} onCreditsChange={setWalletCredits} />}
+            {view === 'connect' && <ConnectView isAdmin={isAdmin} />}
+            {view === 'stats' && (
+              <StatsView user={user} credits={walletCredits} onOpenDeposit={openDeposit} />
             )}
-            {activeView === 'admin' && <AdminDashboardView />}
+            {view === 'admin' && <AdminDashboardView />}
           </div>
         )}
       </main>
 
-      <BottomNav activeView={activeView} setActiveView={setActiveView} />
+      <BottomNav activeView={view} setActiveView={setActiveView} />
 
       <VietQRModal
         open={depositOpen}

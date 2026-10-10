@@ -5,16 +5,12 @@ import {
 } from '../../services/api'
 import type { CreditTransaction, DashboardStats } from '../../types'
 import { formatDateTime, formatNumber, formatVnd } from '../../lib/format'
-import { AvatarManager } from './AvatarManager'
 
 interface StatsViewProps {
   user: UserProfile
   credits: number
-  isAdmin: boolean
   onOpenDeposit: () => void
 }
-
-type Tab = 'overview' | 'models'
 
 /** "15.0s" (máy chủ trả về) -> "15 giây" */
 function formatSeconds(value: string | null): string {
@@ -50,8 +46,7 @@ const Kpi: React.FC<{
 )
 
 /** Thống kê của người dùng: số video, số dư, lịch sử credit; quản trị viên có thêm mục người mẫu. */
-export const StatsView: React.FC<StatsViewProps> = ({ user, credits, isAdmin, onOpenDeposit }) => {
-  const [tab, setTab] = useState<Tab>('overview')
+export const StatsView: React.FC<StatsViewProps> = ({ user, credits, onOpenDeposit }) => {
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [history, setHistory] = useState<CreditTransaction[] | null>(null)
   const [videoCost, setVideoCost] = useState<number | null>(null)
@@ -84,44 +79,21 @@ export const StatsView: React.FC<StatsViewProps> = ({ user, credits, isAdmin, on
 
   const maxCount = Math.max(1, ...(stats?.weekly_chart.map((d) => d.count) ?? [0]))
   const weekTotal = stats?.weekly_chart.reduce((sum, d) => sum + d.count, 0) ?? 0
-  const tabs: { id: Tab; label: string }[] = [
-    { id: 'overview', label: 'Tổng quan' },
-    ...(isAdmin ? [{ id: 'models' as const, label: 'Người mẫu AI' }] : []),
-  ]
 
   return (
     <div className="flex-1 h-full overflow-y-auto text-[var(--text-main)]">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-10 space-y-6 sm:space-y-8">
         <div className="flex items-end justify-between gap-4 flex-wrap">
           <div className="min-w-0">
-            <p className="eyebrow">Tổng quan</p>
-            <h1 className="display text-3xl sm:text-4xl mt-1.5">Thống kê</h1>
+            <p className="eyebrow">Ví & hiệu suất</p>
+            <h1 className="display text-3xl sm:text-4xl mt-1.5">Ví của tôi</h1>
             <p className="text-[var(--text-muted)] mt-2 truncate">
               {user.name} · {user.email}
             </p>
           </div>
-          {tabs.length > 1 && (
-            <div className="flex gap-1 p-1 rounded-full bg-[var(--bg-surface)]" role="tablist">
-              {tabs.map((t) => (
-                <button
-                  key={t.id}
-                  role="tab"
-                  aria-selected={tab === t.id}
-                  onClick={() => setTab(t.id)}
-                  className={`px-4 py-2 rounded-full text-sm font-semibold whitespace-nowrap transition-colors ${
-                    tab === t.id ? 'bg-[var(--bg-card)] text-[var(--text-main)] shadow-sm' : 'text-[var(--text-muted)]'
-                  }`}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
-          )}
         </div>
 
-        {tab === 'models' && isAdmin && <AvatarManager />}
-
-        {tab === 'overview' && (
+        {(
           <div className="space-y-5 sm:space-y-6 animate-fade-up">
             {error && (
               <p className="text-sm text-[var(--danger-text)]">

@@ -12,8 +12,10 @@ Upload ảnh sản phẩm, chọn người mẫu và mẫu video, hệ thống t
 
 | Phần | Trạng thái |
 |---|---|
-| Giao diện phong cách thời trang (nền ngà, chữ serif, nút màu mực, có nền tối) với 4 mục: **Tạo video**, **Video của tôi**, **Kết nối**, **Thống kê**; số dư và nút nạp luôn ở góc trên; điện thoại có thanh tab dưới | ✅ |
-| Màn hình **Tạo video** 3 bước: upload ảnh → chọn người mẫu, kiểu video → duyệt & tải (tên file tải về theo tên sản phẩm) | ✅ |
+| Giao diện phong cách thời trang (nền ngà, chữ serif, nút màu mực, có nền tối) với 5 mục cho shop: **Tạo video**, **Thư viện mẫu**, **Video của tôi**, **Kênh bán hàng**, **Ví & hiệu suất**; số dư và nút nạp luôn ở góc trên; điện thoại có thanh tab dưới | ✅ |
+| **Trang quản trị** riêng (nút **Quản trị** chỉ tài khoản admin thấy): doanh thu hôm nay/tuần/tháng, lịch sử nạp tiền và **duyệt tay**, người mẫu AI (thêm, đổi ảnh, đặt mặc định), **cài đặt API key** | ✅ Key mã hóa Fernet trong DB, ưu tiên hơn `.env`; nút kiểm tra kết nối báo sai key / hết credit |
+| Màn hình **Tạo video** 3 bước: upload ảnh (hoặc dán link sản phẩm, hoặc thử với 3 sản phẩm mẫu) → chọn người mẫu, góc quay (xem trước chuyển động trên ảnh của bạn), giọng đọc (nghe thử), xem và sửa kịch bản → duyệt & tải | ✅ |
+| **Thư viện mẫu**: 4 phong cách (dạo phố, công sở, tiệc tối, flash sale), bấm "Dùng mẫu này" là chọn sẵn góc quay, người mẫu, giọng, lời văn | ✅ Xem trước mô phỏng chuyển động; đặt video thật vào `backend/samples/showcase/<id>.mp4` thì tự dùng |
 | Chấm chất lượng ảnh đầu vào (độ phân giải, độ nét, ảnh mờ, độ sáng) | ✅ Chạy tại chỗ, miễn phí |
 | Phân tích ảnh sản phẩm (loại, màu, chất liệu, điểm nổi bật) + viết kịch bản, caption, hashtag | ✅ **Claude** khi có `ANTHROPIC_API_KEY`; không có thì dùng mẫu câu |
 | Thử đồ lên đúng người mẫu đã chọn | ✅ **FASHN** khi có `FASHN_API_KEY`; không có thì chỉ đặt sản phẩm lên phông nền |
@@ -28,17 +30,20 @@ Upload ảnh sản phẩm, chọn người mẫu và mẫu video, hệ thống t
 | Đăng ký / đăng nhập bằng email, đăng xuất | ✅ Mật khẩu băm scrypt, chống dò mật khẩu |
 | Đăng video lên **TikTok** và **Reels Trang Facebook** | ✅ Khi cấu hình app TikTok/Facebook (cần app được nền tảng duyệt, xem bên dưới) |
 | Deploy bằng Docker + HTTPS tự động | ✅ `docker compose up -d --build` |
-| Cào dữ liệu Shopee | ❌ Không làm: vi phạm điều khoản Shopee; cần tài khoản Shopee Open Platform |
+| Lấy tên, giá, chất liệu, ảnh từ **link sản phẩm** | ✅ Đọc dữ liệu Product/OpenGraph của trang; chặn địa chỉ nội bộ. Shopee/TikTok Shop thường chặn đọc tự động nên hay chỉ đoán được tên từ link, người bán tải ảnh lên; điều khoản Shopee không cho cào dữ liệu hàng loạt |
 | Tư vấn size, điểm ghim mua hàng trên video | ❌ Đã gỡ khỏi giao diện vì chưa có dữ liệu thật (API cũ vẫn giữ) |
 
-Tài khoản quản trị có nút **Kiểm tra hệ thống** trên thanh trên cùng, cho biết đang dùng AI thật hay engine tạm
-cho từng bước, và mục **Thống kê → Người mẫu AI** để thêm người mẫu, chọn người mẫu mặc định.
+Tài khoản quản trị có nút **Quản trị** trên thanh trên cùng (trang Admin), và mục **Kiểm tra hệ thống** trong menu tài khoản
+cho biết đang dùng AI thật hay engine tạm cho từng bước. Tài khoản shop không thấy các mục này; máy chủ cũng từ chối mọi API quản trị (403).
 
 ---
 
 ## Bật AI thật
 
-Điền key vào `backend/.env` (chi tiết trong `backend/.env.example`), khởi động lại backend:
+Cách nhanh nhất: **Quản trị → Cài đặt API**, dán key, bấm **Kiểm tra kết nối** rồi **Lưu** (không cần khởi động lại).
+Cần đặt `APP_SECRET_KEY` (ít nhất 32 ký tự) trong `backend/.env` để máy chủ mã hóa được key. Giá trị lưu trong trang Admin
+được ưu tiên hơn `.env`; bấm "Xóa giá trị đã lưu" để quay về `.env`. Hoặc điền thẳng vào `backend/.env` (chi tiết trong
+`backend/.env.example`) rồi khởi động lại backend:
 
 | Bước | Biến môi trường | Lấy ở đâu | Chi phí tham khảo |
 |---|---|---|---|
@@ -46,7 +51,7 @@ cho từng bước, và mục **Thống kê → Người mẫu AI** để thêm 
 | Thử đồ | `FASHN_API_KEY` | app.fashn.ai | ~0,075 USD/ảnh |
 | Video | `REPLICATE_API_TOKEN` | replicate.com/account/api-tokens | Kling 5 giây khoảng 0,3-1,5 USD tùy chế độ |
 
-**Nhớ tăng `PIPELINE_COST_CREDITS`** (mặc định 30 credit = 3.000đ, chỉ hợp với engine tạm) cho đủ bù chi phí AI, ví dụ 300-600 credit/video.
+**Nhớ tăng giá mỗi video** (Quản trị → Cài đặt API → Giá & credit, hoặc `PIPELINE_COST_CREDITS`; mặc định 30 credit = 3.000đ, chỉ hợp với engine tạm) cho đủ bù chi phí AI, ví dụ 300-600 credit/video.
 
 Mẹo:
 - Ảnh người mẫu phải là **ảnh toàn thân, rõ dáng**. Ảnh mẫu trong dữ liệu demo lấy từ Unsplash, nên thay bằng người mẫu AI hoặc người mẫu có hợp đồng của shop (`POST /api/avatars`, nhận URL https hoặc ảnh đã upload).
@@ -198,9 +203,9 @@ Mỗi video tốn `PIPELINE_COST_CREDITS` credit (mặc định 30); job lỗi �
 ```text
 backend/
   main.py            tạo app FastAPI, middleware, gắn các router
-  routers/           API theo nhóm: account, products, ai, jobs, wallet, admin, shopper, social, static
+  routers/           API theo nhóm: account, products, ai, showcase, jobs, wallet, admin, shopper, social, static
   worker.py          worker Celery (QUEUE_BACKEND=celery)
-  config.py          cấu hình từ biến môi trường / backend/.env
+  config.py          cấu hình: trang Admin (admin_config.py, DB mã hóa) > biến môi trường / backend/.env
   auth.py            xác thực token, quyền admin
   database.py        SQLite + migration
   media_paths.py     kiểm tra mọi đường dẫn file nằm trong thư mục media
@@ -209,8 +214,9 @@ backend/
   ai/                claude_client, product_analysis, segmentation, vton (FASHN), motion (Replicate/Kling),
                      script, tts, render, http_utils
   services/          wallet, queue_manager, task_queue (gửi việc: luồng hoặc Redis), social, cache_manager,
-                     security, scraper, size_advisor
-  samples/           video/âm thanh mẫu cho giao diện
+                     admin_settings + provider_check (trang Cài đặt API), safe_http (tải link an toàn),
+                     scraper (đọc link sản phẩm), samples (ảnh mẫu, thư viện mẫu), image_store, security, size_advisor
+  samples/           video/âm thanh mẫu cho giao diện; showcase/<id>.mp4 = video mẫu của Thư viện mẫu (nếu có)
   tests/             pytest
 frontend/            ứng dụng React
 ```

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { Check, ImagePlus, Loader2, Plus, Users2 } from 'lucide-react'
-import { addNewAvatar, fetchAvatars, setDefaultAvatar, uploadImage } from '../../services/api'
+import { Check, ImagePlus, Loader2, Plus, RefreshCw, Users2 } from 'lucide-react'
+import { addNewAvatar, fetchAvatars, setDefaultAvatar, updateAvatar, uploadImage } from '../../services/api'
 import type { BrandAvatar } from '../../types'
 import { AvatarImage } from '../ui/AvatarImage'
 import { Modal } from '../ui/Modal'
@@ -8,7 +8,7 @@ import { useToast } from '../ui/toastContext'
 
 const EMPTY_FORM = { name: '', style: '', height: '1m65', weight: '48kg', measurements: '84-60-90', avatar_url: '' }
 
-/** Kho người mẫu AI (chỉ quản trị viên): thêm người mẫu, chọn người mẫu mặc định cho mọi shop. */
+/** Kho người mẫu AI (chỉ quản trị viên): thêm người mẫu, đổi ảnh, chọn người mẫu mặc định cho mọi shop. */
 export const AvatarManager: React.FC = () => {
   const toast = useToast()
   const [avatars, setAvatars] = useState<BrandAvatar[] | null>(null)
@@ -19,6 +19,8 @@ export const AvatarManager: React.FC = () => {
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const replaceRef = useRef<HTMLInputElement>(null)
+  const replaceTarget = useRef<BrandAvatar | null>(null)
 
   const load = useCallback(() => {
     fetchAvatars()
@@ -41,6 +43,28 @@ export const AvatarManager: React.FC = () => {
       toast(e.message, 'error')
     } finally {
       setBusyId(null)
+    }
+  }
+
+  const pickReplacement = (a: BrandAvatar) => {
+    replaceTarget.current = a
+    replaceRef.current?.click()
+  }
+
+  const replacePhoto = async (file: File) => {
+    const target = replaceTarget.current
+    if (!target) return
+    setBusyId(target.id)
+    try {
+      const res = await uploadImage(file)
+      await updateAvatar(target.id, { avatar_url: res.media_url })
+      toast(`Đã đổi ảnh ${target.name}`, 'success')
+      load()
+    } catch (e: any) {
+      toast(e.message, 'error')
+    } finally {
+      setBusyId(null)
+      replaceTarget.current = null
     }
   }
 
@@ -127,20 +151,38 @@ export const AvatarManager: React.FC = () => {
                   {[a.height, a.weight, a.measurements].filter(Boolean).join(' · ')}
                 </p>
                 <p className="text-xs text-[var(--text-muted)] mt-0.5">Đã dùng cho {a.renders_count ?? 0} video</p>
-                {!a.is_default && (
+                <div className="flex gap-2 mt-3">
                   <button
-                    onClick={() => makeDefault(a)}
+                    onClick={() => pickReplacement(a)}
                     disabled={busyId === a.id}
-                    className="btn btn-secondary btn-sm w-full mt-3"
+                    className="btn btn-ghost btn-sm flex-1"
+                    aria-label={`Đổi ảnh ${a.name}`}
                   >
-                    {busyId === a.id ? 'Đang lưu...' : 'Đặt làm mặc định'}
+                    {busyId === a.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} Đổi ảnh
                   </button>
-                )}
+                  {!a.is_default && (
+                    <button onClick={() => makeDefault(a)} disabled={busyId === a.id} className="btn btn-secondary btn-sm flex-1">
+                      Đặt mặc định
+                    </button>
+                  )}
+                </div>
               </div>
             </article>
           ))}
         </div>
       )}
+
+      <input
+        ref={replaceRef}
+        type="file"
+        accept="image/jpeg,image/png,image/webp"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0]
+          if (f) replacePhoto(f)
+          e.target.value = ''
+        }}
+      />
 
       <Modal open={adding} onClose={() => setAdding(false)} title="Thêm người mẫu AI">
         <form onSubmit={save} className="space-y-4" noValidate>

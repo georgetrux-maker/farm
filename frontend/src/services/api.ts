@@ -96,11 +96,12 @@ export interface PipelineParams {
 }
 
 export interface ScriptPreviewResult {
-  hook: string
-  body: string
-  cta: string
+  hook_3s: string
+  body_text: string
+  cta_text: string
   full_script: string
   engine: string
+  warning: string | null
 }
 
 export function previewScript(data: {
@@ -189,13 +190,6 @@ export function addNewAvatar(data: {
 
 export function setDefaultAvatar(avatarId: string) {
   return post('/api/avatars/set-default', { avatar_id: avatarId }, 'Không thể cập nhật người mẫu mặc định')
-}
-
-export const addAvatar = addNewAvatar
-export type { BrandAvatar }
-
-export function verifyDepositManually(transactionId: string): Promise<{ ok: boolean; message: string }> {
-  return post('/api/admin/wallet/verify', { transaction_id: transactionId }, 'Không thể xác nhận giao dịch')
 }
 
 export function uploadImage(file: File): Promise<{ media_url: string; width: number; height: number }> {
@@ -361,9 +355,10 @@ export function fetchPublications(jobId?: string): Promise<Publication[]> {
   return request(`/api/social/publications${q}`, {}, 'Không thể tải lịch sử đăng')
 }
 
-// ----------------------------------------------------------------- Cào dữ liệu sản phẩm từ link
+// ----------------------------------------------------------------- Lấy thông tin sản phẩm từ link
 export interface ScrapedProduct {
-  status: string
+  /** success: đủ ảnh, tên, giá; partial: thiếu một phần, xem message */
+  status: 'success' | 'partial'
   platform: string
   product_url: string
   title: string | null
@@ -373,82 +368,187 @@ export interface ScrapedProduct {
   image_url: string | null
   images: string[]
   needs_manual_input: boolean
+  message: string | null
 }
 
 export function scrapeProduct(url: string): Promise<ScrapedProduct> {
   return post<ScrapedProduct>('/api/scraper/product', { url }, 'Không thể đọc thông tin từ link sản phẩm')
 }
 
-// ----------------------------------------------------------------- Quản trị API Keys & Hệ thống
-export interface AdminApiKeysConfig {
-  anthropic: { is_configured: boolean; masked_key: string; model: string }
-  fashn: { is_configured: boolean; masked_key: string; model_name: string; mode: string }
-  replicate: { is_configured: boolean; masked_key: string; video_model: string; kling_mode: string }
-  vietqr: { bank_id: string; account_no: string; account_name: string; is_configured: boolean }
-  sepay: { is_configured: boolean; masked_key: string }
-  tiktok: { is_configured: boolean; client_key: string; has_secret: boolean }
-  facebook: { is_configured: boolean; app_id: string; has_secret: boolean }
-  pricing: { pipeline_cost_credits: number; tryon_preview_cost_credits: number; signup_bonus_credits: number }
+// ----------------------------------------------------------------- Ảnh sản phẩm mẫu
+export interface SampleProduct {
+  id: string
+  title: string
+  price: number
+  fabric: string
+  category: string
+  thumbnail_url: string
 }
 
-export function fetchAdminApiKeys(): Promise<AdminApiKeysConfig> {
-  return request<AdminApiKeysConfig>('/api/admin/api-keys', {}, 'Không tải được cấu hình API')
+export interface ProductPrefill {
+  title: string
+  price: number | null
+  fabric?: string | null
+  category?: string | null
+  image_url: string | null
 }
 
-export function saveAdminApiKeys(payload: Record<string, any>): Promise<{ status: string; message: string }> {
-  return post('/api/admin/api-keys', payload, 'Không lưu được cài đặt API')
+export function fetchSampleProducts(): Promise<{ products: SampleProduct[] }> {
+  return request('/api/samples/products', {}, 'Không tải được ảnh mẫu')
 }
 
-export function testAdminApiKey(provider: string): Promise<{ ok: boolean; message: string }> {
-  return post('/api/admin/api-keys/test', { provider }, 'Lỗi kiểm tra kết nối API')
+export function prepareSampleProduct(sampleId: string): Promise<ProductPrefill> {
+  return post(`/api/samples/products/${encodeURIComponent(sampleId)}/use`, {}, 'Không chuẩn bị được ảnh mẫu')
 }
 
-// ----------------------------------------------------------------- Quản trị Doanh thu & Người dùng
+// ----------------------------------------------------------------- Quản trị: cài đặt API & hệ thống
+export type AdminSettingKind = 'secret' | 'text' | 'choice' | 'int'
+export type AdminSettingSource = 'admin' | 'env' | 'default' | 'none'
+
+export interface AdminSetting {
+  key: string
+  provider: string
+  label: string
+  kind: AdminSettingKind
+  /** Key bí mật: bản đã che; số: number; còn lại: chuỗi */
+  value: string | number | null
+  source: AdminSettingSource
+  configured: boolean
+  hint: string
+  placeholder: string
+  options?: string[]
+  min?: number
+  max?: number
+}
+
+export interface AdminSettings {
+  secret_key_ready: boolean
+  settings: AdminSetting[]
+}
+
+export type ProviderId = 'anthropic' | 'fashn' | 'replicate' | 'sepay' | 'tiktok' | 'facebook'
+
+export interface ProviderCheck {
+  ok: boolean
+  status: 'ok' | 'invalid_key' | 'no_credit' | 'not_configured' | 'error' | 'info'
+  message: string
+}
+
+export function fetchAdminSettings(): Promise<AdminSettings> {
+  return request('/api/admin/api-keys', {}, 'Không tải được cấu hình')
+}
+
+/** Chỉ gửi các ô đã sửa; null hoặc chuỗi rỗng = xóa giá trị trong Admin, dùng lại backend/.env */
+export function saveAdminSettings(
+  changes: Record<string, string | number | null>,
+): Promise<{ status: string; saved: string[]; message: string; settings: AdminSetting[] }> {
+  return post('/api/admin/api-keys', changes, 'Không lưu được cấu hình')
+}
+
+/** values: các ô vừa gõ (chưa lưu) để thử trước khi lưu */
+export function testProvider(provider: ProviderId, values: Record<string, string> = {}): Promise<ProviderCheck> {
+  return post('/api/admin/api-keys/test', { provider, values }, 'Lỗi kiểm tra kết nối')
+}
+
+// ----------------------------------------------------------------- Quản trị: doanh thu, người dùng, nạp tiền
+export interface PeriodCounts {
+  total: number
+  today: number
+  week: number
+  month: number
+}
+
 export interface AdminStatsOverview {
   summary: {
-    total_users: number
-    total_credits_in_circulation: number
-    total_revenue_vnd: number
+    revenue_vnd: PeriodCounts
+    new_shops: PeriodCounts
+    completed_videos: PeriodCounts
     total_jobs: number
-    completed_jobs: number
+    credits_in_wallets: number
+    pending_deposits: number
   }
-  recent_users: Array<{ id: string; name: string; email: string; role: string; credits: number; created_at: string }>
-  recent_transactions: Array<CreditTransaction & { user_name?: string; user_email?: string }>
+  recent_users: Array<{ id: string; name: string; email: string | null; role: string; credits: number; created_at: string }>
 }
 
 export function fetchAdminStatsOverview(): Promise<AdminStatsOverview> {
-  return request<AdminStatsOverview>('/api/admin/stats-overview', {}, 'Không tải được báo cáo quản trị')
+  return request('/api/admin/stats-overview', {}, 'Không tải được báo cáo quản trị')
 }
 
-// ----------------------------------------------------------------- Thư viện Video Mẫu & Nghe thử giọng
+export interface AdminDeposit {
+  id: string
+  user_id: string
+  user_name: string | null
+  user_email: string | null
+  amount_vnd: number | null
+  amount_credits: number
+  /** Nội dung chuyển khoản khách phải ghi, ví dụ "NAPTIEN TX1A2B3C" */
+  transfer_content: string | null
+  status: 'pending' | 'success'
+  created_at: string
+  confirmed_at: string | null
+  confirmed_by: string | null
+}
+
+export interface AdminDepositPage {
+  items: AdminDeposit[]
+  total: number
+  page: number
+  page_size: number
+  has_more: boolean
+}
+
+export function fetchAdminDeposits(params: {
+  status?: 'pending' | 'success' | 'all'
+  q?: string
+  page?: number
+  pageSize?: number
+}): Promise<AdminDepositPage> {
+  const qs = new URLSearchParams()
+  if (params.status) qs.set('status', params.status)
+  if (params.q?.trim()) qs.set('q', params.q.trim())
+  if (params.page) qs.set('page', String(params.page))
+  if (params.pageSize) qs.set('page_size', String(params.pageSize))
+  return request(`/api/admin/deposits?${qs}`, {}, 'Không tải được lịch sử nạp tiền')
+}
+
+export function verifyDeposit(
+  transactionId: string,
+): Promise<{ status: 'success' | 'already_processed'; credits_added?: number; new_balance?: number; message?: string }> {
+  return post(`/api/admin/deposits/${encodeURIComponent(transactionId)}/verify`, {}, 'Không thể xác nhận giao dịch')
+}
+
+export function updateAvatar(
+  avatarId: string,
+  data: Partial<Pick<BrandAvatar, 'name' | 'style' | 'height' | 'weight' | 'measurements' | 'avatar_url' | 'badge'>>,
+): Promise<BrandAvatar> {
+  return request(`/api/avatars/${encodeURIComponent(avatarId)}`, { method: 'PATCH', body: JSON.stringify(data) },
+    'Không thể cập nhật người mẫu')
+}
+
+// ----------------------------------------------------------------- Thư viện mẫu video & nghe thử giọng
 export interface ShowcaseTemplate {
   id: string
   title: string
   category: string
   badge: string
-  video_url: string
-  thumbnail_url: string
-  motion_template: string
-  voice_id: string
-  voice_name: string
-  script_style: string
-  music_name: string
   description: string
   tags: string[]
+  motion_template: string
+  template_label: string
+  voice_id: string
+  voice_label: string
+  script_style: string
+  avatar_id: string | null
+  sample_product_id: string
+  image_url: string
+  caption_lines: string[]
+  /** Video mẫu thật nếu đã đặt trong backend/samples/showcase; null thì mô phỏng góc quay trên ảnh */
+  video_url: string | null
 }
 
 export function fetchTemplateShowcase(): Promise<{ templates: ShowcaseTemplate[] }> {
-  return request<{ templates: ShowcaseTemplate[] }>('/api/templates/showcase', {}, 'Không tải được thư viện mẫu')
+  return request('/api/templates/showcase', {}, 'Không tải được thư viện mẫu')
 }
 
-export interface VoicePreviewItem {
-  id: string
-  label: string
-  gender: 'female' | 'male'
-  preview_url: string
-}
-
-export function fetchVoicePreviews(): Promise<{ voices: VoicePreviewItem[] }> {
-  return request<{ voices: VoicePreviewItem[] }>('/api/ai/tts/voices-preview', {}, 'Không tải được danh sách mẫu giọng')
-}
-
+/** Link nghe thử giọng (file do máy chủ tạo bằng đúng giọng đó) */
+export const voicePreviewUrl = (voiceId: string) => `/api/ai/tts/preview/${encodeURIComponent(voiceId)}`
