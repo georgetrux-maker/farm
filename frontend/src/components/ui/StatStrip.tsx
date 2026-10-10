@@ -15,7 +15,7 @@ export interface StatItem {
 export const StatStrip: React.FC<{ items: StatItem[]; className?: string }> = ({ items, className = '' }) => (
   <div
     className={`grid grid-cols-2 gap-px rounded-[1.25rem] overflow-hidden border border-[var(--border-subtle)] bg-[var(--border-subtle)] shadow-[var(--shadow-card)] ${
-      items.length === 4 ? 'lg:grid-cols-4' : items.length === 3 ? 'sm:grid-cols-3' : ''
+      items.length === 5 ? 'lg:grid-cols-5' : items.length === 4 ? 'lg:grid-cols-4' : items.length === 3 ? 'sm:grid-cols-3' : ''
     } ${className}`}
   >
     {items.map((it, i) => {
@@ -25,7 +25,9 @@ export const StatStrip: React.FC<{ items: StatItem[]; className?: string }> = ({
       return (
         <div
           key={it.label}
-          className={`bg-[var(--bg-card)] p-4 sm:p-5 flex flex-col min-w-0 ${spanLast ? 'col-span-2 sm:col-span-1' : ''}`}
+          className={`bg-[var(--bg-card)] p-4 sm:p-5 flex flex-col min-w-0 ${
+            spanLast ? (items.length === 3 ? 'col-span-2 sm:col-span-1' : 'col-span-2 lg:col-span-1') : ''
+          }`}
         >
           <span className="text-sm text-[var(--text-muted)] flex items-center gap-1.5">
             {Icon && <Icon className="w-4 h-4 shrink-0" aria-hidden />}

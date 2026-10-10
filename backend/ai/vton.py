@@ -134,6 +134,41 @@ def _placeholder_tryon(garment_path: Optional[str], output_name: str, scene: str
     return output_path
 
 
+def _placeholder_person_tryon(person_path: str, garment_path: Optional[str], output_name: str) -> str:
+    """Bản xem thử khi chưa bật AI thử đồ: ảnh của khách (khung 9:16) với trang phục đã tách nền đặt lên phần thân."""
+    width, height = 720, 1280
+    with Image.open(person_path) as src:
+        person = src.convert("RGB")
+    scale = max(width / person.width, height / person.height)
+    person = person.resize((round(person.width * scale), round(person.height * scale)))
+    left, top = (person.width - width) // 2, (person.height - height) // 2
+    base = person.crop((left, top, left + width, top + height))
+    if garment_path:
+        with Image.open(garment_path) as g:
+            garment = g.convert("RGBA")
+        garment.thumbnail((int(width * 0.56), int(height * 0.5)))
+        x, y = (width - garment.width) // 2, int(height * 0.27)
+        shadow = Image.new("L", (width, height), 0)
+        shadow.paste(garment.getchannel("A").point(lambda a: a * 0.35), (x + 6, y + 10))
+        base.paste((20, 16, 14), mask=shadow.filter(ImageFilter.GaussianBlur(12)))
+        base.paste(garment, (x, y), garment)
+    output_path = media_path(output_name)
+    base.save(output_path, "JPEG", quality=90)
+    return output_path
+
+
+def generate_person_tryon(garment_path: str, person_path: str, output_name: str, garment_type: str = "auto",
+                          photo_type: str = "auto", cutout_path: Optional[str] = None) -> dict:
+    """Người mua thử đồ lên ảnh của chính mình. `person_path` là ảnh toàn thân của khách (trong thư mục media).
+    `cutout_path`: ảnh trang phục đã tách nền, dùng cho bản xem thử khi chưa bật AI thử đồ."""
+    engine = engine_name()
+    if engine == "fashn":
+        output_path = _fashn_tryon(garment_path, media_url(person_path), garment_type, photo_type, output_name)
+    else:
+        output_path = _placeholder_person_tryon(person_path, cutout_path or garment_path, output_name)
+    return {"engine": engine, "output_path": output_path, "media_url": media_url(output_path)}
+
+
 def restage_placeholder(garment_path: Optional[str], output_name: str, scene: str) -> Optional[str]:
     """Ảnh minh họa với phông nền của bối cảnh khác (Pro Studio nhiều cảnh).
     Trả về None khi đang dùng AI thử đồ thật: ảnh đó giữ nguyên, không dựng lại."""

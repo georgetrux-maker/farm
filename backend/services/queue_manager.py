@@ -372,6 +372,8 @@ def _job_dict(row) -> dict:
         "script": json.loads(row["script_json"]) if row["script_json"] else None,
         "created_at": row["created_at"],
         "completed_at": row["completed_at"],
+        "feed_visible": bool(row["feed_visible"]) if "feed_visible" in row.keys() else False,
+        "views": (row["views"] or 0) if "views" in row.keys() else 0,
     }
 
 

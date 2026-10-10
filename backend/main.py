@@ -12,7 +12,8 @@ from backend.database import init_db
 from backend.ffmpeg_utils import FFmpegError
 from backend.media_paths import MediaPathError
 from backend.routers import (
-    account, admin, admin_users, ai, jobs, plans, products, shop_library, shopper, showcase, social, static, wallet,
+    account, admin, admin_users, ai, buyer, feed, jobs, plans, products, shop_library, shopper, showcase, social, static,
+    wallet,
 )
 from backend.services import social as social_service
 from backend.services.queue_manager import recover_stale_jobs
@@ -71,7 +72,8 @@ async def ffmpeg_error_handler(request: Request, exc: FFmpegError):
 
 
 # shop_library trước products: /api/products/library phải khớp trước /api/products/{product_id}
-for module in (account, shop_library, plans, products, ai, showcase, jobs, wallet, admin, admin_users, shopper, social):
+for module in (account, shop_library, plans, products, ai, showcase, jobs, feed, buyer, wallet, admin, admin_users,
+               shopper, social):
     app.include_router(module.router)
 
 static.mount_static(app)

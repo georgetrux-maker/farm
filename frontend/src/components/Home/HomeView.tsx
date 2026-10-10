@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react'
-import { ArrowDownRight, ArrowRight, ArrowUpRight, Clapperboard, Coins, Film, LayoutGrid, Package, Play, UserRound, Wand2, Zap } from 'lucide-react'
+import { ArrowDownRight, ArrowRight, ArrowUpRight, Clapperboard, Coins, Eye, Film, LayoutGrid, Package, Play, UserRound, Wand2, Zap } from 'lucide-react'
 import { fetchDashboardStats, fetchMyVideos, fetchStudioOptions, type UserProfile } from '../../services/api'
 import type { DashboardStats, MyVideo } from '../../types'
 import { formatDateTime, formatNumber, formatVnd } from '../../lib/format'
@@ -161,6 +161,17 @@ export const HomeView: React.FC<HomeViewProps> = ({ user, credits, onNavigate, o
               label: 'Video đã tạo',
               value: stats ? formatNumber(stats.completed_renders) : '…',
               sub: stats && <WeekTrend trend={stats.trends?.videos} unit="video" />,
+            },
+            {
+              icon: Eye,
+              label: 'Lượt xem feed',
+              value: stats ? formatNumber(stats.feed_views ?? 0) : '…',
+              sub: stats && (stats.feed_videos ? `${formatNumber(stats.feed_videos)} video đang trên feed` : 'Bật "Hiện trên feed" ở video'),
+              action: (
+                <button onClick={() => onNavigate('feed')} className="text-sm font-semibold text-[var(--accent-text)] inline-flex items-center gap-1 group">
+                  Xem feed <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5" />
+                </button>
+              ),
             },
             {
               icon: Package,

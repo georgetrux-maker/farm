@@ -454,6 +454,7 @@ const PublishedIcons: React.FC<{ video: MyVideo }> = ({ video: v }) => {
   const done = new Set(v.published_platforms ?? [])
   if (v.status !== 'completed') return <span className="text-sm text-[var(--text-muted)]">-</span>
   return (
+    <span className="block">
     <span className="flex items-center gap-2 text-sm">
       <span title={done.has('tiktok') ? 'Đã đăng TikTok' : 'Chưa đăng TikTok'} className={done.has('tiktok') ? '' : 'opacity-30'}>
         <TikTokLogo className="w-4 h-4" />
@@ -464,6 +465,10 @@ const PublishedIcons: React.FC<{ video: MyVideo }> = ({ video: v }) => {
       <span className={done.size ? 'text-[var(--ok-text)] font-medium' : 'text-[var(--text-muted)]'}>
         {done.size ? 'Đã đăng' : 'Chưa đăng'}
       </span>
+    </span>
+    {v.feed_visible && (
+      <span className="block text-xs text-[var(--text-muted)] mt-1">Trên feed Aura · {formatNumber(v.views ?? 0)} lượt xem</span>
+    )}
     </span>
   )
 }

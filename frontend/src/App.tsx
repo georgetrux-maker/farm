@@ -4,7 +4,9 @@ import { Header } from './components/Header'
 import { Sidebar } from './components/Sidebar'
 import { BottomNav } from './components/BottomNav'
 import { Wordmark } from './components/ui/Wordmark'
-import { LoginView } from './components/Auth/LoginView'
+import { PublicApp } from './components/Public/PublicApp'
+import { BuyerApp } from './components/Feed/BuyerApp'
+import { FeedView } from './components/Feed/FeedView'
 import { HomeView } from './components/Home/HomeView'
 import { CreateVideoView } from './components/Create/CreateVideoView'
 import { ProStudioView } from './components/Studio/ProStudioView'
@@ -33,6 +35,8 @@ const DEPOSIT_WATCH_MS = 30 * 60 * 1000 // theo dõi tiền về tối đa 30 ph
 interface Route {
   view: View
   section: AdminSection
+  /** #feed/<id>: video mở từ link chia sẻ */
+  id?: string | null
 }
 
 /** Vừa quay về từ trang cấp quyền TikTok/Facebook thì mở trang Kênh liên kết */
@@ -71,7 +75,7 @@ export default function App() {
   }, [authState])
 
   const navigate = useCallback((next: View, section: AdminSection = 'overview') => {
-    setRoute({ view: next, section })
+    setRoute({ view: next, section, id: null })
     const hash = toHash(next, section)
     if (window.location.hash.replace(/^#\/?/, '') !== hash) window.location.hash = hash
   }, [])
@@ -93,7 +97,9 @@ export default function App() {
       setUser(u)
       setWalletCredits(u.credits)
       setAuthState('in')
-      if (isNewAccount) {
+      if (isNewAccount && u.role === 'buyer') {
+        toast(`Chào mừng ${u.name}. Lướt feed, lưu video và thử đồ lên ảnh của bạn nhé.`, 'success')
+      } else if (isNewAccount) {
         toast(
           u.credits > 0
             ? `Chào mừng ${u.name}. Bạn có ${formatNumber(u.credits)} credit để bắt đầu tạo video.`
@@ -274,7 +280,10 @@ export default function App() {
     )
   }
   if (authState === 'out' || !user) {
-    return <LoginView onLoggedIn={handleLoggedIn} />
+    return <PublicApp onLoggedIn={handleLoggedIn} />
+  }
+  if (user.role === 'buyer') {
+    return <BuyerApp user={user} mode={mode} onModeChange={setMode} onLogout={handleLogout} />
   }
 
   return (
@@ -367,6 +376,7 @@ export default function App() {
                 />
               )}
               {view === 'showcase' && <TemplateShowcaseView onUseTemplate={handleUseTemplate} />}
+              {view === 'feed' && <FeedView user={user} startId={route.id} onRequireLogin={() => {}} />}
               {view === 'products' && (
                 <ProductsView
                   credits={walletCredits}

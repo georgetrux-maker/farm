@@ -7,7 +7,7 @@ Token là phiên đăng nhập (POST /api/auth/login) hoặc API token cố đ�
 import hmac
 from typing import Optional
 
-from fastapi import Depends, Header, HTTPException
+from fastapi import Depends, Header, HTTPException, Request
 
 from backend import config
 from backend.database import DEMO_USER_ID, get_user, get_user_by_token
@@ -21,11 +21,18 @@ def bearer_token(authorization: str = Header(default="")) -> str:
 LOCKED_MESSAGE = "Tài khoản đã bị khóa, vui lòng liên hệ bộ phận hỗ trợ"
 
 
-def get_current_user(token: str = Depends(bearer_token)) -> dict:
+# Tài khoản người mua chỉ dùng được feed, thử đồ và hồ sơ của mình, không gọi được API của shop
+BUYER_PATHS = ("/api/user/profile", "/api/auth/", "/api/feed", "/api/buyer/", "/api/support/info")
+BUYER_FORBIDDEN = "Tài khoản người mua không dùng được tính năng này của shop"
+
+
+def get_current_user(request: Request, token: str = Depends(bearer_token)) -> dict:
     if token:
         user = get_user_by_token(token)
         if user and user.get("disabled"):
             raise HTTPException(status_code=403, detail=LOCKED_MESSAGE)
+        if user and user.get("role") == "buyer" and not request.url.path.startswith(BUYER_PATHS):
+            raise HTTPException(status_code=403, detail=BUYER_FORBIDDEN)
         if user:
             return user
         raise HTTPException(status_code=401, detail="Token không hợp lệ")

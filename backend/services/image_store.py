@@ -17,7 +17,7 @@ class ImageRejected(ValueError):
         self.status_code = status_code
 
 
-def store_image_bytes(data: bytes, prefix: str = "img", max_side: int = None) -> dict:
+def store_image_bytes(data: bytes, prefix: str = "img", max_side: int = None, name_hex: int = 12) -> dict:
     """Mở ảnh, kiểm tra định dạng/kích thước, lưu lại bản sạch (bỏ metadata). Trả về media_url, width, height."""
     try:
         with Image.open(io.BytesIO(data)) as probe:
@@ -36,9 +36,9 @@ def store_image_bytes(data: bytes, prefix: str = "img", max_side: int = None) ->
     has_alpha = img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info)
     os.makedirs(media_path("uploads"), exist_ok=True)
     if has_alpha:
-        name = os.path.join("uploads", f"{prefix}_{uuid.uuid4().hex[:12]}.png")
+        name = os.path.join("uploads", f"{prefix}_{uuid.uuid4().hex[:name_hex]}.png")
         img.convert("RGBA").save(media_path(name), "PNG")
     else:
-        name = os.path.join("uploads", f"{prefix}_{uuid.uuid4().hex[:12]}.jpg")
+        name = os.path.join("uploads", f"{prefix}_{uuid.uuid4().hex[:name_hex]}.jpg")
         img.convert("RGB").save(media_path(name), "JPEG", quality=92)
     return {"media_url": media_url(media_path(name)), "width": img.width, "height": img.height}

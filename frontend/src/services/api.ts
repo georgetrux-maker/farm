@@ -439,8 +439,10 @@ export interface AuthResult {
   user: UserProfile
 }
 
-export function register(name: string, email: string, password: string): Promise<AuthResult> {
-  return post('/api/auth/register', { name, email, password }, 'Không thể đăng ký')
+export type AccountRole = 'shop' | 'buyer'
+
+export function register(name: string, email: string, password: string, role: AccountRole = 'shop'): Promise<AuthResult> {
+  return post('/api/auth/register', { name, email, password, role }, 'Không thể đăng ký')
 }
 
 export function login(email: string, password: string): Promise<AuthResult> {
@@ -886,4 +888,101 @@ export function fetchAdminSubscriptions(status: 'active' | 'pending' | 'expired'
   has_more: boolean
 }> {
   return request(`/api/admin/subscriptions?status=${status}&page=${page}`, {}, 'Không tải được danh sách gói đã bán')
+}
+
+// ----------------------------------------------------------------- Feed của Aura (công khai)
+export interface FeedItem {
+  id: string
+  video_url: string
+  poster_url: string | null
+  caption: string
+  hashtags: string[]
+  shop: { id: string; name: string }
+  product: {
+    id: string
+    title: string
+    price: number
+    original_price: number | null
+    image_url: string
+    sizes: string[]
+    product_url: string | null
+    tryon_enabled: boolean
+  }
+  views: number
+  likes: number
+  saves: number
+  liked: boolean
+  saved: boolean
+  published_at: string | null
+}
+
+export function fetchFeed(page = 1, pageSize = 8): Promise<{ items: FeedItem[]; page: number; has_more: boolean }> {
+  return request(`/api/feed?page=${page}&page_size=${pageSize}`, {}, 'Không tải được feed')
+}
+
+export function fetchFeedItem(id: string): Promise<FeedItem> {
+  return request(`/api/feed/${encodeURIComponent(id)}`, {}, 'Video không còn trên feed')
+}
+
+export function fetchSavedFeed(): Promise<{ items: FeedItem[] }> {
+  return request('/api/feed/saved', {}, 'Không tải được video đã lưu')
+}
+
+export function fetchFeedInfo(): Promise<{ photo_hours: number; daily_limit: number }> {
+  return request('/api/feed/info', {}, 'Không tải được thông tin')
+}
+
+export function countFeedView(id: string) {
+  return post<{ counted: boolean }>(`/api/feed/${encodeURIComponent(id)}/view`, {}).catch(() => ({ counted: false }))
+}
+
+export function reactFeed(id: string, kind: 'like' | 'save', active: boolean): Promise<{ count: number; active: boolean }> {
+  return request(
+    `/api/feed/${encodeURIComponent(id)}/reactions/${kind}`,
+    { method: 'PUT', body: JSON.stringify({ active }) },
+    'Không lưu được thao tác',
+  )
+}
+
+export function setFeedVisibility(jobId: string, visible: boolean): Promise<{ feed_visible: boolean }> {
+  return request(
+    `/api/jobs/${encodeURIComponent(jobId)}/feed`,
+    { method: 'PUT', body: JSON.stringify({ visible }) },
+    'Không đổi được trạng thái trên feed',
+  )
+}
+
+// ----------------------------------------------------------------- Người mua thử đồ ảo
+export interface BuyerTryon {
+  id: string
+  product_id: string
+  size: string | null
+  engine: string
+  before_url: string
+  after_url: string
+  created_at: string
+  expires_at: string
+  product?: { title: string; price: number; product_url: string | null; sizes: string[]; image_url: string }
+}
+
+export function fetchTryonInfo(): Promise<{ daily_limit: number; used_24h: number; photo_hours: number; privacy_text: string }> {
+  return request('/api/buyer/tryon/info', {}, 'Không tải được thông tin thử đồ')
+}
+
+export async function uploadBuyerPhoto(file: File): Promise<{ photo_url: string }> {
+  const body = new FormData()
+  body.append('file', file)
+  return request('/api/buyer/photo', { method: 'POST', body }, 'Không tải được ảnh')
+}
+
+export function createBuyerTryon(input: { product_id: string; photo_url: string; size?: string | null; job_id?: string }): Promise<BuyerTryon> {
+  return post('/api/buyer/tryon', { ...input, consent: true }, 'Chưa thử được, bạn thử lại nhé')
+}
+
+export function fetchBuyerTryons(): Promise<{ items: BuyerTryon[] }> {
+  return request('/api/buyer/tryons', {}, 'Không tải được lượt thử đồ')
+}
+
+export function deleteBuyerTryon(id: string) {
+  return request(`/api/buyer/tryons/${encodeURIComponent(id)}`, { method: 'DELETE' }, 'Không xóa được ảnh')
 }

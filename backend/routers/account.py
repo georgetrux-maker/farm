@@ -1,5 +1,7 @@
 """Tài khoản: đăng ký, đăng nhập, hồ sơ, thống kê"""
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
@@ -19,6 +21,7 @@ class RegisterRequest(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     email: str = Field(min_length=5, max_length=200, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
     password: str = Field(min_length=8, max_length=200)
+    role: Literal["shop", "buyer"] = Field(default="shop", description="buyer = người mua: xem feed, thử đồ, mua")
 
 
 class LoginRequest(BaseModel):
@@ -45,7 +48,7 @@ def api_register(req: RegisterRequest, request: Request):
         raise HTTPException(status_code=403, detail="Hiện chưa mở đăng ký tài khoản mới")
     _login_rate_limit(request, req.email)
     user = register_user(req.name.strip(), req.email.strip().lower(), hash_password(req.password),
-                         credits=config.signup_bonus_credits())
+                         credits=config.signup_bonus_credits() if req.role == "shop" else 0, role=req.role)
     if user is None:
         raise HTTPException(status_code=409, detail="Email này đã được đăng ký")
     return _session_response(user)
@@ -73,6 +76,8 @@ def api_logout(token: str = Depends(bearer_token)):
 def api_get_profile(user: dict = Depends(get_current_user)):
     """Task 7 & 19: Thông tin tài khoản & hồ sơ cơ thể của user đang đăng nhập, kèm gói tháng đang dùng.
     Credit hằng tháng của gói được cộng ở đây nếu đã tới mốc, nên đọc lại số dư sau đó."""
+    if user.get("role") == "buyer":
+        return public_user(user)
     plan = plan_summary(user["id"])
     return {**public_user(get_user(user["id"]) or user), "plan": plan}
 

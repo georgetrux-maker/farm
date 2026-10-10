@@ -45,6 +45,9 @@ export interface AIJob {
   script?: JobScript | null
   created_at?: string
   completed_at?: string | null
+  /** Shop đã cho video hiện trên feed của Aura */
+  feed_visible?: boolean
+  views?: number
 }
 
 /** Một dòng trong trang "Video của tôi" */
@@ -97,6 +100,9 @@ export interface DashboardStats {
   products_count?: number
   models_count?: number
   private_models_count?: number
+  feed_views?: number
+  feed_videos?: number
+  buyer_tryons?: number
   /** 7 ngày gần nhất so với 7 ngày trước đó */
   trends?: Record<'videos' | 'products', { week: number; prev_week: number }>
   published_videos: number

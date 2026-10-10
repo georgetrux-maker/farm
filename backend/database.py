@@ -303,6 +303,39 @@ def init_db():
     )
     ''')
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_subscriptions_user ON subscriptions(user_id, status)")
+    # Feed của Aura: shop chọn video nào hiện công khai; người xem thích/lưu; đếm lượt xem
+    _add_column_if_missing(cursor, "ai_jobs", "feed_visible", "INTEGER DEFAULT 0")
+    _add_column_if_missing(cursor, "ai_jobs", "feed_at", "TIMESTAMP")
+    _add_column_if_missing(cursor, "ai_jobs", "views", "INTEGER DEFAULT 0")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_feed ON ai_jobs(feed_visible, feed_at)")
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS feed_reactions (
+        job_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        kind TEXT NOT NULL,                  -- 'like' | 'save'
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (job_id, user_id, kind)
+    )
+    ''')
+    # Người mua thử đồ lên ảnh của mình: shop trả credit, ảnh tự xóa sau một thời gian
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS buyer_tryons (
+        id TEXT PRIMARY KEY,
+        buyer_id TEXT NOT NULL,
+        product_id TEXT NOT NULL,
+        shop_id TEXT NOT NULL,
+        job_id TEXT,
+        size TEXT,
+        photo_url TEXT,
+        result_url TEXT,
+        engine TEXT,
+        cost_credits INTEGER NOT NULL DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        expires_at TIMESTAMP NOT NULL,
+        deleted_at TIMESTAMP
+    )
+    ''')
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_buyer_tryons_buyer ON buyer_tryons(buyer_id, created_at)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_tx_user ON wallet_transactions(user_id, created_at)")
     cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_token ON users(api_token_hash)")
     # API key không còn lưu trong DB (bản cũ seed sẵn key giả và cho sửa qua giao diện)
@@ -383,14 +416,16 @@ def create_user(name: str, email: str, role: str = "shop", credits: int = 0) -> 
     return {"id": user_id, "name": name, "email": email, "role": role, "api_token": token}
 
 
-def register_user(name: str, email: str, password_hash: str, credits: int = 0):
-    """Tạo tài khoản shop bằng email. Trả None nếu email đã tồn tại."""
+def register_user(name: str, email: str, password_hash: str, credits: int = 0, role: str = "shop"):
+    """Tạo tài khoản shop hoặc người mua bằng email. Trả None nếu email đã tồn tại."""
+    if role not in ("shop", "buyer"):
+        raise ValueError("role phải là shop hoặc buyer")
     user_id = f"user_{uuid.uuid4().hex[:10]}"
     conn = get_db()
     try:
         conn.execute(
-            "INSERT INTO users (id, name, email, role, credits, password_hash) VALUES (?, ?, ?, 'shop', ?, ?)",
-            (user_id, name, email, credits, password_hash),
+            "INSERT INTO users (id, name, email, role, credits, password_hash) VALUES (?, ?, ?, ?, ?, ?)",
+            (user_id, name, email, role, credits, password_hash),
         )
         conn.commit()
     except sqlite3.IntegrityError:
@@ -716,6 +751,9 @@ def get_dashboard_summary(user_id: str):
     conn = get_db()
     products_count = conn.execute("SELECT COUNT(*) FROM products WHERE owner_id = ? AND COALESCE(archived, 0) = 0",
                                   (user_id,)).fetchone()[0]
+    feed_row = conn.execute("SELECT COALESCE(SUM(views), 0), COALESCE(SUM(CASE WHEN feed_visible = 1 THEN 1 END), 0) "
+                            "FROM ai_jobs WHERE user_id = ?", (user_id,)).fetchone()
+    tryons_count = conn.execute("SELECT COUNT(*) FROM buyer_tryons WHERE shop_id = ?", (user_id,)).fetchone()[0]
     models_count = conn.execute("SELECT COUNT(*) FROM brand_avatars WHERE (owner_id IS NULL OR owner_id = ?) "
                                 "AND COALESCE(archived, 0) = 0", (user_id,)).fetchone()[0]
     private_models = conn.execute("SELECT COUNT(*) FROM brand_avatars WHERE owner_id = ? AND COALESCE(archived, 0) = 0",
@@ -741,6 +779,9 @@ def get_dashboard_summary(user_id: str):
         "models_count": models_count,
         "private_models_count": private_models,
         "trends": trends,
+        "feed_views": feed_row[0],
+        "feed_videos": feed_row[1],
+        "buyer_tryons": tryons_count,
         "published_videos": published_videos,
         "cache_hits": cache_hits,
         "cache_saved_usd": cache_saved_usd,

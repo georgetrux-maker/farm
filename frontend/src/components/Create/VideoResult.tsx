@@ -1,12 +1,14 @@
 import React, { useRef, useState } from 'react'
 import { Check, Copy, Download, Info, RotateCcw } from 'lucide-react'
 import type { AIJob } from '../../types'
-import { formatDateTime, formatVnd, videoFileName } from '../../lib/format'
+import { setFeedVisibility } from '../../services/api'
+import { formatDateTime, formatNumber, formatVnd, videoFileName } from '../../lib/format'
 import { useStudioLabels } from '../../lib/useStudioLabels'
 import { FacebookLogo, TikTokLogo } from '../ui/BrandLogos'
 import { StatusBadge } from '../ui/StatusBadge'
 import { useToast } from '../ui/toastContext'
 import { PublishPanel, type SocialPlatform } from './PublishPanel'
+import { Toggle } from './Pickers'
 
 function CopyButton({ text, label }: { text: string; label: string }) {
   const toast = useToast()
@@ -29,6 +31,45 @@ function CopyButton({ text, label }: { text: string; label: string }) {
       {copied ? <Check className="w-4 h-4 text-[var(--ok-text)]" /> : <Copy className="w-4 h-4" />}
       {copied ? 'Đã chép' : 'Sao chép'}
     </button>
+  )
+}
+
+/** Shop bật/tắt hiện video trên feed của Aura (người mua xem, thử đồ, bấm Mua ngay) */
+const FeedToggle: React.FC<{ job: AIJob }> = ({ job }) => {
+  const toast = useToast()
+  const [on, setOn] = useState(!!job.feed_visible)
+  const [onFor, setOnFor] = useState(job.job_id)
+  const [busy, setBusy] = useState(false)
+  if (onFor !== job.job_id) {
+    setOnFor(job.job_id)
+    setOn(!!job.feed_visible)
+  }
+  const change = async (visible: boolean) => {
+    if (busy) return
+    setBusy(true)
+    try {
+      await setFeedVisibility(job.job_id, visible)
+      setOn(visible)
+      toast(visible ? 'Video đã lên feed của Aura' : 'Đã gỡ video khỏi feed', 'success')
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Không đổi được', 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <section className="card p-5">
+      <Toggle
+        checked={on}
+        onChange={change}
+        label="Hiện trên feed của Aura"
+        description={
+          on
+            ? `${formatNumber(job.views ?? 0)} lượt xem. Người mua xem video, thử đồ (nếu sản phẩm bật) và bấm Mua ngay tới link sản phẩm của bạn.`
+            : 'Người mua xem video trên feed, thử đồ (nếu sản phẩm bật) và bấm Mua ngay tới link sản phẩm của bạn.'
+        }
+      />
+    </section>
   )
 }
 
@@ -134,6 +175,8 @@ export const VideoResult: React.FC<VideoResultProps> = ({ job, productTitle, pri
           )}
           {actions}
         </div>
+
+        {job.status === 'completed' && <FeedToggle job={job} />}
 
         {(script?.warning || script?.tts_warning) && (
           <div className="text-sm px-4 py-3 rounded-2xl border border-[var(--warn-border)] bg-[var(--warn-bg)] text-[var(--warn-text)] space-y-1">

@@ -84,6 +84,21 @@ def pipeline_cost_credits() -> int:
     return _admin_int("pipeline_cost_credits", "PIPELINE_COST_CREDITS", 30)
 
 
+def buyer_tryon_cost_credits() -> int:
+    """Phí mỗi lượt khách thử đồ ảo, trừ vào credit của shop bán sản phẩm."""
+    return _admin_int("buyer_tryon_cost_credits", "BUYER_TRYON_COST_CREDITS", 19)
+
+
+def buyer_tryon_daily_limit() -> int:
+    """Số lượt thử đồ tối đa của một người mua trong 24 giờ (chống lạm dụng credit của shop)."""
+    return _admin_int("buyer_tryon_daily_limit", "BUYER_TRYON_DAILY_LIMIT", 5)
+
+
+def buyer_photo_hours() -> int:
+    """Ảnh người mua tải lên để thử đồ (và ảnh kết quả) tự xóa sau số giờ này."""
+    return max(1, _admin_int("buyer_photo_hours", "BUYER_PHOTO_HOURS", 24))
+
+
 def extra_scene_cost_credits() -> int:
     """Pro Studio: phí mỗi cảnh thêm sau cảnh đầu tiên (mỗi cảnh là một lần tạo chuyển động AI)."""
     return _admin_int("extra_scene_cost_credits", "EXTRA_SCENE_COST_CREDITS", 20)

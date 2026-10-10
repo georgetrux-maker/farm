@@ -5,7 +5,7 @@ import {
 } from 'lucide-react'
 
 export type View =
-  | 'home' | 'create' | 'studio' | 'products' | 'models' | 'showcase' | 'videos' | 'connect' | 'wallet' | 'support' | 'admin'
+  | 'home' | 'create' | 'studio' | 'feed' | 'products' | 'models' | 'showcase' | 'videos' | 'connect' | 'wallet' | 'support' | 'admin'
 export type AdminSection = 'overview' | 'users' | 'transactions' | 'plans' | 'models' | 'settings' | 'logs'
 
 export interface NavItem<T extends string = View> {
@@ -47,15 +47,15 @@ export const ADMIN_SECTIONS: NavItem<AdminSection>[] = [
   { id: 'logs', label: 'Nhật ký hệ thống', icon: ScrollText },
 ]
 
-const VIEWS: View[] = ['home', 'create', 'studio', 'products', 'models', 'showcase', 'videos', 'connect', 'wallet', 'support', 'admin']
+const VIEWS: View[] = ['home', 'create', 'studio', 'feed', 'products', 'models', 'showcase', 'videos', 'connect', 'wallet', 'support', 'admin']
 const ADMIN_IDS = ADMIN_SECTIONS.map((s) => s.id)
 
-/** "#admin/users" -> { view: 'admin', section: 'users' }; tên cũ "#stats" -> trang Ví */
-export function parseHash(hash: string): { view: View; section: AdminSection } {
+/** "#admin/users" -> { view: 'admin', section: 'users' }; "#feed/JOB_1" -> video JOB_1; tên cũ "#stats" -> trang Ví */
+export function parseHash(hash: string): { view: View; section: AdminSection; id: string | null } {
   const [head, sub] = hash.replace(/^#\/?/, '').split('/')
   const view = head === 'stats' ? 'wallet' : (VIEWS as string[]).includes(head) ? (head as View) : 'home'
   const section = (ADMIN_IDS as string[]).includes(sub) ? (sub as AdminSection) : 'overview'
-  return { view, section }
+  return { view, section, id: view === 'feed' && sub ? decodeURIComponent(sub) : null }
 }
 
 export function toHash(view: View, section: AdminSection = 'overview'): string {
