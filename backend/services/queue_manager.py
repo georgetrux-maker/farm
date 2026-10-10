@@ -1,7 +1,6 @@
 import json
 import logging
 import uuid
-from concurrent.futures import ThreadPoolExecutor
 
 from backend import config
 from backend.ai.motion import DEFAULT_TEMPLATE, generate_motion
@@ -14,19 +13,10 @@ from backend.ai.vton import engine_name as vton_engine_name
 from backend.ai.vton import generate_tryon
 from backend.database import get_brand_avatar, get_db, get_product, save_product_analysis, search_key
 from backend.media_paths import try_resolve_media_ref
+from backend.services.task_queue import QueueUnavailable, enqueue_job
 from backend.services.wallet import deduct_credits, refund_credits
 
 log = logging.getLogger(__name__)
-
-_executor = None
-
-
-def _get_executor() -> ThreadPoolExecutor:
-    global _executor
-    if _executor is None:
-        _executor = ThreadPoolExecutor(max_workers=config.max_workers(), thread_name_prefix="aura-job")
-    return _executor
-
 
 class InsufficientCredits(Exception):
     pass
@@ -52,8 +42,14 @@ def create_ai_jobs(user_id: str, product_ids: list, params: dict, cost_per_job: 
     finally:
         conn.close()
 
-    for job_id in job_ids:
-        _get_executor().submit(_process_job_worker, job_id)
+    try:
+        for job_id in job_ids:
+            enqueue_job(job_id)
+    except QueueUnavailable:
+        # Không đưa được vào hàng đợi: hủy các job vừa tạo và hoàn lại toàn bộ credit
+        for job_id in job_ids:
+            fail_job(job_id, "Hàng đợi xử lý không hoạt động, credit đã được hoàn lại")
+        raise
     return {"job_ids": job_ids, "remaining_credits": res["remaining_credits"], "credits_deducted": total}
 
 
@@ -72,6 +68,7 @@ def _update_job(job_id: str, status: str, progress: int, step: str, **outputs):
         output_image_url = COALESCE(?, output_image_url),
         output_audio_url = COALESCE(?, output_audio_url),
         script_json = COALESCE(?, script_json),
+        updated_at = CURRENT_TIMESTAMP,
         completed_at = CASE WHEN ? = 'completed' THEN CURRENT_TIMESTAMP ELSE completed_at END
     WHERE id = ?
     ''', (status, progress, step, outputs.get("video"), outputs.get("image"), outputs.get("audio"),
@@ -173,10 +170,22 @@ def _run_video_stage(job_id: str, params: dict, product: dict, tryon_path: str):
                 script=json.dumps(script, ensure_ascii=False))
 
 
+def run_job(job_id: str, resume_after_approval: bool = False):
+    """Điểm vào chung cho luồng nền (QUEUE_BACKEND=thread) và worker Celery."""
+    if resume_after_approval:
+        _process_job_worker(job_id, True)
+    else:
+        _process_job_worker(job_id)
+
+
 def _process_job_worker(job_id: str, resume_after_approval: bool = False):
     """Worker: thử đồ -> (chờ duyệt nếu được yêu cầu) -> tạo video."""
     try:
         job = _load_job(job_id)
+        if job["status"] not in ("queued", "processing"):
+            # Việc được giao lại sau khi đã xong (vd. worker mất kết nối lúc báo nhận): không làm lại
+            log.info("Bỏ qua job %s ở trạng thái %s", job_id, job["status"])
+            return
         params = json.loads(job["params_json"] or "{}")
         product = get_product(job["product_id"])
         if product is None:
@@ -205,13 +214,21 @@ def approve_job(job_id: str, user_id: str) -> bool:
     """Người bán đồng ý ảnh thử đồ: tiếp tục tạo video."""
     conn = get_db()
     cur = conn.execute(
-        "UPDATE ai_jobs SET status = 'queued', progress = 45, current_step = 'Đã duyệt, đang chờ tạo video' "
-        "WHERE id = ? AND user_id = ? AND status = 'awaiting_approval'", (job_id, user_id))
+        "UPDATE ai_jobs SET status = 'queued', progress = 45, current_step = 'Đã duyệt, đang chờ tạo video', "
+        "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ? AND status = 'awaiting_approval'", (job_id, user_id))
     conn.commit()
     conn.close()
     if cur.rowcount == 0:
         return False
-    _get_executor().submit(_process_job_worker, job_id, True)
+    try:
+        enqueue_job(job_id, resume_after_approval=True)
+    except QueueUnavailable:
+        conn = get_db()
+        conn.execute("UPDATE ai_jobs SET status = 'awaiting_approval', progress = 40, current_step = 'Chờ duyệt ảnh thử đồ' "
+                     "WHERE id = ? AND status = 'queued'", (job_id,))
+        conn.commit()
+        conn.close()
+        raise
     return True
 
 
@@ -238,12 +255,24 @@ def reject_job(job_id: str, user_id: str):
 
 
 def recover_stale_jobs() -> int:
-    """Khi server khởi động lại, job đang dở sẽ không bao giờ chạy tiếp: đánh dấu lỗi và hoàn credit."""
+    """Đánh dấu lỗi và hoàn credit cho job không bao giờ chạy tiếp.
+
+    - thread: job nằm trong bộ nhớ tiến trình web nên khởi động lại là mất hết việc đang dở.
+    - celery: việc nằm trong Redis và được giao lại khi worker chết, nên chỉ xử lý job không cập nhật tiến độ
+      quá lâu (job đang chạy cập nhật updated_at mỗi bước; job duyệt muộn tính từ lúc duyệt).
+    """
     conn = get_db()
-    ids = [r[0] for r in conn.execute("SELECT id FROM ai_jobs WHERE status IN ('queued', 'processing')")]
+    if config.queue_backend() == "celery":
+        rows = conn.execute("SELECT id FROM ai_jobs WHERE status IN ('queued', 'processing') "
+                            "AND COALESCE(updated_at, created_at) < datetime('now', ?)", (f"-{config.stale_job_minutes()} minutes",))
+        message = "Job bị treo quá lâu trong hàng đợi, credit đã được hoàn lại"
+    else:
+        rows = conn.execute("SELECT id FROM ai_jobs WHERE status IN ('queued', 'processing')")
+        message = "Máy chủ khởi động lại khi job đang chạy, credit đã được hoàn lại"
+    ids = [r[0] for r in rows]
     conn.close()
     for job_id in ids:
-        fail_job(job_id, "Máy chủ khởi động lại khi job đang chạy, credit đã được hoàn lại")
+        fail_job(job_id, message)
     return len(ids)
 
 

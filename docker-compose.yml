@@ -1,16 +1,56 @@
 # Chạy:  cp backend/.env.example backend/.env  (điền giá trị thật, đặt DOMAIN), rồi
 #        docker compose up -d --build
+#
+# app:    web + API (uvicorn)
+# worker: tạo video và đăng mạng xã hội, nhận việc từ Redis (Celery).
+#         Khởi động lại / cập nhật app không làm dở video đang tạo.
+# redis:  hàng đợi việc, không mở cổng ra ngoài
+
+x-aura: &aura
+  build: .
+  env_file: backend/.env
+  environment:
+    ALLOW_DEMO_USER: "0"
+    PUBLIC_BASE_URL: "https://${DOMAIN:?Hãy đặt DOMAIN, ví dụ DOMAIN=app.cuaban.vn}"
+    FRONTEND_URL: "https://${DOMAIN}"
+    CORS_ORIGINS: "https://${DOMAIN}"
+    QUEUE_BACKEND: celery
+    REDIS_URL: redis://redis:6379/0
+  volumes:
+    - aura-data:/data
+  depends_on:
+    redis:
+      condition: service_healthy
+  restart: unless-stopped
+
 services:
   app:
-    build: .
-    env_file: backend/.env
-    environment:
-      ALLOW_DEMO_USER: "0"
-      PUBLIC_BASE_URL: "https://${DOMAIN:?Hãy đặt DOMAIN, ví dụ DOMAIN=app.cuaban.vn}"
-      FRONTEND_URL: "https://${DOMAIN}"
-      CORS_ORIGINS: "https://${DOMAIN}"
+    <<: *aura
+
+  worker:
+    <<: *aura
+    # Số video tạo song song = PIPELINE_MAX_WORKERS trong backend/.env
+    command: >-
+      sh -c 'exec celery -A backend.worker worker --loglevel=info -Q aura
+      --concurrency="$${PIPELINE_MAX_WORKERS:-2}"'
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A backend.worker inspect ping -d celery@$$HOSTNAME --timeout 10"]
+      interval: 60s
+      timeout: 30s
+      start_period: 30s
+    # Khi cập nhật, chờ video đang tạo xong rồi mới tắt worker
+    stop_grace_period: 10m
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
     volumes:
-      - aura-data:/data
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
 
   # Caddy tự xin chứng chỉ HTTPS (Let's Encrypt) cho DOMAIN
@@ -30,4 +70,5 @@ services:
 
 volumes:
   aura-data:
+  redis-data:
   caddy-data:

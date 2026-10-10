@@ -16,6 +16,7 @@ from backend.routers.common import owned_product
 from backend.services.queue_manager import (
     approve_job, create_ai_job, create_ai_jobs, get_job_status, InsufficientCredits, list_jobs, reject_job,
 )
+from backend.services.task_queue import QueueUnavailable
 
 router = APIRouter()
 
@@ -54,6 +55,8 @@ def api_run_pipeline(req: PipelineRunRequest, user: dict = Depends(get_current_u
         res = create_ai_job(user["id"], req.product_id, params)
     except InsufficientCredits as e:
         raise HTTPException(status_code=402, detail=str(e))
+    except QueueUnavailable as e:
+        raise HTTPException(status_code=503, detail=str(e))
     return {
         "status": "success",
         "job_id": res["job_id"],
@@ -88,7 +91,11 @@ def api_job_status(job_id: str, user: dict = Depends(get_current_user)):
 @router.post("/api/jobs/{job_id}/approve")
 def api_approve_job(job_id: str, user: dict = Depends(get_current_user)):
     """Đồng ý ảnh thử đồ, tiếp tục tạo video"""
-    if not approve_job(job_id, user["id"]):
+    try:
+        approved = approve_job(job_id, user["id"])
+    except QueueUnavailable as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    if not approved:
         raise HTTPException(status_code=409, detail="Job không ở trạng thái chờ duyệt")
     return {"status": "queued"}
 
@@ -122,6 +129,8 @@ def api_batch_create(req: BatchCreateRequest, user: dict = Depends(get_current_u
         res = create_ai_jobs(user["id"], req.product_ids, params, config.pipeline_cost_credits())
     except InsufficientCredits as e:
         raise HTTPException(status_code=402, detail=str(e))
+    except QueueUnavailable as e:
+        raise HTTPException(status_code=503, detail=str(e))
     return {"status": "success", "total_jobs": len(res["job_ids"]), "job_ids": res["job_ids"],
             "credits_deducted": res["credits_deducted"], "remaining_credits": res["remaining_credits"]}
 

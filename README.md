@@ -21,7 +21,9 @@ Upload ảnh sản phẩm, chọn người mẫu và mẫu video, hệ thống t
 | Duyệt ảnh thử đồ trước khi tạo video, từ chối được hoàn credit | ✅ |
 | Video dọc 720x1280, 30 fps, chuyển cảnh mượt, **phụ đề tiếng Việt in sẵn trong video**, thẻ tên sản phẩm + giá ở đầu video | ✅ Cần FFmpeg có libass; font Be Vietnam Pro và Playfair Display (giấy phép SIL OFL) đóng gói sẵn trong `backend/assets/fonts` |
 | Lồng tiếng tiếng Việt (+ file phụ đề WebVTT) | ✅ Edge-TTS (cần internet), có phương án dự phòng |
-| Ví credit, hoàn credit khi lỗi, lịch sử credit, upload, hàng đợi | ✅ |
+| Ví credit, hoàn credit khi lỗi, lịch sử credit, upload | ✅ |
+| Hàng đợi tạo video: **Redis + worker Celery** (khởi động lại web không làm dở video), hoặc luồng trong tiến trình khi chạy thử | ✅ `QUEUE_BACKEND=celery` / `thread` |
+| **Video của tôi**: tìm theo tên sản phẩm (không cần gõ dấu), lọc theo trạng thái, sắp xếp, tải thêm theo trang | ✅ |
 | Nạp tiền VietQR, **tự cộng credit khi tiền về** | ✅ qua webhook **SePay** (`SEPAY_WEBHOOK_KEY`); chuyển thiếu tiền thì chờ quản trị viên |
 | Đăng ký / đăng nhập bằng email, đăng xuất | ✅ Mật khẩu băm scrypt, chống dò mật khẩu |
 | Đăng video lên **TikTok** và **Reels Trang Facebook** | ✅ Khi cấu hình app TikTok/Facebook (cần app được nền tảng duyệt, xem bên dưới) |
@@ -64,8 +66,21 @@ docker compose up -d --build
 docker compose exec app python -m backend.manage create-user "Admin" admin@cuaban.vn --role admin
 ```
 
-- Caddy tự xin chứng chỉ HTTPS. Dữ liệu (DB + video) nằm trong volume `aura-data`, nhớ sao lưu định kỳ.
-- Chạy 1 tiến trình (hàng đợi job nằm trong bộ nhớ); job đang dở khi khởi động lại sẽ tự hoàn credit.
+Compose chạy 4 service:
+
+| Service | Việc |
+|---|---|
+| `app` | Web + API (uvicorn, 1 tiến trình) |
+| `worker` | Tạo video và đăng TikTok/Facebook, nhận việc từ Redis (Celery). Số video song song = `PIPELINE_MAX_WORKERS` |
+| `redis` | Hàng đợi việc (không mở cổng ra ngoài, dữ liệu lưu ở volume `redis-data`) |
+| `caddy` | HTTPS tự động (Let's Encrypt) |
+
+- Dữ liệu (DB + video) nằm trong volume `aura-data`, dùng chung cho `app` và `worker`; nhớ sao lưu định kỳ.
+- Cập nhật hoặc khởi động lại `app` không ảnh hưởng video đang tạo. Khi cập nhật `worker`, Compose chờ tối đa 10 phút
+  cho video đang tạo xong. Worker bị tắt đột ngột thì việc được giao lại sau 1 giờ; job kẹt quá
+  `STALE_JOB_MINUTES` (mặc định 120 phút) được đánh dấu lỗi và hoàn credit khi khởi động lại.
+- Hết Redis hoặc chưa có worker: nút **Kiểm tra hệ thống** báo lỗi ở dòng "Hàng đợi tạo video"; tạo video trả lỗi 503 và không trừ credit.
+- Xem log: `docker compose logs -f worker`. Thêm worker trên cùng máy: `docker compose up -d --scale worker=2`.
 - Giao diện React được phục vụ ở `/`, bản HTML cũ ở `/legacy`.
 
 ## Đăng video lên TikTok / Facebook
@@ -103,6 +118,16 @@ python3 -m uvicorn backend.main:app --host 0.0.0.0 --port 3456
 
 Khi phát triển, `backend/.env` mẫu đã bật `ALLOW_DEMO_USER=1`: không cần token, mọi request được coi là user demo "Linh Chi" (quyền admin, 2.850 credit).
 **Khi chạy thật phải đặt `ALLOW_DEMO_USER=0`**, cùng với `ADMIN_TOKEN`, `VIETQR_ACCOUNT_NO`, `CORS_ORIGINS`.
+
+Mặc định (`QUEUE_BACKEND=thread`) video được tạo ngay trong tiến trình backend, không cần cài thêm gì.
+Muốn chạy giống máy chủ thật (Redis + worker riêng):
+
+```bash
+# đặt QUEUE_BACKEND=celery và REDIS_URL=redis://localhost:6379/0 trong backend/.env
+redis-server                                                  # cửa sổ 1
+celery -A backend.worker worker --loglevel=info -Q aura       # cửa sổ 2
+python3 -m uvicorn backend.main:app --host 0.0.0.0 --port 3456  # cửa sổ 3
+```
 
 ### 2. Frontend (cổng 5173)
 
@@ -147,7 +172,8 @@ POST /api/products/analyze     { image_url, title? }        -> điểm chất l�
 POST /api/products             { title, price, image_url, category?, fabric_type?, analysis? } -> { id }
 POST /api/pipeline/run         { product_id, avatar_id?, template?, voice?, script_style?, duration_sec?, require_approval? }
 GET  /api/jobs/{job_id}        -> tiến độ %, ảnh thử đồ, link video khi xong
-GET  /api/jobs                 -> danh sách video của tôi (mới nhất trước)
+GET  /api/jobs?page=1&page_size=24&q=ao so mi&status=completed&sort=newest
+                               -> { items, total, page, page_size, has_more, counts }
 POST /api/jobs/{job_id}/approve   (khi status = awaiting_approval) tiếp tục tạo video
 POST /api/jobs/{job_id}/reject    hủy, hoàn credit trừ TRYON_PREVIEW_COST_CREDITS
 POST /api/publisher/export     { job_id } -> link tải, caption, hashtag, phụ đề
@@ -157,6 +183,9 @@ GET  /api/wallet/transactions  -> lịch sử credit: nạp, trừ khi tạo vid
 - `template`: `catwalk`, `spin_360`, `street`, `fabric_closeup` (xem `GET /api/ai/templates`)
 - `voice`: `vi-VN-HoaiMyNeural` (nữ), `vi-VN-NamMinhNeural` (nam)
 - `script_style`: `genz`, `office`, `honest`
+- `GET /api/jobs`: `q` tìm theo tên sản phẩm (không phân biệt hoa thường, có dấu hay không), `status` là
+  `completed` | `busy` (đang chờ/đang tạo) | `awaiting_approval` | `other` (lỗi/đã từ chối),
+  `sort` là `newest` | `oldest` | `title`, `page_size` tối đa 100. `counts` đếm số video từng nhóm theo từ khóa đang tìm.
 
 Mọi API (trừ đăng ký/đăng nhập, danh sách người mẫu, feed, tư vấn size) cần header
 `Authorization: Bearer <token>`, lấy token từ `POST /api/auth/login`.
@@ -168,7 +197,9 @@ Mỗi video tốn `PIPELINE_COST_CREDITS` credit (mặc định 30); job lỗi �
 
 ```text
 backend/
-  main.py            API FastAPI
+  main.py            tạo app FastAPI, middleware, gắn các router
+  routers/           API theo nhóm: account, products, ai, jobs, wallet, admin, shopper, social, static
+  worker.py          worker Celery (QUEUE_BACKEND=celery)
   config.py          cấu hình từ biến môi trường / backend/.env
   auth.py            xác thực token, quyền admin
   database.py        SQLite + migration
@@ -177,7 +208,8 @@ backend/
   manage.py          công cụ quản trị dòng lệnh
   ai/                claude_client, product_analysis, segmentation, vton (FASHN), motion (Replicate/Kling),
                      script, tts, render, http_utils
-  services/          wallet, queue_manager, cache_manager, security, scraper, size_advisor
+  services/          wallet, queue_manager, task_queue (gửi việc: luồng hoặc Redis), social, cache_manager,
+                     security, scraper, size_advisor
   samples/           video/âm thanh mẫu cho giao diện
   tests/             pytest
 frontend/            ứng dụng React

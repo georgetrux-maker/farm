@@ -83,6 +83,22 @@ def max_workers() -> int:
     return max(1, _env_int("PIPELINE_MAX_WORKERS", 2))
 
 
+def queue_backend() -> str:
+    """'thread' (mặc định): job chạy bằng luồng ngay trong tiến trình web.
+    'celery': job được gửi qua Redis cho worker Celery chạy riêng (backend/worker.py)."""
+    value = _env("QUEUE_BACKEND", "thread").lower()
+    return value if value in ("thread", "celery") else "thread"
+
+
+def redis_url() -> str:
+    return _env("REDIS_URL", "redis://localhost:6379/0")
+
+
+def stale_job_minutes() -> int:
+    """Chế độ celery: job "đang xử lý" quá lâu (worker mất, Redis mất dữ liệu) thì coi là lỗi và hoàn credit."""
+    return max(10, _env_int("STALE_JOB_MINUTES", 120))
+
+
 # --- Nhà cung cấp AI (để trống = dùng engine tạm, không tốn phí) ---
 def anthropic_enabled() -> bool:
     """SDK Anthropic tự đọc ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN từ môi trường."""

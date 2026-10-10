@@ -1,5 +1,4 @@
 """Kết nối và đăng video lên TikTok / Trang Facebook"""
-from concurrent.futures import ThreadPoolExecutor
 
 import hmac
 import secrets
@@ -16,8 +15,8 @@ from backend.auth import get_current_user
 from backend.crypto_utils import SecretKeyMissing, unsign
 from backend.services import social
 from backend.services.queue_manager import get_job_status
+from backend.services.task_queue import QueueUnavailable, enqueue_publication
 
-_publish_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="aura-publish")
 router = APIRouter()
 
 
@@ -130,7 +129,11 @@ def api_social_publish(req: PublishRequest, user: dict = Depends(get_current_use
     pub_id = social.create_publication(user["id"], job, account, req.caption)
     options = {"privacy_level": req.privacy_level, "allow_comment": req.allow_comment,
                "allow_duet": req.allow_duet, "allow_stitch": req.allow_stitch}
-    _publish_executor.submit(social.run_publication, pub_id, account, job["output_video_url"], req.caption, options)
+    try:
+        enqueue_publication(pub_id, user["id"], account["id"], job["output_video_url"], req.caption, options)
+    except QueueUnavailable as e:
+        social.mark_publication_failed(pub_id, str(e))
+        raise HTTPException(status_code=503, detail=str(e))
     return {"status": "pending", "publication_id": pub_id}
 
 

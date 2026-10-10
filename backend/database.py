@@ -105,6 +105,7 @@ def init_db():
         cost_credits INTEGER DEFAULT 0,
         refunded INTEGER DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         completed_at TIMESTAMP
     )
     ''')
@@ -238,6 +239,7 @@ def init_db():
     _add_column_if_missing(cursor, "ai_jobs", "script_json", "TEXT")
     _add_column_if_missing(cursor, "ai_jobs", "cost_credits", "INTEGER DEFAULT 0")
     _add_column_if_missing(cursor, "ai_jobs", "refunded", "INTEGER DEFAULT 0")
+    _add_column_if_missing(cursor, "ai_jobs", "updated_at", "TIMESTAMP")  # SQLite không cho DEFAULT động khi ALTER
     _add_column_if_missing(cursor, "wallet_transactions", "amount_vnd", "INTEGER")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_user ON ai_jobs(user_id, created_at)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_tx_user ON wallet_transactions(user_id, created_at)")

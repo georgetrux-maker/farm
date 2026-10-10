@@ -401,3 +401,14 @@ def test_stale_publications_marked_failed_on_restart(client):
     conn.commit()
     conn.close()
     assert social.recover_stale_publications() == 1
+
+
+@pytest.mark.skipif(not ffmpeg_available(), reason="Cần ffmpeg")
+def test_publish_through_celery_reads_token_from_db(client, fake_social, celery_eager):
+    _connect(client, "facebook")
+    account = client.get("/api/social/status", headers=DEMO_AUTH).json()["accounts"][0]
+    job = _completed_job(client)
+    res = client.post("/api/social/publish", headers=DEMO_AUTH,
+                      json={"job_id": job["job_id"], "account_id": account["id"], "caption": "Đầm hoa #dam"})
+    assert res.status_code == 200
+    assert _wait_publication(client, job["job_id"])["status"] == "published"

@@ -15,6 +15,7 @@ from backend.database import (
 )
 from backend.ffmpeg_utils import ffmpeg_available
 from backend.media_paths import media_url, resolve_media_ref
+from backend.services import task_queue
 
 router = APIRouter()
 
@@ -87,6 +88,8 @@ def _health_report() -> list:
         add("Lồng tiếng edge-tts", "PASSED", "ai/tts.py", "Cần internet để gọi dịch vụ")
     except ImportError:
         add("Lồng tiếng edge-tts", "WARNING", "ai/tts.py", "Chưa cài edge-tts, sẽ dùng phương án dự phòng")
+    queue_status, queue_note = task_queue.health()
+    add("Hàng đợi tạo video", queue_status, "services/task_queue.py", queue_note)
     media_ok = os.access(config.media_dir(), os.W_OK)
     add("Thư mục media", "PASSED" if media_ok else "FAILED", config.media_dir())
     add("Tài khoản nhận tiền VietQR", "PASSED" if config.bank_account_no() else "WARNING", "services/wallet.py",

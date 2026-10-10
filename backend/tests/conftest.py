@@ -74,3 +74,13 @@ def wait_for_job(client, job_id, headers, timeout=90) -> dict:
             return job
         time.sleep(0.3)
     raise AssertionError(f"Job {job_id} không xong sau {timeout}s")
+
+
+@pytest.fixture()
+def celery_eager(monkeypatch):
+    """Chế độ QUEUE_BACKEND=celery; task chạy ngay trong tiến trình test nên không cần Redis."""
+    from backend.worker import celery_app
+    monkeypatch.setenv("QUEUE_BACKEND", "celery")
+    celery_app.conf.task_always_eager = True
+    yield celery_app
+    celery_app.conf.task_always_eager = False
