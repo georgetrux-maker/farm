@@ -113,7 +113,7 @@ export const PlansSection: React.FC<PlansSectionProps> = ({ pending, onCreated, 
           : data.plans.map((p) => {
               const yearly = cycle === 'yearly'
               const isCurrent = current?.plan_id === p.id
-              const cta = isCurrent ? 'Gia hạn' : current ? 'Đổi sang gói này' : 'Chọn gói'
+              const cta = isCurrent ? 'Gia hạn' : current ? 'Đổi gói' : 'Chọn gói'
               return (
                 <article
                   key={p.id}
@@ -169,10 +169,11 @@ export const PlansSection: React.FC<PlansSectionProps> = ({ pending, onCreated, 
                   <button
                     onClick={() => buy(p.id)}
                     disabled={!!pending || buying !== null}
-                    className={`btn w-full mt-5 ${p.highlight || isCurrent ? 'btn-primary' : 'btn-secondary'}`}
+                    className={`btn w-full mt-5 flex-wrap gap-x-1.5 gap-y-0 whitespace-normal text-center ${p.highlight || isCurrent ? 'btn-primary' : 'btn-secondary'}`}
                   >
                     {buying === p.id && <Loader2 className="w-4 h-4 animate-spin" />}
-                    {cta} · {formatVnd(yearly ? p.yearly_price_vnd : p.price_vnd)}
+                    <span>{cta}</span>
+                    <span className="whitespace-nowrap">· {formatVnd(yearly ? p.yearly_price_vnd : p.price_vnd)}</span>
                   </button>
                   {current && !isCurrent && (
                     <p className="text-xs text-[var(--text-muted)] mt-2 text-center">Bắt đầu khi gói hiện tại hết hạn</p>
