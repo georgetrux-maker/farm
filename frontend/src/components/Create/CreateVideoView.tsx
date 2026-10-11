@@ -1,13 +1,21 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { AlertTriangle, Film, Info, Loader2, Plus, RefreshCw, RotateCcw, Sparkles } from 'lucide-react'
+import {
+  AlertTriangle, ArrowLeft, ArrowRight, Check, Clapperboard, Film, Info, Loader2, Pencil, Plus, RefreshCw, RotateCcw,
+  SlidersHorizontal, Sparkles, X, Zap,
+} from 'lucide-react'
 import {
   ApiError, analyzeProduct, createAnalyzedProduct, fetchAvatars, fetchJobStatus, fetchProfile, fetchStudioOptions,
-  previewScript, triggerPipelineRun, uploadImage, type ProductAnalysis, type ShowcaseTemplate, type StudioOptions,
+  fetchTemplateShowcase, previewScript, triggerPipelineRun, uploadImage, type ProductAnalysis, type ProductPrefill,
+  type ShowcaseTemplate, type StudioOptions,
 } from '../../services/api'
 import type { AIJob, BrandAvatar } from '../../types'
-import { formatNumber, suggestTitleFromFileName } from '../../lib/format'
+import type { CreateRequest } from '../../lib/createRequest'
+import { formatNumber, formatVnd, suggestTitleFromFileName } from '../../lib/format'
+import { STYLE_LABELS, TEMPLATE_SHORT_LABELS } from '../../lib/labels'
+import { useVoicePreview } from '../../lib/useVoicePreview'
 import { useToast } from '../ui/toastContext'
-import { ChipGroup, ModelPicker, TemplatePicker, Toggle, VoicePicker } from './Pickers'
+import { ChipGroup, ModelPicker, ScenePicker, TemplatePicker, Toggle, VoicePicker } from './Pickers'
+import { CostSummary } from './CostSummary'
 import { JobProgress } from './JobProgress'
 import { Stepper } from './Stepper'
 import { TryOnReview } from './TryOnReview'
@@ -20,36 +28,40 @@ interface CreateVideoViewProps {
   onCreditsChange: (credits: number) => void
   onOpenDeposit: () => void
   onOpenVideos: () => void
+  onOpenStudio: () => void
   initialTemplate?: ShowcaseTemplate | null
   onClearInitialTemplate?: () => void
+  request?: CreateRequest | null
+  /** Trang chủ bấm "Auto Mode": chuyển sang chế độ Tự động (at đổi mỗi lần bấm) */
+  autoRequest?: number | null
 }
 
-type Phase = 'upload' | 'configure' | 'running' | 'review' | 'done' | 'failed'
-
-const STYLE_LABELS: Record<string, string> = {
-  genz: 'GenZ trẻ trung',
-  office: 'Công sở thanh lịch',
-  honest: 'Review thật lòng',
-}
+/** upload/product = bước 1, configure = bước 2, còn lại = bước 3 */
+type Phase = 'upload' | 'product' | 'configure' | 'running' | 'review' | 'done' | 'failed'
+/** auto: một trang (sản phẩm + phong cách + bối cảnh rồi tạo luôn); steps: 3 bước, chỉnh từng thứ */
+type Mode = 'auto' | 'steps'
 
 const DURATIONS = [
   { id: 5, label: '5 giây' },
   { id: 10, label: '10 giây' },
 ]
+const SCRIPT_MAX = 600
+
+const digits = (v: string) => Number(v.replace(/\D/g, '')) || 0
+
+/** Khóa nhận biết sản phẩm: đổi bất kỳ thông tin nào thì tạo sản phẩm mới, viết lại kịch bản tự động */
+const productKey = (image: string | null, title: string, price: string, original: string, category: string, fabric: string) =>
+  JSON.stringify([image, title.trim(), digits(price), digits(original), category.trim(), fabric.trim()])
 
 /** Một khối lựa chọn có số thứ tự kiểu tạp chí */
-const Section: React.FC<{ n: string; title: string; aside?: React.ReactNode; children: React.ReactNode }> = ({
-  n,
+const Section: React.FC<{ title: string; aside?: React.ReactNode; children: React.ReactNode }> = ({
   title,
   aside,
   children,
 }) => (
   <section className="card p-5 sm:p-6">
-    <div className="flex items-center justify-between gap-3 mb-5 flex-wrap">
-      <h2 className="flex items-baseline gap-3">
-        <span className="font-display italic text-lg text-[var(--accent-text)]">{n}</span>
-        <span className="display text-xl">{title}</span>
-      </h2>
+    <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
+      <h2 className="title text-lg">{title}</h2>
       {aside}
     </div>
     {children}
@@ -71,7 +83,7 @@ const QualityNote: React.FC<{ quality: ProductAnalysis['quality']; warning: stri
         style={{ background: `conic-gradient(${tone.color} ${quality.score * 3.6}deg, var(--bg-surface) 0)` }}
         aria-hidden="true"
       >
-        <div className="w-full h-full rounded-full bg-[var(--bg-card)] flex items-center justify-center font-display text-lg font-semibold">
+        <div className="w-full h-full rounded-full bg-[var(--bg-card)] flex items-center justify-center text-lg font-semibold">
           {quality.score}
         </div>
       </div>
@@ -97,21 +109,34 @@ const QualityNote: React.FC<{ quality: ProductAnalysis['quality']; warning: stri
   )
 }
 
+const errorText = (e: unknown, fallback: string) => (e instanceof Error ? e.message : fallback)
+
+
 export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
   credits,
   isAdmin,
   onCreditsChange,
   onOpenDeposit,
   onOpenVideos,
+  onOpenStudio,
   initialTemplate,
   onClearInitialTemplate,
+  request,
+  autoRequest,
 }) => {
   const toast = useToast()
+  const [mode, setMode] = useState<Mode>('auto')
+  const [appliedAuto, setAppliedAuto] = useState<number | null>(null)
+  if (autoRequest && autoRequest !== appliedAuto) {
+    setAppliedAuto(autoRequest)
+    setMode('auto')
+  }
   const [phase, setPhase] = useState<Phase>('upload')
   const [uploading, setUploading] = useState<'upload' | 'analyze' | null>(null)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
+  const [productError, setProductError] = useState<string | null>(null)
 
   // Bước 1: ảnh + thông tin sản phẩm
   const [imageUrl, setImageUrl] = useState<string | null>(null)
@@ -119,6 +144,7 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
   const [title, setTitle] = useState('')
   const [titleFromFile, setTitleFromFile] = useState(false)
   const [price, setPrice] = useState('')
+  const [originalPrice, setOriginalPrice] = useState('')
   const [category, setCategory] = useState('')
   const [fabric, setFabric] = useState('')
 
@@ -130,34 +156,131 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
   const [voice, setVoice] = useState('vi-VN-HoaiMyNeural')
   const [style, setStyle] = useState('genz')
   const [duration, setDuration] = useState(5)
+  const [scene, setScene] = useState('studio')
   const [requireApproval, setRequireApproval] = useState(true)
+  // Phong cách có sẵn của chế độ Tự động (lấy từ Thư viện mẫu). null = chưa chọn, '' = người bán tự chỉnh
+  const [presets, setPresets] = useState<ShowcaseTemplate[]>([])
+  const [presetId, setPresetId] = useState<string | null>(null)
 
-  // Kịch bản review KOC tùy chỉnh & xem trước
-  const [customScript, setCustomScript] = useState('')
-  const [isGeneratingScript, setIsGeneratingScript] = useState(false)
-  const [isScriptEditing, setIsScriptEditing] = useState(false)
+  // Kịch bản xem trước: AI viết sẵn khi vào bước 2 (theo sản phẩm + phong cách), người bán sửa thoải mái
+  const [script, setScript] = useState('')
+  const [scriptEdited, setScriptEdited] = useState(false)
+  const [scriptLoading, setScriptLoading] = useState(false)
+  const [scriptWarning, setScriptWarning] = useState<string | null>(null)
+  const [scriptFor, setScriptFor] = useState<string | null>(null)
+  const scriptRequest = useRef(0)
 
   // Bước 3: job
   const [job, setJob] = useState<AIJob | null>(null)
-  // Dùng lại sản phẩm đã tạo nếu người dùng thử lại với cùng thông tin
+  // Dùng lại sản phẩm đã tạo nếu tạo lại với cùng thông tin
   const [savedProduct, setSavedProduct] = useState<{ key: string; id: string } | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const currentJobRef = useRef<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  // Tự động nhận template khi người dùng chọn từ Thư viện mẫu
-  useEffect(() => {
-    if (initialTemplate) {
-      setTemplate(initialTemplate.motion_template)
-      if (initialTemplate.voice_id) setVoice(initialTemplate.voice_id)
-      if (initialTemplate.script_style) setStyle(initialTemplate.script_style)
-    }
-  }, [initialTemplate])
+  // Tên/giá lấy được từ link nhưng trang không cho lấy ảnh: chờ người dùng tải ảnh lên
+  const [pendingPrefill, setPendingPrefill] = useState<ProductPrefill | null>(null)
 
-  // Sang bước mới thì đưa về đầu trang (nút bấm nằm ở cuối trang nên đang cuộn xuống dưới)
+  // Chọn "Dùng mẫu này" ở Thư viện mẫu: điền sẵn góc quay, giọng đọc, lời văn và người mẫu của mẫu đó
+  const [appliedTemplateId, setAppliedTemplateId] = useState<string | null>(null)
+  if (initialTemplate && initialTemplate.id !== appliedTemplateId) {
+    setAppliedTemplateId(initialTemplate.id)
+    setPresetId(initialTemplate.id)
+    setTemplate(initialTemplate.motion_template)
+    setVoice(initialTemplate.voice_id)
+    setStyle(initialTemplate.script_style)
+    if (initialTemplate.avatar_id) setAvatarId(initialTemplate.avatar_id)
+  }
+
+  const applyPreset = (t: ShowcaseTemplate) => {
+    setPresetId(t.id)
+    setTemplate(t.motion_template)
+    setVoice(t.voice_id)
+    setStyle(t.script_style)
+    if (t.avatar_id) setAvatarId(t.avatar_id)
+  }
+  // Chưa chọn gì: dùng phong cách đầu tiên cho chế độ Tự động
+  if (presetId === null && presets.length > 0) applyPreset(presets[0])
+  /** Người bán tự chỉnh ở bước 2: không còn đúng phong cách có sẵn nào */
+  const custom = <T,>(set: (v: T) => void) => (v: T) => {
+    set(v)
+    setPresetId('')
+  }
+
+  // Dữ liệu nạp sẵn từ trang khác (Tạo lại / Tạo video từ sản phẩm / Dùng mẫu này)
+  const [appliedRequest, setAppliedRequest] = useState<number | null>(null)
+  if (request && request.at !== appliedRequest) {
+    setAppliedRequest(request.at)
+    if (request.avatarId) {
+      setAvatarId(request.avatarId)
+      setPresetId('')
+    }
+    if (request.product) {
+      const v = request.product
+      const p = request.params ?? {}
+      const image = v.image_url
+      const t = v.title
+      const pr = v.price ? String(v.price) : ''
+      const op = v.original_price ? String(v.original_price) : ''
+      const cat = v.category ?? ''
+      const fab = v.fabric ?? ''
+      const oldScript = (request.script || '').slice(0, SCRIPT_MAX)
+      setImageUrl(image)
+      setAnalysis(null)
+      setTitle(t)
+      setTitleFromFile(false)
+      setPrice(pr)
+      setOriginalPrice(op)
+      setCategory(cat)
+      setFabric(fab)
+      setSavedProduct(v.id && image ? { key: productKey(image, t, pr, op, cat, fab), id: v.id } : null)
+      if (p.avatar_id) setAvatarId(p.avatar_id)
+      if (p.template) setTemplate(p.template)
+      if (p.voice) setVoice(p.voice)
+      if (p.script_style) setStyle(p.script_style)
+      if (p.duration_sec) setDuration(p.duration_sec)
+      setScene(p.scene ?? 'studio')
+      if (request.params) {
+        setRequireApproval(!!p.require_approval)
+        setPresetId('')
+      }
+      setMode('steps')
+      setScript(oldScript)
+      setScriptEdited(!!oldScript)
+      setScriptWarning(null)
+      setJob(null)
+      setSubmitError(null)
+      setUploadError(null)
+      setPendingPrefill(null)
+      setPhase(image ? 'configure' : 'upload')
+    }
+  }
+
+  const voicePreview = useVoicePreview((msg) => toast(msg, 'info'))
+
+  // Sang bước mới thì đưa về đầu trang
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
   }, [phase])
+
+  // Job đang theo dõi (để bỏ qua kết quả của job cũ khi đã chuyển sang tạo video khác)
+  useEffect(() => {
+    currentJobRef.current = job?.job_id ?? null
+  }, [job?.job_id])
+
+  // Vừa tạo người mẫu riêng hoặc chọn mẫu ở trang khác: tải lại danh sách người mẫu
+  const requestAt = request?.at
+  useEffect(() => {
+    if (!requestAt) return
+    let alive = true
+    fetchAvatars()
+      .then((list) => alive && setAvatars(list))
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [requestAt])
 
   useEffect(() => {
     Promise.all([fetchStudioOptions(), fetchAvatars()])
@@ -165,13 +288,60 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
         setOptions(opts)
         setAvatars(list)
         const def = list.find((a) => a.is_default) ?? list[0]
-        if (def) setAvatarId(def.id)
+        // Giữ người mẫu do mẫu video / video cũ chọn sẵn nếu còn, không thì dùng người mẫu mặc định
+        setAvatarId((current) => (current && list.some((a) => a.id === current) ? current : (def?.id ?? '')))
       })
       .catch((e) => toast(e.message, 'error'))
+    fetchTemplateShowcase()
+      .then((res) => setPresets(res.templates))
+      .catch(() => setPresets([]))
     return () => {
       if (pollRef.current) clearInterval(pollRef.current)
     }
   }, [toast])
+
+  const key = productKey(imageUrl, title, price, originalPrice, category, fabric)
+  const ai = analysis?.ai
+  const features = ai ? [...ai.key_features, ...ai.colors].map((f) => f.slice(0, 80)).slice(0, 12) : []
+
+  const generateScript = async (forStyle = style) => {
+    const priceNum = digits(price)
+    if (title.trim().length < 2 || !priceNum) return
+    const id = ++scriptRequest.current
+    setScriptFor(JSON.stringify([key, forStyle]))
+    setScriptLoading(true)
+    try {
+      const res = await previewScript({
+        title: title.trim(),
+        price: priceNum,
+        fabric: fabric.trim() || undefined,
+        category: category.trim() || undefined,
+        style: forStyle,
+        features,
+      })
+      if (id !== scriptRequest.current) return // đã có yêu cầu mới hơn
+      setScript([res.hook_3s, res.body_text, res.cta_text].filter(Boolean).join('\n').slice(0, SCRIPT_MAX))
+      setScriptEdited(false)
+      setScriptWarning(res.warning)
+    } catch (e) {
+      if (id === scriptRequest.current) setScriptWarning(errorText(e, 'Không viết được kịch bản xem trước'))
+    } finally {
+      if (id === scriptRequest.current) setScriptLoading(false)
+    }
+  }
+
+  // Vào bước 2 hoặc đổi phong cách lời review: AI viết lại kịch bản (trừ khi người bán đã tự sửa)
+  // generateScript luôn là bản của lần vẽ mới nhất; effect chỉ chạy lại khi khóa kịch bản đổi
+  const generateRef = useRef(generateScript)
+  useEffect(() => {
+    generateRef.current = generateScript
+  })
+  const wantScript = phase === 'configure' && !scriptEdited ? JSON.stringify([key, style]) : null
+  useEffect(() => {
+    if (!wantScript || wantScript === scriptFor) return
+    const id = setTimeout(() => generateRef.current(), 0)
+    return () => clearTimeout(id)
+  }, [wantScript, scriptFor])
 
   const pickFile = () => fileRef.current?.click()
 
@@ -182,8 +352,9 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
     try {
       const up = await uploadImage(file)
       setImageUrl(up.media_url)
-      setPhase('configure')
+      setPhase('product')
       setSavedProduct(null)
+      setPendingPrefill(null)
       // Chưa có tên: gợi ý tạm từ tên file, AI (nếu có) sẽ điền lại chính xác hơn
       const suggestion = suggestTitleFromFileName(file.name)
       if (suggestion && (!title || titleFromFile)) {
@@ -194,81 +365,73 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
       const res = await analyzeProduct(up.media_url, title || suggestion || undefined)
       setAnalysis(res)
       if (res.ai) {
-        const ai = res.ai
-        setTitle((t) => (!t || titleFromFile || t === suggestion ? ai.title_suggestion : t))
+        const found = res.ai
+        setTitle((t) => (!t || titleFromFile || t === suggestion ? found.title_suggestion : t))
         setTitleFromFile(false)
-        setCategory((c) => c || ai.category)
-        setFabric((f) => f || ai.material_guess)
+        setCategory((c) => c || found.category)
+        setFabric((f) => f || found.material_guess)
       }
-    } catch (e: any) {
-      setUploadError(e.message)
-    } finally {
-      setUploading(null)
-    }
-  }
-
-  const handleProductLoaded = async (data: {
-    title: string
-    price: number
-    fabric?: string
-    category?: string
-    image_url: string
-  }) => {
-    setUploadError(null)
-    setImageUrl(data.image_url)
-    setTitle(data.title)
-    setTitleFromFile(false)
-    if (data.price) setPrice(String(data.price))
-    if (data.fabric) setFabric(data.fabric)
-    if (data.category) setCategory(data.category)
-    setPhase('configure')
-    setSavedProduct(null)
-
-    // Phân tích chất lượng ảnh
-    setUploading('analyze')
-    try {
-      const res = await analyzeProduct(data.image_url, data.title)
-      setAnalysis(res)
     } catch (e) {
-      console.warn('Analysis fallback', e)
+      setUploadError(errorText(e, 'Không tải được ảnh'))
     } finally {
       setUploading(null)
     }
   }
 
-  const handleGenerateScriptPreview = async () => {
-    if (!title.trim()) {
-      toast('Vui lòng nhập tên sản phẩm trước khi tạo kịch bản', 'error')
+  /** Thông tin từ link sản phẩm hoặc ảnh mẫu. Không tự bịa giá/chất liệu: thiếu thì để trống cho người bán điền. */
+  const handleProductLoaded = async (data: ProductPrefill, note: string | null) => {
+    setUploadError(null)
+    if (data.title) {
+      setTitle(data.title)
+      setTitleFromFile(false)
+    }
+    setPrice(data.price ? String(data.price) : '')
+    setOriginalPrice('')
+    setFabric(data.fabric ?? '')
+    setCategory(data.category ?? '')
+    setSavedProduct(null)
+    if (note) toast(note, 'info')
+    if (!data.image_url) {
+      setPendingPrefill(data)
       return
     }
-    const priceNum = Number(price.replace(/\D/g, '')) || 0
-    setIsGeneratingScript(true)
+    setPendingPrefill(null)
+    setImageUrl(data.image_url)
+    setAnalysis(null)
+    setPhase('product')
+    setUploading('analyze')
     try {
-      const res = await previewScript({
-        title: title.trim(),
-        price: priceNum,
-        fabric: fabric || undefined,
-        category: category || undefined,
-        style,
-      })
-      setCustomScript(res.full_script)
-      setIsScriptEditing(true)
-      toast('Đã tạo kịch bản review 3 câu chuẩn KOC!', 'success')
-    } catch (e: any) {
-      toast(e.message, 'error')
+      setAnalysis(await analyzeProduct(data.image_url, data.title || undefined))
+    } catch {
+      // Chấm điểm ảnh chỉ để tham khảo, không chặn việc tạo video
     } finally {
-      setIsGeneratingScript(false)
+      setUploading(null)
     }
+  }
+
+  const goConfigure = () => {
+    setProductError(null)
+    const priceNum = digits(price)
+    if (title.trim().length < 2) return setProductError('Vui lòng nhập tên sản phẩm')
+    if (!priceNum) return setProductError('Vui lòng nhập giá bán, ví dụ 189000')
+    const original = digits(originalPrice)
+    if (original && original <= priceNum) return setProductError('Giá gốc phải cao hơn giá bán (hoặc để trống)')
+    setPhase('configure')
   }
 
   const startPolling = (jobId: string) => {
     if (pollRef.current) clearInterval(pollRef.current)
-    pollRef.current = setInterval(async () => {
+    const timer = setInterval(async () => {
+      if (currentJobRef.current !== jobId) {
+        clearInterval(timer)
+        return
+      }
       try {
         const j = await fetchJobStatus(jobId)
+        if (currentJobRef.current !== jobId) return
         setJob(j)
         if (['completed', 'failed', 'awaiting_approval', 'rejected'].includes(j.status)) {
-          if (pollRef.current) clearInterval(pollRef.current)
+          clearInterval(timer)
           setPhase(j.status === 'completed' ? 'done' : j.status === 'awaiting_approval' ? 'review' : 'failed')
           if (j.status === 'failed') {
             fetchProfile()
@@ -280,31 +443,42 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
         console.error(e)
       }
     }, 1500)
+    pollRef.current = timer
   }
 
-  const cost = options?.pipeline_cost_credits ?? 30
-  const previewCost = options?.tryon_preview_cost_credits ?? 5
+  const cost = options?.pipeline_cost_credits ?? 0
+  const previewCost = options?.tryon_preview_cost_credits ?? 0
   const missingCredits = Math.max(0, cost - credits)
 
   const handleCreate = async () => {
     setSubmitError(null)
-    const priceNum = Number(price.replace(/\D/g, ''))
+    setProductError(null)
+    const priceNum = digits(price)
+    const quick = phase === 'product'
     if (!imageUrl) return setSubmitError('Vui lòng tải ảnh sản phẩm trước')
-    if (title.trim().length < 2) return setSubmitError('Vui lòng nhập tên sản phẩm')
-    if (!priceNum) return setSubmitError('Vui lòng nhập giá bán, ví dụ 189000')
+    if (title.trim().length < 2 || !priceNum) {
+      setPhase('product')
+      return setProductError('Vui lòng nhập tên và giá sản phẩm')
+    }
+    const original = digits(originalPrice)
+    if (original && original <= priceNum) {
+      setPhase('product')
+      return setProductError('Giá gốc phải cao hơn giá bán (hoặc để trống)')
+    }
+    if (script.length > SCRIPT_MAX) return setSubmitError(`Kịch bản tối đa ${SCRIPT_MAX} ký tự`)
     if (missingCredits > 0) return setSubmitError(`Bạn cần thêm ${formatNumber(missingCredits)} credit để tạo video này.`)
 
     setSubmitting(true)
     try {
-      const key = JSON.stringify([imageUrl, title.trim(), priceNum, category, fabric])
       let productId = savedProduct?.key === key ? savedProduct.id : null
       if (!productId) {
         const product = await createAnalyzedProduct({
           title: title.trim(),
           price: priceNum,
+          original_price: digits(originalPrice) || undefined,
           image_url: imageUrl,
-          category: category || undefined,
-          fabric_type: fabric || undefined,
+          category: category.trim() || undefined,
+          fabric_type: fabric.trim() || undefined,
           analysis: analysis?.ai ?? null,
         })
         productId = product.id
@@ -316,19 +490,32 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
         template,
         voice,
         script_style: style,
-        custom_script: isScriptEditing && customScript.trim() ? customScript.trim() : undefined,
+        scene,
+        // Bước 2: video đọc đúng kịch bản người bán đang thấy. Tạo nhanh: AI tự viết lời
+        custom_script: quick ? undefined : script.trim() || undefined,
         duration_sec: duration,
-        require_approval: requireApproval,
+        // Tạo nhanh thì chạy thẳng tới video, không dừng chờ duyệt ảnh thử đồ
+        require_approval: quick ? false : requireApproval,
       })
       onCreditsChange(run.remaining_credits)
+      currentJobRef.current = run.job_id
       setJob({ job_id: run.job_id, status: 'queued', progress: 0, current_step: 'Đang chờ xử lý' })
       setPhase('running')
       startPolling(run.job_id)
-    } catch (e: any) {
-      setSubmitError(e instanceof ApiError && e.status === 402 ? `${e.message}. Hãy nạp thêm credit.` : e.message)
+    } catch (e) {
+      const message = errorText(e, 'Không tạo được video')
+      setSubmitError(e instanceof ApiError && e.status === 402 ? `${message}. Hãy nạp thêm credit.` : message)
     } finally {
       setSubmitting(false)
     }
+  }
+
+  /** Về bước 2 với đúng sản phẩm và cài đặt vừa dùng */
+  const remakeWithSettings = () => {
+    if (pollRef.current) clearInterval(pollRef.current)
+    setJob(null)
+    setSubmitError(null)
+    setPhase('configure')
   }
 
   const reset = () => {
@@ -339,58 +526,96 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
     setTitle('')
     setTitleFromFile(false)
     setPrice('')
+    setOriginalPrice('')
     setCategory('')
     setFabric('')
     setJob(null)
     setUploadError(null)
     setSubmitError(null)
+    setProductError(null)
     setSavedProduct(null)
+    setScript('')
+    setScriptEdited(false)
+    setScriptWarning(null)
+    setScriptFor(null)
   }
 
   const placeholderEngines = options && [options.engines.tryon, options.engines.video].some((e) => e.startsWith('placeholder'))
-  const ai = analysis?.ai
-  const step = phase === 'upload' ? 0 : phase === 'configure' ? 1 : 2
+  const step = phase === 'upload' || phase === 'product' ? 0 : phase === 'configure' ? 1 : 2
+  const quickMode = mode === 'auto' && step === 0
+  const priceNum = digits(price)
+  const originalNum = digits(originalPrice)
 
   return (
     <div ref={scrollRef} className="flex-1 h-full overflow-y-auto text-[var(--text-main)]">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-10 space-y-6 sm:space-y-8">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-5 sm:py-8 space-y-5 sm:space-y-6">
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
           <div>
-            <p className="eyebrow">Studio</p>
-            <h1 className="display text-3xl sm:text-4xl mt-1.5">Tạo video review</h1>
+            <h1 className="display text-3xl sm:text-4xl">Tạo video AI</h1>
             <p className="text-[var(--text-muted)] mt-2 max-w-xl">
-              Từ một tấm ảnh sản phẩm thành video có người mẫu, lời review và phụ đề.
+              {quickMode
+                ? 'Tải ảnh hoặc dán link sản phẩm, chọn phong cách và bối cảnh. AI lo người mẫu, lời review, giọng đọc và phụ đề.'
+                : step === 0
+                  ? 'Bước 1: thêm sản phẩm bằng link, ảnh tải lên hoặc ảnh mẫu.'
+                  : step === 1
+                    ? 'Bước 2: chọn người mẫu, phong cách, giọng đọc và xem trước lời review.'
+                    : 'Bước 3: xem video, tải về hoặc đăng bán.'}
             </p>
           </div>
-          <Stepper step={step} />
+          <div className="flex flex-col items-start md:items-end gap-3">
+            {step === 0 && (
+              <div className="flex items-center gap-2 flex-wrap">
+                <div role="tablist" aria-label="Cách tạo video" className="flex gap-1 p-1 rounded-full bg-[var(--bg-surface)]">
+                  {(
+                    [
+                      { id: 'auto', label: 'Tự động', icon: Zap },
+                      { id: 'steps', label: 'Từng bước', icon: SlidersHorizontal },
+                    ] as const
+                  ).map((m) => (
+                    <button
+                      key={m.id}
+                      role="tab"
+                      aria-selected={mode === m.id}
+                      onClick={() => setMode(m.id)}
+                      className={`px-3.5 py-1.5 rounded-full text-sm font-semibold flex items-center gap-1.5 transition-colors ${
+                        mode === m.id ? 'bg-[var(--bg-card)] text-[var(--text-main)] shadow-sm' : 'text-[var(--text-muted)]'
+                      }`}
+                    >
+                      <m.icon className="w-3.5 h-3.5" /> {m.label}
+                    </button>
+                  ))}
+                </div>
+                <button onClick={onOpenStudio} className="btn btn-ghost btn-sm">
+                  <Clapperboard className="w-4 h-4" /> Pro Studio
+                </button>
+              </div>
+            )}
+            {!quickMode && <Stepper step={step} />}
+          </div>
         </div>
 
-        {placeholderEngines && (
+        {placeholderEngines && step < 2 && (
           <div className="flex gap-2.5 items-start text-sm px-4 py-3 rounded-2xl border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--bg-card)_70%,transparent)] text-[var(--text-sub)]">
             <Info className="w-4 h-4 shrink-0 mt-0.5 text-[var(--accent-text)]" />
             <span>
               {isAdmin
-                ? 'Máy chủ chưa bật AI thử đồ hoặc AI tạo video, nên video sẽ là ảnh sản phẩm kèm chuyển động máy quay (bản xem thử). Mở "Kiểm tra hệ thống" trong menu tài khoản để xem cách bật.'
+                ? 'Máy chủ chưa bật AI thử đồ hoặc AI tạo video, nên video sẽ là ảnh sản phẩm kèm chuyển động máy quay (bản xem thử). Vào Quản trị hệ thống → Cài đặt API để bật.'
                 : 'Hệ thống đang ở chế độ xem thử: video là ảnh sản phẩm kèm chuyển động máy quay, chưa có người mẫu AI mặc đồ.'}
             </span>
           </div>
         )}
 
-        {initialTemplate && (
-          <div className="mb-4 p-3.5 rounded-2xl bg-gradient-to-r from-amber-500/10 via-rose-500/10 to-purple-500/10 border border-amber-500/20 flex items-center justify-between gap-3 text-sm animate-fade-up">
-            <div className="flex items-center gap-2.5">
-              <Sparkles className="w-4 h-4 text-amber-500 shrink-0" />
-              <span>
-                Đang áp dụng mẫu: <strong className="text-[var(--text-main)]">{initialTemplate.title}</strong> ({initialTemplate.badge})
+        {initialTemplate && step < 2 && (
+          <div className="p-3.5 rounded-2xl bg-[var(--accent-soft)] border border-[var(--accent-border)] flex items-center justify-between gap-3 text-sm animate-fade-up">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <Sparkles className="w-4 h-4 text-[var(--accent-text)] shrink-0" />
+              <span className="min-w-0">
+                Đang dùng mẫu <strong>{initialTemplate.title}</strong>: góc quay, giọng đọc và lời văn đã được chọn sẵn.
               </span>
             </div>
             {onClearInitialTemplate && (
-              <button
-                type="button"
-                onClick={onClearInitialTemplate}
-                className="text-xs text-[var(--text-muted)] hover:text-[var(--text-main)] underline shrink-0"
-              >
-                Hủy mẫu
+              <button type="button" onClick={onClearInitialTemplate} className="icon-btn w-8 h-8" aria-label="Bỏ mẫu đang dùng">
+                <X className="w-4 h-4" />
               </button>
             )}
           </div>
@@ -415,16 +640,17 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
             uploading={uploading === 'upload'}
             error={uploadError}
             onProductLoaded={handleProductLoaded}
+            pendingPrefill={pendingPrefill}
           />
         )}
 
-        {phase === 'configure' && imageUrl && (
-          <>
-            <div className="grid lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] gap-5 lg:gap-8 items-start animate-fade-up">
-              {/* Ảnh sản phẩm + chất lượng ảnh */}
-              <div className="card p-3 sm:p-4 lg:sticky lg:top-6">
+        {/* ------------------------------------------------ Bước 1: thẻ sản phẩm */}
+        {phase === 'product' && imageUrl && (
+          <div className="space-y-5 animate-fade-up">
+            <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] gap-5 lg:gap-8 items-start">
+              <div className="card p-3 sm:p-4 lg:sticky lg:top-0">
                 <div
-                  className={`relative rounded-2xl overflow-hidden bg-[var(--bg-surface)] aspect-[4/5] max-h-[62vh] w-full ${
+                  className={`relative rounded-2xl overflow-hidden bg-[var(--bg-surface)] aspect-[4/5] max-h-[60vh] w-full ${
                     uploading ? 'shimmer' : ''
                   }`}
                   onDragOver={(e) => e.preventDefault()}
@@ -443,7 +669,7 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
                   )}
                   <button
                     onClick={pickFile}
-                    className="absolute bottom-3 right-3 glass rounded-full px-3.5 py-2 text-sm font-semibold flex items-center gap-1.5 shadow-sm hover:bg-white"
+                    className="absolute bottom-3 right-3 glass rounded-full px-3.5 py-2 text-sm font-semibold flex items-center gap-1.5 shadow-sm"
                   >
                     <RefreshCw className="w-4 h-4" /> Đổi ảnh
                   </button>
@@ -457,78 +683,228 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
                 {analysis && <QualityNote quality={analysis.quality} warning={analysis.warning} />}
               </div>
 
-              <div className="space-y-5">
-                <Section
-                  n="01"
-                  title="Thông tin sản phẩm"
-                  aside={
-                    ai && (
-                      <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--accent-soft)] text-[var(--accent-text)] px-3 py-1 text-xs font-semibold">
-                        <Sparkles className="w-3.5 h-3.5" /> AI đã điền sẵn
-                      </span>
-                    )
-                  }
-                >
-                  <div className="grid sm:grid-cols-2 gap-4">
-                    <div className="sm:col-span-2">
-                      <label className="block">
-                        <span className="field-label">Tên sản phẩm *</span>
-                        <input
-                          className="field"
-                          value={title}
-                          onChange={(e) => {
-                            setTitle(e.target.value)
-                            setTitleFromFile(false)
-                          }}
-                          maxLength={200}
-                          placeholder="Ví dụ: Áo sơ mi kẻ sọc xanh"
-                        />
-                      </label>
-                      {titleFromFile && (
-                        <span className="text-sm text-[var(--text-muted)] block mt-1.5">
-                          Gợi ý từ tên file ảnh, bạn sửa lại cho đúng nhé.
-                        </span>
-                      )}
-                    </div>
+              <div className="space-y-5 min-w-0">
+              <Section
+                title="Thông tin sản phẩm"
+                aside={
+                  ai && (
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--accent-soft)] text-[var(--accent-text)] px-3 py-1 text-xs font-semibold">
+                      <Sparkles className="w-3.5 h-3.5" /> AI đã điền sẵn
+                    </span>
+                  )
+                }
+              >
+                <div className="grid sm:grid-cols-2 gap-4">
+                  <div className="sm:col-span-2">
                     <label className="block">
-                      <span className="field-label">Giá bán (đồng) *</span>
+                      <span className="field-label">Tên sản phẩm *</span>
                       <input
                         className="field"
-                        inputMode="numeric"
-                        value={price}
-                        placeholder="Ví dụ: 189000"
-                        onChange={(e) => setPrice(e.target.value)}
+                        value={title}
+                        onChange={(e) => {
+                          setTitle(e.target.value)
+                          setTitleFromFile(false)
+                        }}
+                        maxLength={200}
+                        placeholder="Ví dụ: Áo sơ mi kẻ sọc xanh"
                       />
                     </label>
-                    <label className="block">
-                      <span className="field-label">Loại sản phẩm</span>
-                      <input className="field" value={category} onChange={(e) => setCategory(e.target.value)} placeholder="Áo, đầm, quần..." />
-                    </label>
-                    <label className="sm:col-span-2 block">
-                      <span className="field-label">Chất liệu</span>
-                      <input className="field" value={fabric} onChange={(e) => setFabric(e.target.value)} placeholder="Cotton, lụa, dạ..." />
-                    </label>
+                    {titleFromFile && (
+                      <span className="text-sm text-[var(--text-muted)] block mt-1.5">Gợi ý từ tên file ảnh, bạn sửa lại cho đúng nhé.</span>
+                    )}
                   </div>
-                  {ai && ai.key_features.length > 0 && (
-                    <div className="mt-5">
-                      <span className="field-label">Điểm nổi bật AI nhận ra (dùng để viết lời review)</span>
-                      <div className="flex flex-wrap gap-2">
-                        {[...ai.key_features, ...ai.colors].map((f) => (
-                          <span key={f} className="text-sm px-3 py-1 rounded-full bg-[var(--bg-surface)] text-[var(--text-sub)]">
-                            {f}
-                          </span>
+                  <label className="block">
+                    <span className="field-label">Giá bán (đồng) *</span>
+                    <input
+                      className="field"
+                      inputMode="numeric"
+                      value={price}
+                      placeholder="Ví dụ: 189000"
+                      onChange={(e) => setPrice(e.target.value)}
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="field-label">Giá gốc (nếu đang giảm giá)</span>
+                    <input
+                      className="field"
+                      inputMode="numeric"
+                      value={originalPrice}
+                      placeholder="Ví dụ: 259000"
+                      onChange={(e) => setOriginalPrice(e.target.value)}
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="field-label">Loại sản phẩm</span>
+                    <input className="field" value={category} onChange={(e) => setCategory(e.target.value)} placeholder="Áo, đầm, quần..." />
+                  </label>
+                  <label className="block">
+                    <span className="field-label">Chất liệu</span>
+                    <input className="field" value={fabric} onChange={(e) => setFabric(e.target.value)} placeholder="Cotton, lụa, dạ..." />
+                  </label>
+                </div>
+                {features.length > 0 && (
+                  <div className="mt-5">
+                    <span className="field-label">Điểm nổi bật AI nhận ra (dùng để viết lời review)</span>
+                    <div className="flex flex-wrap gap-2">
+                      {features.map((f) => (
+                        <span key={f} className="text-sm px-3 py-1 rounded-full bg-[var(--bg-surface)] text-[var(--text-sub)]">
+                          {f}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {priceNum > 0 && (
+                  <div className="mt-5 flex items-baseline gap-2 flex-wrap text-sm">
+                    <span className="text-[var(--text-muted)]">Giá hiện trên video:</span>
+                    <strong className="text-[var(--accent-text)]">{formatVnd(priceNum)}</strong>
+                    {originalNum > priceNum && <span className="line-through text-[var(--text-muted)]">{formatVnd(originalNum)}</span>}
+                  </div>
+                )}
+              </Section>
+
+              {quickMode && (
+                <>
+                  <Section
+                    title="Phong cách"
+                    aside={
+                      <button onClick={goConfigure} className="btn btn-ghost btn-sm">
+                        <SlidersHorizontal className="w-3.5 h-3.5" /> Tùy chỉnh chi tiết
+                      </button>
+                    }
+                  >
+                    {presets.length === 0 ? (
+                      <div className="grid sm:grid-cols-2 gap-3">
+                        {[0, 1].map((i) => (
+                          <div key={i} className="skeleton rounded-2xl h-20" />
                         ))}
                       </div>
+                    ) : (
+                      <div role="radiogroup" aria-label="Phong cách video" className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {presets.map((t) => {
+                          const selected = presetId === t.id
+                          return (
+                            <button
+                              key={t.id}
+                              type="button"
+                              role="radio"
+                              aria-checked={selected}
+                              onClick={() => applyPreset(t)}
+                              className={`text-left p-2.5 rounded-2xl border transition-colors flex gap-3 items-center ${
+                                selected
+                                  ? 'border-[var(--ink)] bg-[var(--accent-soft)]'
+                                  : 'border-[var(--border-subtle)] bg-[var(--bg-card)] hover:border-[var(--border-strong)]'
+                              }`}
+                            >
+                              <img
+                                src={t.image_url}
+                                alt=""
+                                loading="lazy"
+                                onError={(e) => (e.currentTarget.style.visibility = 'hidden')}
+                                className="w-12 h-16 rounded-xl object-cover bg-[var(--bg-surface)] shrink-0"
+                              />
+                              <span className="min-w-0 flex-1">
+                                <span className="font-semibold text-sm block truncate">{t.title}</span>
+                                <span className="text-xs text-[var(--text-muted)] block truncate">
+                                  {[TEMPLATE_SHORT_LABELS[t.motion_template], t.voice_label, STYLE_LABELS[t.script_style]]
+                                    .filter(Boolean)
+                                    .join(' · ')}
+                                </span>
+                              </span>
+                              {selected && <Check className="w-4 h-4 shrink-0 text-[var(--accent-text)]" />}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )}
+                    {presetId === '' && (
+                      <p className="text-sm text-[var(--text-muted)] mt-3">Đang dùng cài đặt bạn tự chỉnh ở chế độ Từng bước.</p>
+                    )}
+                  </Section>
+
+                  <Section title="Bối cảnh">
+                    <ScenePicker scenes={options?.scenes ?? []} value={scene} onChange={setScene} />
+                  </Section>
+                </>
+              )}
+              </div>
+            </div>
+
+            {productError && (
+              <div className="flex gap-2 items-start text-sm p-3 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-bg)] text-[var(--danger-text)]">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>{productError}</span>
+              </div>
+            )}
+            {quickMode ? (
+              <div className="sticky bottom-3 sm:bottom-5 z-10">
+                <div className="card shadow-[var(--shadow-pop)] p-3 sm:p-4 space-y-3">
+                  {submitError && (
+                    <div className="flex gap-2 items-start text-sm p-3 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-bg)] text-[var(--danger-text)] animate-fade-up">
+                      <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                      <span className="flex-1">{submitError}</span>
                     </div>
                   )}
+                  <div className="flex items-center justify-between gap-2 sm:gap-3">
+                    <button onClick={reset} className="btn btn-ghost px-3 sm:px-4" aria-label="Chọn sản phẩm khác">
+                      <ArrowLeft className="w-4 h-4" /> <span className="hidden sm:inline">Sản phẩm khác</span>
+                    </button>
+                    <CostSummary cost={cost} credits={credits} ready={!!options} />
+                    {missingCredits > 0 ? (
+                      <button onClick={onOpenDeposit} className="btn btn-accent btn-lg">
+                        <Plus className="w-4 h-4" /> Nạp<span className="hidden sm:inline"> thêm</span> {formatNumber(missingCredits)}
+                      </button>
+                    ) : (
+                      <button onClick={handleCreate} disabled={submitting || !!uploading || !options} className="btn btn-primary btn-lg">
+                        {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+                        <span className="sm:hidden">Tạo ngay</span>
+                        <span className="hidden sm:inline">Tạo video ngay · {formatNumber(cost)} credit</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between gap-3">
+                <button onClick={reset} className="btn btn-ghost">
+                  <ArrowLeft className="w-4 h-4" /> Chọn sản phẩm khác
+                </button>
+                <button onClick={goConfigure} disabled={uploading === 'upload'} className="btn btn-primary btn-lg">
+                  Tiếp tục <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ------------------------------------------------ Bước 2: tùy chỉnh */}
+        {phase === 'configure' && imageUrl && (
+          <>
+            <div className="card p-3 flex items-center gap-3.5 animate-fade-up">
+              <img src={imageUrl} alt="" className="w-14 h-16 rounded-xl object-cover bg-[var(--bg-surface)] shrink-0" />
+              <div className="min-w-0 flex-1">
+                <p className="font-semibold truncate">{title}</p>
+                <p className="text-sm flex items-baseline gap-2">
+                  <span className="text-[var(--accent-text)] font-semibold">{formatVnd(priceNum)}</span>
+                  {originalNum > priceNum && <span className="line-through text-[var(--text-muted)]">{formatVnd(originalNum)}</span>}
+                  {category && <span className="text-[var(--text-muted)] truncate">· {category}</span>}
+                </p>
+              </div>
+              <button onClick={() => setPhase('product')} className="btn btn-secondary btn-sm shrink-0">
+                <Pencil className="w-3.5 h-3.5" /> Sửa
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)] gap-5 lg:gap-6 items-start animate-fade-up">
+              <div className="space-y-5">
+                <Section title="Người mẫu">
+                  <ModelPicker avatars={avatars} value={avatarId} onChange={custom(setAvatarId)} />
                 </Section>
 
-                <Section n="02" title="Chọn người mẫu">
-                  <ModelPicker avatars={avatars} value={avatarId} onChange={setAvatarId} />
-                </Section>
-
-                <Section n="03" title="Kiểu video">
-                  <TemplatePicker templates={options?.templates ?? []} value={template} onChange={setTemplate} />
+                <Section title="Phong cách video">
+                  <TemplatePicker templates={options?.templates ?? []} value={template} onChange={custom(setTemplate)} image={imageUrl} />
+                  <span className="field-label mt-5">Bối cảnh</span>
+                  <ScenePicker scenes={options?.scenes ?? []} value={scene} onChange={setScene} />
                   {options?.engines.video.startsWith('replicate') && (
                     <div className="mt-5">
                       <span className="field-label">Độ dài đoạn AI chuyển động</span>
@@ -536,81 +912,69 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
                     </div>
                   )}
                 </Section>
+              </div>
 
-                <Section n="04" title="Giọng đọc & lời review">
-                  <span className="field-label">Giọng đọc tiếng Việt (nghe thử 3s)</span>
+              <div className="space-y-5">
+                <Section title="Giọng đọc">
                   <VoicePicker
-                    voices={(options?.voices ?? []).map((v) => ({
-                      id: v.id,
-                      label: v.label,
-                      preview_url: v.id.toLowerCase().includes('namminh') ? '/samples/preview_namminh.mp3' : '/samples/preview_hoaimy.mp3',
-                    }))}
+                    voices={options?.voices ?? []}
                     value={voice}
-                    onChange={setVoice}
+                    onChange={custom(setVoice)}
+                    playing={voicePreview.playing}
+                    onPreview={voicePreview.toggle}
                   />
-
                   <span className="field-label mt-5">Phong cách lời review</span>
                   <ChipGroup
                     label="Phong cách lời review"
                     options={(options?.script_styles ?? []).map((s) => ({ id: s, label: STYLE_LABELS[s] ?? s }))}
                     value={style}
-                    onChange={setStyle}
+                    onChange={custom(setStyle)}
                   />
+                </Section>
 
-                  {/* Kịch bản review xem trước & chỉnh sửa */}
-                  <div className="mt-5 p-4 rounded-2xl bg-[var(--bg-subtle)] border border-[var(--border-subtle)] space-y-3">
-                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <div>
-                        <h4 className="text-sm font-semibold text-[var(--text-main)] flex items-center gap-1.5">
-                          <Sparkles className="w-4 h-4 text-amber-500" />
-                          Kịch bản review KOC (3 câu)
-                        </h4>
-                        <p className="text-xs text-[var(--text-muted)]">
-                          {isScriptEditing
-                            ? 'Bạn có thể chỉnh sửa trực tiếp câu từ bên dưới để AI đọc đúng ý'
-                            : 'AI sẽ tự động viết kịch bản tối ưu chuyển đổi theo phong cách đã chọn'}
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={handleGenerateScriptPreview}
-                        disabled={isGeneratingScript || !title}
-                        className="btn btn-secondary btn-sm text-xs"
-                      >
-                        {isGeneratingScript ? (
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        ) : (
-                          <RefreshCw className="w-3.5 h-3.5" />
-                        )}
-                        {customScript ? 'Viết lại kịch bản' : 'Xem & chỉnh sửa câu từ'}
-                      </button>
+                <Section
+                  title="Kịch bản xem trước"
+                  aside={
+                    <button
+                      type="button"
+                      onClick={() => generateScript()}
+                      disabled={scriptLoading}
+                      className="btn btn-ghost btn-sm"
+                    >
+                      {scriptLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                      Viết lại
+                    </button>
+                  }
+                >
+                  {scriptLoading && !script ? (
+                    <div className="space-y-2" aria-label="AI đang viết kịch bản">
+                      <div className="skeleton rounded-lg h-4 w-full" />
+                      <div className="skeleton rounded-lg h-4 w-11/12" />
+                      <div className="skeleton rounded-lg h-4 w-3/4" />
                     </div>
-
-                    {isScriptEditing && (
-                      <div className="space-y-2 animate-fade-up">
-                        <textarea
-                          rows={3}
-                          value={customScript}
-                          onChange={(e) => setCustomScript(e.target.value)}
-                          placeholder="Ví dụ: Dạ em đầm hoa nhí này vừa cập bến xinh xắn lắm các nàng ơi..."
-                          className="w-full text-sm p-3 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-card)] focus:outline-none focus:ring-2 focus:ring-[var(--ink)] leading-relaxed resize-y"
-                        />
-                        <div className="flex items-center justify-between text-xs text-[var(--text-muted)]">
-                          <span>AI sẽ đọc chính xác văn bản này bằng giọng bạn chọn</span>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setCustomScript('')
-                              setIsScriptEditing(false)
-                            }}
-                            className="text-[var(--text-muted)] hover:text-red-500 underline"
-                          >
-                            Dùng lại kịch bản tự động
-                          </button>
-                        </div>
-                      </div>
-                    )}
+                  ) : (
+                    <textarea
+                      rows={6}
+                      maxLength={SCRIPT_MAX}
+                      aria-label="Kịch bản lời review"
+                      value={script}
+                      onChange={(e) => {
+                        setScript(e.target.value)
+                        setScriptEdited(true)
+                      }}
+                      placeholder="AI sẽ viết sẵn 3 câu: mở đầu gây chú ý, giới thiệu sản phẩm, kêu gọi mua."
+                      className={`field resize-y leading-relaxed ${scriptLoading ? 'opacity-60' : ''}`}
+                    />
+                  )}
+                  <div className="flex items-center justify-between gap-3 mt-2 text-xs text-[var(--text-muted)]">
+                    <span>
+                      {scriptEdited ? 'Bạn đã sửa: AI đọc đúng nguyên văn.' : 'AI viết theo sản phẩm và phong cách, sửa thoải mái.'}
+                    </span>
+                    <span className="tabular-nums shrink-0">
+                      {script.length}/{SCRIPT_MAX}
+                    </span>
                   </div>
+                  {scriptWarning && <p className="text-xs text-[var(--warn-text)] mt-1.5">{scriptWarning}</p>}
                 </Section>
 
                 <section className="card p-5 sm:p-6">
@@ -626,42 +990,28 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
               </div>
             </div>
 
-            {/* Chi phí, số dư và nút tạo: luôn nằm ở đáy màn hình, lỗi hiện ngay tại đây */}
+            {/* Quay lại, chi phí, số dư và nút tạo: luôn nằm ở đáy màn hình */}
             <div className="sticky bottom-3 sm:bottom-5 z-10">
-              <div className="card shadow-[var(--shadow-pop)] p-3 sm:p-4 sm:pl-6 space-y-3">
+              <div className="card shadow-[var(--shadow-pop)] p-3 sm:p-4 space-y-3">
                 {submitError && (
                   <div className="flex gap-2 items-start text-sm p-3 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-bg)] text-[var(--danger-text)] animate-fade-up">
                     <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
                     <span className="flex-1">{submitError}</span>
                   </div>
                 )}
-                <div className="flex items-center justify-between gap-3">
-                  <div className="text-sm leading-snug min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[var(--text-muted)]">Chi phí:</span>
-                      <strong>{cost} credit</strong>
-                      <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 font-medium">
-                        ~{cost * 100}đ
-                      </span>
-                    </div>
-                    <div className="mt-0.5">
-                      <span className="text-[var(--text-muted)]">Số dư: </span>
-                      <strong className={missingCredits > 0 ? 'text-[var(--danger-text)]' : ''}>{formatNumber(credits)} credit</strong>
-                      {credits >= cost && (
-                        <span className="text-xs text-[var(--text-muted)] ml-1">
-                          (đủ tạo {Math.floor(credits / (cost || 30))} video)
-                        </span>
-                      )}
-                    </div>
-                  </div>
+                <div className="flex items-center justify-between gap-2 sm:gap-3">
+                  <button onClick={() => setPhase('product')} className="btn btn-ghost px-3 sm:px-4" aria-label="Quay lại bước 1">
+                    <ArrowLeft className="w-4 h-4" /> <span className="hidden sm:inline">Quay lại</span>
+                  </button>
+                  <CostSummary cost={cost} credits={credits} ready={!!options} />
                   {missingCredits > 0 ? (
                     <button onClick={onOpenDeposit} className="btn btn-accent btn-lg">
-                      <Plus className="w-4 h-4" /> Nạp<span className="hidden sm:inline"> thêm</span> {formatNumber(missingCredits)} credit
+                      <Plus className="w-4 h-4" /> Nạp<span className="hidden sm:inline"> thêm</span> {formatNumber(missingCredits)}
                     </button>
                   ) : (
-                    <button onClick={handleCreate} disabled={submitting || !!uploading} className="btn btn-primary btn-lg">
+                    <button onClick={handleCreate} disabled={submitting || !!uploading || !options} className="btn btn-primary btn-lg">
                       {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-                      Tạo video
+                      Tạo video<span className="hidden sm:inline"> · {formatNumber(cost)} credit</span>
                     </button>
                   )}
                 </div>
@@ -670,6 +1020,7 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
           </>
         )}
 
+        {/* ------------------------------------------------ Bước 3: kết quả */}
         {phase === 'running' && job && <JobProgress job={job} fallbackImage={imageUrl} onOpenVideos={onOpenVideos} />}
 
         {phase === 'review' && job?.output_image_url && (
@@ -695,22 +1046,20 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
         )}
 
         {phase === 'done' && job && (
-          <div className="space-y-6 animate-fade-up">
-            <div>
-              <p className="eyebrow flex items-center gap-1.5">
-                <Sparkles className="w-3.5 h-3.5" /> Hoàn tất
-              </p>
-              <h2 className="display text-2xl sm:text-3xl mt-1.5">Video của bạn đã sẵn sàng</h2>
-            </div>
+          <div className="space-y-5 animate-fade-up">
+            <h2 className="display text-2xl sm:text-3xl">Video của bạn đã sẵn sàng</h2>
             <VideoResult
               job={job}
               productTitle={title}
+              price={priceNum}
+              originalPrice={originalNum || null}
+              onRemake={remakeWithSettings}
               actions={
                 <>
-                  <button onClick={reset} className="btn btn-secondary">
-                    <RotateCcw className="w-4 h-4" /> Tạo video mới
+                  <button onClick={reset} className="btn btn-ghost btn-lg">
+                    <Plus className="w-4 h-4" /> Video mới
                   </button>
-                  <button onClick={onOpenVideos} className="btn btn-ghost">
+                  <button onClick={onOpenVideos} className="btn btn-ghost btn-lg">
                     <Film className="w-4 h-4" /> Video của tôi
                   </button>
                 </>
@@ -727,7 +1076,7 @@ export const CreateVideoView: React.FC<CreateVideoViewProps> = ({
             <h2 className="display text-2xl">Chưa tạo được video</h2>
             <p className="text-sm text-[var(--text-muted)]">{job.error_message}</p>
             {job.refunded && <p className="text-sm font-medium text-[var(--ok-text)]">Credit đã được hoàn lại vào ví.</p>}
-            <button onClick={() => setPhase('configure')} className="btn btn-primary">
+            <button onClick={remakeWithSettings} className="btn btn-primary">
               <RotateCcw className="w-4 h-4" /> Thử lại
             </button>
           </div>

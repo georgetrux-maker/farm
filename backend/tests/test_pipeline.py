@@ -128,12 +128,56 @@ def test_my_videos_list_is_private_and_shows_status(client, shop, monkeypatch):
     assert wait_for_job(client, job_id, shop["headers"])["status"] == "awaiting_approval"
     client.post(f"/api/jobs/{job_id}/reject", headers=shop["headers"])
 
-    mine = client.get("/api/jobs", headers=shop["headers"]).json()
-    assert [j["job_id"] for j in mine] == [job_id]
+    page = client.get("/api/jobs", headers=shop["headers"]).json()
+    mine = page["items"]
+    assert [j["job_id"] for j in mine] == [job_id] and page["total"] == 1 and page["has_more"] is False
     assert mine[0]["status"] == "rejected"
     assert mine[0]["product_title"] == "Đầm suông linen"
     assert mine[0]["product_image_url"].startswith("/media/uploads/")
     assert mine[0]["published_count"] == 0
     # Người khác không thấy video của shop
-    assert all(j["job_id"] != job_id for j in client.get("/api/jobs", headers=DEMO_AUTH).json())
+    assert all(j["job_id"] != job_id for j in client.get("/api/jobs", headers=DEMO_AUTH).json()["items"])
     assert client.get("/api/jobs").status_code == 401
+
+
+def _insert_jobs(user_id: str, rows: list):
+    """Tạo nhanh job ở các trạng thái khác nhau mà không chạy pipeline"""
+    conn = database.get_db()
+    for i, (title, status) in enumerate(rows):
+        pid = f"prod_t{i}"
+        conn.execute("INSERT INTO products (id, owner_id, title, price, image_url) VALUES (?, ?, ?, 100000, '/x.png')",
+                     (pid, user_id, title))
+        conn.execute("INSERT INTO ai_jobs (id, user_id, product_id, status, progress, current_step, created_at) "
+                     "VALUES (?, ?, ?, ?, 0, '', datetime('2026-01-01', ?))",
+                     (f"JOB_T{i:02d}", user_id, pid, status, f"+{i} minutes"))
+    conn.commit()
+    conn.close()
+
+
+def test_my_videos_pagination_search_filter_sort(client, shop):
+    statuses = ["completed", "processing", "awaiting_approval", "failed", "rejected", "completed"]
+    titles = ["Áo sơ mi kẻ sọc", "Đầm voan hoa nhí", "Áo khoác dạ", "Quần jean 50%_off", "Chân váy xếp ly",
+              "Áo thun basic"]
+    _insert_jobs(shop["id"], list(zip(titles, statuses)) + [(f"Túi xách {i}", "completed") for i in range(20)])
+    get = lambda **q: client.get("/api/jobs", headers=shop["headers"], params=q).json()
+
+    first, second = get(page_size=10), get(page_size=10, page=3)
+    assert first["total"] == 26 and len(first["items"]) == 10 and first["has_more"]
+    assert len(second["items"]) == 6 and second["has_more"] is False
+    assert first["items"][0]["job_id"] == "JOB_T25"            # mới nhất trước
+    assert get(sort="oldest", page_size=1)["items"][0]["job_id"] == "JOB_T00"
+    assert get(sort="title", page_size=1)["items"][0]["product_title"] == "Áo khoác dạ"
+
+    # Tìm không cần dấu, không phân biệt hoa thường; ký tự % _ được hiểu đúng nghĩa
+    assert [j["product_title"] for j in get(q="AO", sort="title")["items"]] == [
+        "Áo khoác dạ", "Áo sơ mi kẻ sọc", "Áo thun basic"]
+    assert get(q="dam voan")["items"][0]["product_title"] == "Đầm voan hoa nhí"
+    assert get(q="50%_")["total"] == 1 and get(q="%")["total"] == 1
+
+    # Lọc theo nhóm trạng thái, kèm số lượng từng nhóm cho bộ lọc
+    assert get(status="busy")["total"] == 1 and get(status="other")["total"] == 2
+    assert get()["counts"] == {"completed": 22, "busy": 1, "awaiting_approval": 1, "other": 2, "all": 26}
+    assert get(q="ao")["counts"]["all"] == 3
+
+    assert client.get("/api/jobs", headers=shop["headers"], params={"page_size": 500}).status_code == 422
+    assert client.get("/api/jobs", headers=shop["headers"], params={"sort": "drop"}).status_code == 422

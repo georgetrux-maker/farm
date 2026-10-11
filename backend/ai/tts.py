@@ -177,3 +177,29 @@ def generate_speech(text: str, voice_key: str = DEFAULT_VOICE, output_name: str 
         # Cụm phụ đề [(bắt đầu, kết thúc, chữ)] để gắn thẳng vào video
         "phrases": phrases,
     }
+
+
+PREVIEW_LINES = {
+    "vi-VN-HoaiMyNeural": "Chào các nàng, mình là Hoài My. Mẫu váy này đang được săn đón lắm đó!",
+    "vi-VN-NamMinhNeural": "Xin chào, mình là Nam Minh. Chiếc áo này mặc lên vừa gọn vừa sang!",
+}
+
+
+def preview_voice(voice: str) -> str:
+    """File nghe thử khoảng 4 giây của đúng giọng được chọn (edge-tts), tạo một lần rồi dùng lại.
+
+    Không dùng phương án dự phòng: nghe thử mà ra giọng khác thì sai mục đích, nên lỗi thì raise.
+    """
+    if voice not in VOICES:
+        raise KeyError(voice)
+    path = media_path(os.path.join("voice_previews", f"{voice}.mp3"))
+    if not os.path.isfile(path):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = f"{path}.{os.getpid()}.tmp"
+        try:
+            _edge_tts(PREVIEW_LINES[voice], voice, tmp)
+            os.replace(tmp, path)
+        finally:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+    return path

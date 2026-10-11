@@ -1,9 +1,14 @@
-import React, { useState } from 'react'
-import { Check, Copy, Download, Info } from 'lucide-react'
+import React, { useRef, useState } from 'react'
+import { Check, Copy, Download, Info, RotateCcw } from 'lucide-react'
 import type { AIJob } from '../../types'
-import { videoFileName } from '../../lib/format'
+import { setFeedVisibility } from '../../services/api'
+import { formatDateTime, formatNumber, formatVnd, videoFileName } from '../../lib/format'
+import { useStudioLabels } from '../../lib/useStudioLabels'
+import { FacebookLogo, TikTokLogo } from '../ui/BrandLogos'
+import { StatusBadge } from '../ui/StatusBadge'
 import { useToast } from '../ui/toastContext'
-import { PublishPanel } from './PublishPanel'
+import { PublishPanel, type SocialPlatform } from './PublishPanel'
+import { Toggle } from './Pickers'
 
 function CopyButton({ text, label }: { text: string; label: string }) {
   const toast = useToast()
@@ -29,24 +34,94 @@ function CopyButton({ text, label }: { text: string; label: string }) {
   )
 }
 
+/** Shop bật/tắt hiện video trên feed của Aura (người mua xem, thử đồ, bấm Mua ngay) */
+const FeedToggle: React.FC<{ job: AIJob }> = ({ job }) => {
+  const toast = useToast()
+  const [on, setOn] = useState(!!job.feed_visible)
+  const [onFor, setOnFor] = useState(job.job_id)
+  const [busy, setBusy] = useState(false)
+  if (onFor !== job.job_id) {
+    setOnFor(job.job_id)
+    setOn(!!job.feed_visible)
+  }
+  const change = async (visible: boolean) => {
+    if (busy) return
+    setBusy(true)
+    try {
+      await setFeedVisibility(job.job_id, visible)
+      setOn(visible)
+      toast(visible ? 'Video đã lên feed của Aura' : 'Đã gỡ video khỏi feed', 'success')
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Không đổi được', 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <section className="card p-5">
+      <Toggle
+        checked={on}
+        onChange={change}
+        label="Hiện trên feed của Aura"
+        description={
+          on
+            ? `${formatNumber(job.views ?? 0)} lượt xem. Người mua xem video, thử đồ (nếu sản phẩm bật) và bấm Mua ngay tới link sản phẩm của bạn.`
+            : 'Người mua xem video trên feed, thử đồ (nếu sản phẩm bật) và bấm Mua ngay tới link sản phẩm của bạn.'
+        }
+      />
+    </section>
+  )
+}
+
+const clock = (sec: number) => `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`
+
 interface VideoResultProps {
   job: AIJob
   productTitle?: string | null
-  /** Nút thêm cạnh nút tải (vd "Tạo video mới") */
+  price?: number | null
+  originalPrice?: number | null
+  /** Tạo video mới với đúng sản phẩm và cài đặt của video này (được sửa trước khi tạo) */
+  onRemake?: () => void
+  /** Nút thêm sau các nút chính (vd "Tạo video mới") */
   actions?: React.ReactNode
 }
 
-/** Video đã tạo trong khung điện thoại: tải về (tên file theo sản phẩm), sao chép caption, đăng mạng xã hội. */
-export const VideoResult: React.FC<VideoResultProps> = ({ job, productTitle, actions }) => {
+/** Kết quả: video trong khung điện thoại, thông tin video, tải về, đăng mạng xã hội, các cảnh trong video. */
+export const VideoResult: React.FC<VideoResultProps> = ({ job, productTitle, price, originalPrice, onRemake, actions }) => {
+  const labels = useStudioLabels()
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const [publishRequest, setPublishRequest] = useState<{ platform: SocialPlatform; n: number } | null>(null)
   const script = job.script
   const caption = `${script?.post_caption ?? ''}\n${(script?.hashtags ?? []).join(' ')}`.trim()
   if (!job.output_video_url) return null
 
+  const params = job.params ?? {}
+  const multi = params.scenes && params.scenes.length > 1 ? params.scenes : null
+  const details = [
+    ['Người mẫu', labels.model(params.avatar_id)],
+    ['Kiểu video', multi ? `Pro Studio, ${multi.length} cảnh` : labels.template(params.template)],
+    ['Bối cảnh', multi ? [...new Set(multi.map((x) => labels.scene(x.scene)))].join(', ') : labels.scene(params.scene)],
+    ['Giọng đọc', labels.voice(params.voice)],
+    ['Lời review', labels.style(params.script_style)],
+    ['Khung hình', script?.video_resolution ? `${script.video_resolution} (9:16)` : '9:16 dọc'],
+    ['Tạo lúc', formatDateTime(job.completed_at || job.created_at)],
+  ].filter(([, v]) => v) as [string, string][]
+  const scenes = script?.scenes ?? []
+  const publish = (platform: SocialPlatform) => setPublishRequest((r) => ({ platform, n: (r?.n ?? 0) + 1 }))
+
+  const seek = (time: number) => {
+    const v = videoRef.current
+    if (!v) return
+    v.currentTime = time
+    v.play().catch(() => {})
+  }
+
   return (
-    <div className="grid md:grid-cols-[minmax(0,340px)_minmax(0,1fr)] gap-6 md:gap-10 items-start">
-      <div className="w-full max-w-[300px] md:max-w-none mx-auto md:sticky md:top-6">
+    <div className="grid md:grid-cols-[minmax(0,320px)_minmax(0,1fr)] gap-6 md:gap-10 items-start">
+      <div className="w-full max-w-[290px] md:max-w-none mx-auto md:sticky md:top-6">
         <div className="phone-frame">
           <video
+            ref={videoRef}
             src={job.output_video_url}
             controls
             playsInline
@@ -58,6 +133,51 @@ export const VideoResult: React.FC<VideoResultProps> = ({ job, productTitle, act
       </div>
 
       <div className="space-y-5 min-w-0">
+        <section className="card p-5 sm:p-6">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h3 className="title text-xl sm:text-2xl tracking-tight">{productTitle || 'Video review'}</h3>
+              {price ? (
+                <p className="mt-1 flex items-baseline gap-2 flex-wrap">
+                  <span className="text-lg font-semibold text-[var(--accent-text)]">{formatVnd(price)}</span>
+                  {originalPrice && originalPrice > price && (
+                    <span className="text-sm text-[var(--text-muted)] line-through">{formatVnd(originalPrice)}</span>
+                  )}
+                </p>
+              ) : null}
+            </div>
+            <StatusBadge status={job.status} />
+          </div>
+          <dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3 mt-4 pt-4 border-t border-[var(--border-subtle)]">
+            {details.map(([k, v]) => (
+              <div key={k} className="min-w-0">
+                <dt className="text-xs text-[var(--text-muted)]">{k}</dt>
+                <dd className="text-sm font-medium truncate">{v}</dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+
+        <div className="flex gap-2.5 flex-wrap">
+          <a href={job.output_video_url} download={videoFileName(productTitle)} className="btn btn-primary btn-lg">
+            <Download className="w-4 h-4" /> Tải về
+          </a>
+          <button onClick={() => publish('tiktok')} className="btn btn-secondary btn-lg">
+            <TikTokLogo className="w-4 h-4" /> Đăng TikTok
+          </button>
+          <button onClick={() => publish('facebook')} className="btn btn-secondary btn-lg">
+            <FacebookLogo className="w-4 h-4 text-[#1877F2]" /> Đăng Facebook
+          </button>
+          {onRemake && (
+            <button onClick={onRemake} className="btn btn-ghost btn-lg">
+              <RotateCcw className="w-4 h-4" /> Tạo lại với cài đặt này
+            </button>
+          )}
+          {actions}
+        </div>
+
+        {job.status === 'completed' && <FeedToggle job={job} />}
+
         {(script?.warning || script?.tts_warning) && (
           <div className="text-sm px-4 py-3 rounded-2xl border border-[var(--warn-border)] bg-[var(--warn-bg)] text-[var(--warn-text)] space-y-1">
             {script?.warning && <p>{script.warning}</p>}
@@ -65,12 +185,29 @@ export const VideoResult: React.FC<VideoResultProps> = ({ job, productTitle, act
           </div>
         )}
 
-        <div className="flex gap-2.5 flex-wrap">
-          <a href={job.output_video_url} download={videoFileName(productTitle)} className="btn btn-primary btn-lg">
-            <Download className="w-4 h-4" /> Tải video
-          </a>
-          {actions}
-        </div>
+        {scenes.length > 0 && (
+          <section className="card p-5">
+            <h3 className="font-semibold mb-3">Các cảnh trong video</h3>
+            <div className="flex gap-3 overflow-x-auto no-scrollbar -mx-1 px-1 pb-1">
+              {scenes.map((s) => (
+                <button
+                  key={s.time}
+                  onClick={() => seek(s.time)}
+                  className="group shrink-0 w-28 text-left"
+                  aria-label={`Xem cảnh lúc ${clock(s.time)}${s.caption ? `: ${s.caption}` : ''}`}
+                >
+                  <div className="relative rounded-xl overflow-hidden ring-1 ring-[var(--border-subtle)] group-hover:ring-[var(--accent-color)] transition">
+                    <img src={s.image_url} alt="" loading="lazy" className="w-full aspect-[9/16] object-cover bg-black" />
+                    <span className="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 rounded-md bg-black/60 text-white text-[11px] font-semibold tabular-nums">
+                      {clock(s.time)}
+                    </span>
+                  </div>
+                  {s.caption && <p className="text-xs text-[var(--text-sub)] mt-1.5 line-clamp-2 leading-snug">{s.caption}</p>}
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
 
         {script && (
           <>
@@ -86,12 +223,12 @@ export const VideoResult: React.FC<VideoResultProps> = ({ job, productTitle, act
                 <h3 className="font-semibold">Lời review trong video</h3>
                 <CopyButton text={script.full_script} label="lời review" />
               </div>
-              <p className="text-[var(--text-sub)] leading-relaxed">{script.full_script}</p>
+              <p className="whitespace-pre-line text-[var(--text-sub)] leading-relaxed">{script.full_script}</p>
             </section>
           </>
         )}
 
-        <PublishPanel jobId={job.job_id} defaultCaption={caption} />
+        <PublishPanel jobId={job.job_id} defaultCaption={caption} request={publishRequest} />
 
         <p className="text-sm text-[var(--text-muted)] flex gap-2">
           <Info className="w-4 h-4 shrink-0 mt-0.5" />

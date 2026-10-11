@@ -5,7 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#F6F1EB" />
     <meta name="description" content="Từ một tấm ảnh sản phẩm thành video review có người mẫu, lời thoại và phụ đề." />
-    <title>Aura – Video review thời trang bằng AI</title>
+    <meta property="og:title" content="Aura · Video review thời trang bằng AI" />
+    <meta property="og:description" content="Từ một tấm ảnh sản phẩm thành video review có người mẫu, lời thoại và phụ đề." />
+    <meta property="og:type" content="website" />
+    <title>Aura · Video review thời trang bằng AI</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -15,6 +18,7 @@
       // Áp giao diện đã lưu trước khi vẽ trang để không bị nháy màu
       try {
         if (localStorage.getItem('aura_theme') === 'dark') document.documentElement.classList.add('dark')
+        if (localStorage.getItem('aura_palette') === 'violet') document.documentElement.dataset.palette = 'violet'
       } catch (e) {}
     </script>
   </head>

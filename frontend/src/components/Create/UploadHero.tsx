@@ -1,8 +1,8 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
+import { AlertTriangle, ArrowRight, ImagePlus, Info, Layers, Link2, Loader2, Maximize2, Sparkles, Sun, Zap } from 'lucide-react'
 import {
-  AlertTriangle, ArrowRight, ImagePlus, Layers, Link2, Loader2, Maximize2, Sparkles, Sun, Zap
-} from 'lucide-react'
-import { scrapeProduct } from '../../services/api'
+  fetchSampleProducts, prepareSampleProduct, scrapeProduct, type ProductPrefill, type SampleProduct,
+} from '../../services/api'
 import { formatVnd } from '../../lib/format'
 
 const TIPS = [
@@ -11,198 +11,116 @@ const TIPS = [
   { icon: Layers, title: 'Nền đơn giản', text: 'Nền trơn giúp AI tách đồ chính xác' },
 ]
 
-export interface SampleProduct {
-  title: string
-  price: number
-  fabric: string
-  category: string
-  image_url: string
-}
-
-const SAMPLE_PRODUCTS: SampleProduct[] = [
-  {
-    title: 'Đầm Voan Hoa Nhí Vintage',
-    price: 289000,
-    fabric: 'Voan tơ mềm mại',
-    category: 'Đầm / Váy',
-    image_url: 'https://images.unsplash.com/photo-1572804013309-59a88b7e92f1?auto=format&fit=crop&w=600&q=80',
-  },
-  {
-    title: 'Áo Blazer Công Sở Dáng Rộng',
-    price: 350000,
-    fabric: 'Tuyết mưa co giãn nhẹ',
-    category: 'Áo Blazer',
-    image_url: 'https://images.unsplash.com/photo-1539109136881-3be0616acf4b?auto=format&fit=crop&w=600&q=80',
-  },
-  {
-    title: 'Áo Thun Cotton Basic Form Rộng',
-    price: 149000,
-    fabric: 'Cotton 100% thoáng mát',
-    category: 'Áo thun',
-    image_url: 'https://images.unsplash.com/photo-1521572267360-ee0c2909d518?auto=format&fit=crop&w=600&q=80',
-  },
-]
-
 interface UploadHeroProps {
   onPick: () => void
   onFile: (file: File) => void
   uploading: boolean
   error: string | null
-  onProductLoaded?: (data: { title: string; price: number; fabric?: string; category?: string; image_url: string }) => void
+  /** Có thông tin sản phẩm (từ link hoặc ảnh mẫu). image_url null = còn thiếu ảnh, người dùng cần tải lên */
+  onProductLoaded: (data: ProductPrefill, note: string | null) => void
+  /** Đã lấy được tên/giá từ link nhưng chưa có ảnh */
+  pendingPrefill?: ProductPrefill | null
 }
 
-export const UploadHero: React.FC<UploadHeroProps> = ({
-  onPick,
-  onFile,
-  uploading,
-  error,
-  onProductLoaded,
-}) => {
-  const [tab, setTab] = useState<'link' | 'upload'>('link')
-  const [linkInput, setLinkInput] = useState('')
-  const [scraping, setScraping] = useState(false)
-  const [scrapeError, setScrapeError] = useState<string | null>(null)
+/** Bước đầu: tải ảnh (cách chính), hoặc dán link sản phẩm, hoặc thử ngay với ảnh mẫu. */
+export const UploadHero: React.FC<UploadHeroProps> = ({ onPick, onFile, uploading, error, onProductLoaded, pendingPrefill }) => {
   const [dragging, setDragging] = useState(false)
+  const [link, setLink] = useState('')
+  const [scraping, setScraping] = useState(false)
+  const [linkError, setLinkError] = useState<string | null>(null)
+  const [samples, setSamples] = useState<SampleProduct[]>([])
+  const [preparing, setPreparing] = useState<string | null>(null)
+  const [sampleError, setSampleError] = useState<string | null>(null)
+
+  useEffect(() => {
+    fetchSampleProducts()
+      .then((res) => setSamples(res.products))
+      .catch(() => setSamples([]))
+  }, [])
 
   const handleScrape = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!linkInput.trim()) return
+    const url = link.trim()
+    if (!url) return
+    if (!/^https?:\/\//i.test(url)) {
+      setLinkError('Link cần bắt đầu bằng https:// (copy nguyên link từ trình duyệt hoặc nút Chia sẻ)')
+      return
+    }
     setScraping(true)
-    setScrapeError(null)
+    setLinkError(null)
     try {
-      const res = await scrapeProduct(linkInput.trim())
-      if (res.image_url) {
-        onProductLoaded?.({
-          title: res.title || 'Sản phẩm thời trang',
-          price: res.price || 199000,
-          fabric: res.fabric || 'Cotton',
-          category: res.category || 'Thời trang',
-          image_url: res.image_url,
-        })
-      } else {
-        setScrapeError('Không tìm thấy ảnh sản phẩm từ link này. Bạn vui lòng tải ảnh trực tiếp nhé!')
+      const res = await scrapeProduct(url)
+      if (!res.title && !res.image_url) {
+        setLinkError(res.message || 'Không đọc được thông tin từ link này. Bạn tải ảnh sản phẩm lên nhé.')
+        return
       }
+      onProductLoaded(
+        { title: res.title || '', price: res.price, fabric: res.fabric, category: res.category, image_url: res.image_url },
+        res.message,
+      )
     } catch (err: any) {
-      setScrapeError(err.message || 'Không thể đọc link. Vui lòng kiểm tra lại đường dẫn!')
+      setLinkError(err.message || 'Không đọc được link. Vui lòng kiểm tra lại đường dẫn.')
     } finally {
       setScraping(false)
     }
   }
 
-  const handleSampleClick = (sp: SampleProduct) => {
-    onProductLoaded?.({
-      title: sp.title,
-      price: sp.price,
-      fabric: sp.fabric,
-      category: sp.category,
-      image_url: sp.image_url,
-    })
+  const pickSample = async (sp: SampleProduct) => {
+    setPreparing(sp.id)
+    setSampleError(null)
+    try {
+      onProductLoaded(await prepareSampleProduct(sp.id), null)
+    } catch (err: any) {
+      setSampleError(err.message)
+    } finally {
+      setPreparing(null)
+    }
   }
 
   return (
     <div className="space-y-6 animate-fade-up">
-      {/* Tab Switcher: Link vs Upload */}
-      <div className="flex justify-center">
-        <div className="p-1 rounded-full bg-[var(--bg-surface)] border border-[var(--border-subtle)] inline-flex gap-1 shadow-sm">
-          <button
-            type="button"
-            onClick={() => setTab('link')}
-            className={`px-5 py-2 rounded-full text-xs sm:text-sm font-semibold flex items-center gap-2 transition-all ${
-              tab === 'link'
-                ? 'bg-[var(--ink)] text-[var(--on-ink)] shadow-md'
-                : 'text-[var(--text-muted)] hover:text-[var(--text-main)]'
-            }`}
-          >
-            <Link2 className="w-4 h-4 text-[var(--accent-text)]" /> Dán link Shopee / TikTok Shop
-          </button>
-          <button
-            type="button"
-            onClick={() => setTab('upload')}
-            className={`px-5 py-2 rounded-full text-xs sm:text-sm font-semibold flex items-center gap-2 transition-all ${
-              tab === 'upload'
-                ? 'bg-[var(--ink)] text-[var(--on-ink)] shadow-md'
-                : 'text-[var(--text-muted)] hover:text-[var(--text-main)]'
-            }`}
-          >
-            <ImagePlus className="w-4 h-4" /> Tải ảnh từ máy tính
-          </button>
-        </div>
-      </div>
-
-      {/* 1. DÁN LINK SHOPEE / TIKTOK SHOP */}
-      {tab === 'link' && (
-        <div className="card p-6 sm:p-10 space-y-4 text-center max-w-3xl mx-auto shadow-sm">
-          <div className="w-14 h-14 rounded-full bg-[var(--accent-soft)] text-[var(--accent-text)] mx-auto flex items-center justify-center">
-            <Link2 className="w-7 h-7" />
-          </div>
-          <h2 className="display text-2xl sm:text-3xl font-bold">Dán link sản phẩm để tạo video</h2>
-          <p className="text-sm text-[var(--text-muted)] max-w-lg mx-auto">
-            Hỗ trợ link <strong>Shopee, TikTok Shop, Lazada</strong> hoặc bất kỳ website thời trang nào. Hệ thống tự động bóc tách ảnh HD, tên, giá và chất vải!
-          </p>
-
-          <form onSubmit={handleScrape} className="flex flex-col sm:flex-row gap-2.5 max-w-xl mx-auto pt-2">
-            <input
-              type="url"
-              required
-              disabled={scraping}
-              className="field flex-1 text-sm h-12 px-4 rounded-xl font-sans"
-              placeholder="https://shopee.vn/dam-vintage-hoa-nhi-..."
-              value={linkInput}
-              onChange={(e) => setLinkInput(e.target.value)}
-            />
-            <button
-              type="submit"
-              disabled={scraping || !linkInput.trim()}
-              className="btn btn-primary h-12 px-6 text-sm font-semibold flex items-center justify-center gap-2 shrink-0 rounded-xl"
-            >
-              {scraping ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4 fill-current" />}
-              {scraping ? 'Đang bóc tách...' : 'Lấy dữ liệu'}
-            </button>
-          </form>
-
-          {scrapeError && (
-            <div className="flex gap-2 items-center justify-center text-xs p-3 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-bg)] text-[var(--danger-text)] max-w-xl mx-auto">
-              <AlertTriangle className="w-4 h-4 shrink-0" />
-              <span>{scrapeError}</span>
-            </div>
-          )}
+      {pendingPrefill && (
+        <div className="flex gap-2.5 items-start text-sm p-3.5 rounded-2xl border border-[var(--ok-border)] bg-[var(--ok-bg)] text-[var(--ok-text)]">
+          <Info className="w-4 h-4 shrink-0 mt-0.5" />
+          <span>
+            Đã lấy thông tin <strong>{pendingPrefill.title}</strong>
+            {pendingPrefill.price ? ` (${formatVnd(pendingPrefill.price)})` : ''} từ link. Giờ bạn tải ảnh sản phẩm lên là xong.
+          </span>
         </div>
       )}
 
-      {/* 2. TẢI ẢNH TỪ MÁY */}
-      {tab === 'upload' && (
-        <button
-          onClick={onPick}
-          disabled={uploading}
-          onDragOver={(e) => {
-            e.preventDefault()
-            setDragging(true)
-          }}
-          onDragLeave={() => setDragging(false)}
-          onDrop={(e) => {
-            e.preventDefault()
-            setDragging(false)
-            const f = e.dataTransfer.files[0]
-            if (f) onFile(f)
-          }}
-          className={`w-full min-h-[300px] sm:min-h-[340px] rounded-[28px] border-2 border-dashed flex flex-col items-center justify-center gap-4 px-6 py-10 text-center transition-all duration-300 ${
-            dragging
-              ? 'border-[var(--accent-color)] bg-[var(--accent-soft)] scale-[1.01]'
-              : 'border-[var(--border-strong)] bg-[color-mix(in_srgb,var(--bg-card)_70%,transparent)] hover:border-[var(--accent-color)] hover:bg-[var(--bg-card)]'
-          }`}
-        >
-          <span className="w-16 h-16 rounded-full bg-[var(--accent-soft)] text-[var(--accent-text)] flex items-center justify-center">
-            {uploading ? <Loader2 className="w-7 h-7 animate-spin" /> : <ImagePlus className="w-7 h-7" />}
-          </span>
-          <span className="display text-2xl sm:text-3xl">
-            {uploading ? 'Đang tải ảnh lên...' : dragging ? 'Thả ảnh vào đây' : 'Kéo thả ảnh sản phẩm vào đây'}
-          </span>
-          <span className="text-[var(--text-muted)] text-sm">
-            hoặc <span className="font-semibold text-[var(--text-main)] underline underline-offset-4">chọn ảnh từ máy</span>
-            <span> · JPG, PNG, WEBP tối đa 10MB</span>
-          </span>
-        </button>
-      )}
+      {/* 1. TẢI ẢNH TỪ MÁY: cách chính, chắc chắn nhất */}
+      <button
+        onClick={onPick}
+        disabled={uploading}
+        onDragOver={(e) => {
+          e.preventDefault()
+          setDragging(true)
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(e) => {
+          e.preventDefault()
+          setDragging(false)
+          const f = e.dataTransfer.files[0]
+          if (f) onFile(f)
+        }}
+        className={`w-full min-h-[280px] sm:min-h-[340px] rounded-[28px] border-2 border-dashed flex flex-col items-center justify-center gap-4 px-6 py-10 text-center transition-all duration-300 ${
+          dragging
+            ? 'border-[var(--accent-color)] bg-[var(--accent-soft)] scale-[1.01]'
+            : 'border-[var(--border-strong)] bg-[color-mix(in_srgb,var(--bg-card)_70%,transparent)] hover:border-[var(--accent-color)] hover:bg-[var(--bg-card)]'
+        }`}
+      >
+        <span className="w-16 h-16 rounded-full bg-[var(--accent-soft)] text-[var(--accent-text)] flex items-center justify-center">
+          {uploading ? <Loader2 className="w-7 h-7 animate-spin" /> : <ImagePlus className="w-7 h-7" />}
+        </span>
+        <span className="display text-2xl sm:text-3xl">
+          {uploading ? 'Đang tải ảnh lên...' : dragging ? 'Thả ảnh vào đây' : 'Kéo thả ảnh sản phẩm vào đây'}
+        </span>
+        <span className="text-[var(--text-muted)]">
+          hoặc <span className="font-semibold text-[var(--text-main)] underline underline-offset-4">chọn ảnh từ máy</span>
+          <span className="block sm:inline text-sm mt-1 sm:mt-0"> · JPG, PNG, WEBP tối đa 10MB</span>
+        </span>
+      </button>
 
       {error && (
         <div className="flex gap-2 items-start text-sm p-3 rounded-2xl border border-[var(--danger-border)] bg-[var(--danger-bg)] text-[var(--danger-text)]">
@@ -211,46 +129,83 @@ export const UploadHero: React.FC<UploadHeroProps> = ({
         </div>
       )}
 
-      {/* 3. BỘ ẢNH MẪU DÙNG THỬ 1-CLICK */}
-      <div className="pt-2">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-[var(--accent-text)]" />
-            <h3 className="text-sm font-bold uppercase tracking-wider text-[var(--text-main)]">
-              Chưa có ảnh? Thử ngay với ảnh mẫu có sẵn:
-            </h3>
-          </div>
-          <span className="text-xs text-[var(--text-muted)]">Bấm 1 click để thử nghiệm</span>
+      {/* 2. DÁN LINK SẢN PHẨM */}
+      <form onSubmit={handleScrape} className="card p-4 sm:p-5 space-y-3">
+        <label htmlFor="product-link" className="flex items-center gap-2 font-semibold">
+          <Link2 className="w-4 h-4 text-[var(--accent-text)]" /> Hoặc dán link sản phẩm
+          <span className="font-normal text-sm text-[var(--text-muted)]">(Shopee, TikTok Shop, website thời trang...)</span>
+        </label>
+        <div className="flex flex-col sm:flex-row gap-2.5">
+          <input
+            id="product-link"
+            type="url"
+            inputMode="url"
+            disabled={scraping}
+            className="field flex-1"
+            placeholder="https://shopee.vn/..."
+            value={link}
+            onChange={(e) => {
+              setLink(e.target.value)
+              setLinkError(null)
+            }}
+          />
+          <button type="submit" disabled={scraping || !link.trim()} className="btn btn-secondary shrink-0">
+            {scraping ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+            {scraping ? 'Đang đọc link...' : 'Lấy thông tin sản phẩm'}
+          </button>
         </div>
+        {linkError ? (
+          <p className="flex gap-2 items-start text-sm text-[var(--danger-text)]">
+            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" /> {linkError}
+          </p>
+        ) : (
+          <p className="text-xs text-[var(--text-muted)]">
+            Tự điền tên, giá, chất liệu và lấy ảnh nếu trang cho phép. Shopee/TikTok Shop thường chặn đọc tự động: khi đó bạn chỉ cần tải ảnh lên.
+          </p>
+        )}
+      </form>
 
-        <div className="grid sm:grid-cols-3 gap-3.5">
-          {SAMPLE_PRODUCTS.map((sp) => (
-            <button
-              key={sp.title}
-              type="button"
-              onClick={() => handleSampleClick(sp)}
-              className="card p-3 flex items-center gap-3.5 text-left group hover:border-[var(--accent-color)] hover:scale-[1.01] transition-all"
-            >
-              <div className="w-16 h-16 rounded-xl overflow-hidden bg-[var(--bg-surface)] shrink-0">
-                <img
-                  src={sp.image_url}
-                  alt={sp.title}
-                  className="w-full h-full object-cover group-hover:scale-105 transition-transform"
-                />
-              </div>
-              <div className="min-w-0 flex-1">
-                <span className="text-[11px] font-semibold text-[var(--accent-text)] uppercase">{sp.category}</span>
-                <div className="text-sm font-bold truncate text-[var(--text-main)]">{sp.title}</div>
-                <div className="text-xs font-semibold text-[var(--ok-text)] mt-0.5">{formatVnd(sp.price)}</div>
-              </div>
-              <ArrowRight className="w-4 h-4 text-[var(--text-muted)] group-hover:text-[var(--accent-text)] shrink-0 mr-1" />
-            </button>
-          ))}
-        </div>
-      </div>
+      {/* 3. ẢNH MẪU DÙNG THỬ */}
+      {samples.length > 0 && (
+        <section>
+          <h3 className="flex items-center gap-2 text-sm font-semibold mb-3">
+            <Sparkles className="w-4 h-4 text-[var(--accent-text)]" /> Chưa có ảnh? Thử ngay với sản phẩm mẫu
+          </h3>
+          <div className="grid sm:grid-cols-3 gap-3">
+            {samples.map((sp) => (
+              <button
+                key={sp.id}
+                type="button"
+                onClick={() => pickSample(sp)}
+                disabled={preparing !== null}
+                className="card p-3 flex items-center gap-3 text-left group hover:border-[var(--border-strong)] transition-colors"
+              >
+                <span className="w-14 h-[4.5rem] rounded-xl overflow-hidden bg-[var(--bg-surface)] shrink-0">
+                  <img src={sp.thumbnail_url} alt="" loading="lazy" className="w-full h-full object-cover" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-xs text-[var(--text-muted)]">{sp.category}</span>
+                  <span className="block text-sm font-semibold line-clamp-2">{sp.title}</span>
+                  <span className="block text-sm text-[var(--text-sub)] mt-0.5">{formatVnd(sp.price)}</span>
+                </span>
+                {preparing === sp.id ? (
+                  <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                ) : (
+                  <ArrowRight className="w-4 h-4 text-[var(--text-muted)] group-hover:text-[var(--text-main)] shrink-0" />
+                )}
+              </button>
+            ))}
+          </div>
+          {sampleError && (
+            <p className="flex gap-2 items-start text-sm text-[var(--danger-text)] mt-3">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" /> {sampleError}
+            </p>
+          )}
+        </section>
+      )}
 
       {/* MẸO CHỤP ẢNH */}
-      <div className="grid sm:grid-cols-3 gap-3 pt-2">
+      <div className="grid sm:grid-cols-3 gap-3">
         {TIPS.map(({ icon: Icon, title, text }) => (
           <div key={title} className="flex items-start gap-3 p-4 rounded-2xl bg-[color-mix(in_srgb,var(--bg-card)_60%,transparent)]">
             <Icon className="w-5 h-5 text-[var(--accent-text)] shrink-0 mt-0.5" />

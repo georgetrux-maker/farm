@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { Loader2, Send } from 'lucide-react'
 import {
   fetchCreatorInfo, fetchPublications, fetchSocialStatus, publishVideo, startSocialConnect,
@@ -15,12 +15,18 @@ const PRIVACY_LABELS: Record<string, string> = {
   SELF_ONLY: 'Chỉ mình tôi',
 }
 
+export type SocialPlatform = 'tiktok' | 'facebook'
+
 interface PublishPanelProps {
   jobId: string
   defaultCaption: string
+  /** Bấm "Đăng TikTok/Facebook" ở trên: cuộn tới đây và chọn sẵn tài khoản của nền tảng đó (n đổi mỗi lần bấm) */
+  request?: { platform: SocialPlatform; n: number } | null
 }
 
-export const PublishPanel: React.FC<PublishPanelProps> = ({ jobId, defaultCaption }) => {
+const PLATFORM_NAME: Record<SocialPlatform, string> = { tiktok: 'TikTok', facebook: 'Facebook' }
+
+export const PublishPanel: React.FC<PublishPanelProps> = ({ jobId, defaultCaption, request }) => {
   const toast = useToast()
   const [status, setStatus] = useState<SocialStatus | null>(null)
   const [accountId, setAccountId] = useState('')
@@ -33,6 +39,23 @@ export const PublishPanel: React.FC<PublishPanelProps> = ({ jobId, defaultCaptio
   const [pubs, setPubs] = useState<Publication[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [handled, setHandled] = useState(0)
+  const [missing, setMissing] = useState<SocialPlatform | null>(null)
+  const sectionRef = useRef<HTMLElement>(null)
+
+  // Chọn sẵn tài khoản của nền tảng vừa bấm (khi đã tải xong danh sách tài khoản)
+  if (request && status && request.n !== handled) {
+    setHandled(request.n)
+    const match = status.accounts.find((a) => a.platform === request.platform)
+    setMissing(match ? null : request.platform)
+    if (match && match.id !== accountId) {
+      setAccountId(match.id)
+      setCreator(null)
+    }
+  }
+  useEffect(() => {
+    if (request?.n) sectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }, [request?.n])
 
   useEffect(() => {
     fetchSocialStatus().then(setStatus).catch((e) => setError(e.message))
@@ -94,11 +117,28 @@ export const PublishPanel: React.FC<PublishPanelProps> = ({ jobId, defaultCaptio
   const canPublish = account && caption.trim() && (account.platform !== 'tiktok' || (creator && privacy)) && !busy
 
   return (
-    <section className="card p-5 space-y-4">
+    <section ref={sectionRef} className="card p-5 space-y-4 scroll-mt-6">
       <h3 className="font-semibold">Đăng lên mạng xã hội</h3>
+
+      {missing && status.accounts.length > 0 && (
+        <div className="flex items-center justify-between gap-3 flex-wrap text-sm px-4 py-3 rounded-2xl bg-[var(--bg-surface)]">
+          <span>Bạn chưa kết nối tài khoản {PLATFORM_NAME[missing]}.</span>
+          {status.platforms[missing] ? (
+            <button onClick={() => startSocialConnect(missing).catch((e) => setError(e.message))} className="btn btn-secondary btn-sm">
+              {missing === 'tiktok' ? <TikTokLogo className="w-4 h-4" /> : <FacebookLogo className="w-4 h-4 text-[#1877F2]" />}
+              Kết nối {PLATFORM_NAME[missing]}
+            </button>
+          ) : (
+            <span className="text-[var(--text-muted)]">Hệ thống chưa bật đăng {PLATFORM_NAME[missing]}, bạn tải video về để đăng tay.</span>
+          )}
+        </div>
+      )}
 
       {status.accounts.length === 0 ? (
         <div className="space-y-2">
+          {missing && !status.platforms[missing] && (status.platforms.tiktok || status.platforms.facebook) && (
+            <p className="text-sm text-[var(--text-muted)]">Hệ thống chưa bật đăng {PLATFORM_NAME[missing]}.</p>
+          )}
           <p className="text-sm text-[var(--text-muted)]">Chưa kết nối tài khoản nào.</p>
           <div className="flex gap-2 flex-wrap">
             {(['tiktok', 'facebook'] as const).map((p) =>
@@ -129,6 +169,7 @@ export const PublishPanel: React.FC<PublishPanelProps> = ({ jobId, defaultCaptio
                 onClick={() => {
                   setAccountId(a.id)
                   setCreator(null)
+                  setMissing(null)
                 }}
                 aria-pressed={accountId === a.id}
                 className="chip"

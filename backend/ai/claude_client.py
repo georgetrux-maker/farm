@@ -77,8 +77,9 @@ STYLE_LABELS = {"genz": "genz", "office": "office", "honest": "honest"}
 
 
 def _client() -> anthropic.Anthropic:
-    # Tách thành hàm để test thay bằng client giả
-    return anthropic.Anthropic(max_retries=2, timeout=120.0)
+    # Tách thành hàm để test thay bằng client giả.
+    # Key nhập trong trang Admin nằm trong DB nên phải truyền vào; None thì SDK tự đọc biến môi trường.
+    return anthropic.Anthropic(api_key=config.anthropic_api_key() or None, max_retries=2, timeout=120.0)
 
 
 def _image_block(path: str) -> dict:

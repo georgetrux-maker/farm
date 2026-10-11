@@ -1,6 +1,7 @@
 import hashlib
 import json
 import sqlite3
+import unicodedata
 import uuid
 
 from backend import config
@@ -16,10 +17,20 @@ ALLOWED_SETTING_KEYS = {
 }
 
 
+def search_key(text) -> str:
+    """Chuỗi để tìm kiếm không phân biệt hoa thường và dấu: "Áo Sơ Mi Đỏ" -> "ao so mi do"."""
+    if not text:
+        return ""
+    text = str(text).replace("đ", "d").replace("Đ", "D")
+    text = "".join(c for c in unicodedata.normalize("NFD", text) if unicodedata.category(c) != "Mn")
+    return " ".join(text.lower().split())
+
+
 def get_db():
     conn = sqlite3.connect(config.db_path(), timeout=15)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.create_function("search_key", 1, search_key, deterministic=True)
     return conn
 
 
@@ -94,6 +105,7 @@ def init_db():
         cost_credits INTEGER DEFAULT 0,
         refunded INTEGER DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         completed_at TIMESTAMP
     )
     ''')
@@ -238,8 +250,93 @@ def init_db():
     _add_column_if_missing(cursor, "ai_jobs", "script_json", "TEXT")
     _add_column_if_missing(cursor, "ai_jobs", "cost_credits", "INTEGER DEFAULT 0")
     _add_column_if_missing(cursor, "ai_jobs", "refunded", "INTEGER DEFAULT 0")
+    _add_column_if_missing(cursor, "ai_jobs", "updated_at", "TIMESTAMP")  # SQLite không cho DEFAULT động khi ALTER
     _add_column_if_missing(cursor, "wallet_transactions", "amount_vnd", "INTEGER")
+    _add_column_if_missing(cursor, "users", "disabled", "INTEGER DEFAULT 0")  # 1 = quản trị viên đã khóa
+    _add_column_if_missing(cursor, "brand_avatars", "gender", "TEXT DEFAULT 'female'")
+    _add_column_if_missing(cursor, "brand_avatars", "region", "TEXT")  # asia | europe | other (bộ lọc Châu Á / Châu Âu)
+    # Sản phẩm của tôi: link mua, size, cho khách thử đồ (shop trả phí), ẩn thay vì xóa (video cũ vẫn trỏ tới)
+    _add_column_if_missing(cursor, "products", "product_url", "TEXT")
+    _add_column_if_missing(cursor, "products", "sizes", "TEXT")
+    _add_column_if_missing(cursor, "products", "tryon_enabled", "INTEGER DEFAULT 0")
+    _add_column_if_missing(cursor, "products", "archived", "INTEGER DEFAULT 0")
+    # Người mẫu riêng của shop: owner_id NULL = dùng chung; consent_at = lúc shop cam kết có quyền dùng ảnh
+    _add_column_if_missing(cursor, "brand_avatars", "owner_id", "TEXT")
+    _add_column_if_missing(cursor, "brand_avatars", "consent_at", "TIMESTAMP")
+    _add_column_if_missing(cursor, "brand_avatars", "archived", "INTEGER DEFAULT 0")
+    # Nhật ký thao tác quản trị và xác nhận thanh toán (ai, làm gì, lúc nào)
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS audit_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        actor_id TEXT,
+        actor_name TEXT,
+        action TEXT NOT NULL,
+        target TEXT,
+        detail TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    ''')
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at)")
+    # Ai xác nhận tiền về và lúc nào: "sepay", "admin:<id>", "cli"
+    _add_column_if_missing(cursor, "wallet_transactions", "confirmed_at", "TIMESTAMP")
+    _add_column_if_missing(cursor, "wallet_transactions", "confirmed_by", "TEXT")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_user ON ai_jobs(user_id, created_at)")
+    # Gói tháng: mỗi lần thanh toán là một dòng (gia hạn, đổi gói nối tiếp sau kỳ đang dùng).
+    # Giữ bản chụp giá/credit lúc mua để quản trị viên sửa gói không ảnh hưởng gói đã bán.
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS subscriptions (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        plan_id TEXT NOT NULL,
+        plan_name TEXT NOT NULL,
+        cycle TEXT NOT NULL,                 -- 'monthly' | 'yearly'
+        months INTEGER NOT NULL,
+        price_vnd INTEGER NOT NULL,
+        credits_per_month INTEGER NOT NULL,
+        private_models INTEGER NOT NULL,
+        transaction_id TEXT UNIQUE,
+        status TEXT NOT NULL DEFAULT 'pending', -- 'pending' | 'active' | 'expired' | 'cancelled'
+        starts_at TIMESTAMP,
+        expires_at TIMESTAMP,
+        grants_done INTEGER NOT NULL DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        activated_at TIMESTAMP
+    )
+    ''')
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_subscriptions_user ON subscriptions(user_id, status)")
+    # Feed của Aura: shop chọn video nào hiện công khai; người xem thích/lưu; đếm lượt xem
+    _add_column_if_missing(cursor, "ai_jobs", "feed_visible", "INTEGER DEFAULT 0")
+    _add_column_if_missing(cursor, "ai_jobs", "feed_at", "TIMESTAMP")
+    _add_column_if_missing(cursor, "ai_jobs", "views", "INTEGER DEFAULT 0")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_feed ON ai_jobs(feed_visible, feed_at)")
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS feed_reactions (
+        job_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        kind TEXT NOT NULL,                  -- 'like' | 'save'
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (job_id, user_id, kind)
+    )
+    ''')
+    # Người mua thử đồ lên ảnh của mình: shop trả credit, ảnh tự xóa sau một thời gian
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS buyer_tryons (
+        id TEXT PRIMARY KEY,
+        buyer_id TEXT NOT NULL,
+        product_id TEXT NOT NULL,
+        shop_id TEXT NOT NULL,
+        job_id TEXT,
+        size TEXT,
+        photo_url TEXT,
+        result_url TEXT,
+        engine TEXT,
+        cost_credits INTEGER NOT NULL DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        expires_at TIMESTAMP NOT NULL,
+        deleted_at TIMESTAMP
+    )
+    ''')
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_buyer_tryons_buyer ON buyer_tryons(buyer_id, created_at)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_tx_user ON wallet_transactions(user_id, created_at)")
     cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_token ON users(api_token_hash)")
     # API key không còn lưu trong DB (bản cũ seed sẵn key giả và cho sửa qua giao diện)
@@ -275,6 +372,7 @@ def init_db():
         INSERT OR IGNORE INTO brand_avatars (id, name, style, height, weight, measurements, avatar_url, badge, renders_count, is_default)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', row)
+    cursor.execute("UPDATE brand_avatars SET region = 'asia' WHERE id = 'model_01' AND region IS NULL")
 
     cursor.execute("SELECT COUNT(*) FROM users WHERE id = ?", (DEMO_USER_ID,))
     if cursor.fetchone()[0] == 0:
@@ -300,6 +398,8 @@ def init_db():
 
     conn.commit()
     conn.close()
+    from backend import admin_config
+    admin_config.invalidate()  # DB có thể vừa được tạo lại (test, khôi phục bản sao lưu)
 
 
 def create_user(name: str, email: str, role: str = "shop", credits: int = 0) -> dict:
@@ -318,14 +418,16 @@ def create_user(name: str, email: str, role: str = "shop", credits: int = 0) -> 
     return {"id": user_id, "name": name, "email": email, "role": role, "api_token": token}
 
 
-def register_user(name: str, email: str, password_hash: str, credits: int = 0):
-    """Tạo tài khoản shop bằng email. Trả None nếu email đã tồn tại."""
+def register_user(name: str, email: str, password_hash: str, credits: int = 0, role: str = "shop"):
+    """Tạo tài khoản shop hoặc người mua bằng email. Trả None nếu email đã tồn tại."""
+    if role not in ("shop", "buyer"):
+        raise ValueError("role phải là shop hoặc buyer")
     user_id = f"user_{uuid.uuid4().hex[:10]}"
     conn = get_db()
     try:
         conn.execute(
-            "INSERT INTO users (id, name, email, role, credits, password_hash) VALUES (?, ?, ?, 'shop', ?, ?)",
-            (user_id, name, email, credits, password_hash),
+            "INSERT INTO users (id, name, email, role, credits, password_hash) VALUES (?, ?, ?, ?, ?, ?)",
+            (user_id, name, email, role, credits, password_hash),
         )
         conn.commit()
     except sqlite3.IntegrityError:
@@ -406,60 +508,54 @@ def save_system_settings(settings_dict: dict):
     return get_system_settings()
 
 
-def get_admin_api_config(key: str):
+def save_admin_api_configs(changes: dict):
+    """Lưu nhiều cấu hình trong một giao dịch: chuỗi rỗng/None = xóa (quay về giá trị trong .env).
+
+    Mã hóa trước khi mở giao dịch để thiếu APP_SECRET_KEY thì không ghi gì cả.
+    """
+    from backend import admin_config, crypto_utils
+
+    rows = {key: crypto_utils.encrypt(str(value).strip()) if value not in (None, "") else None
+            for key, value in changes.items()}
     conn = get_db()
-    row = conn.execute("SELECT value_enc FROM admin_api_configs WHERE key = ?", (key,)).fetchone()
-    conn.close()
-    if not row or not row["value_enc"]:
-        return None
-    from backend import crypto_utils
     try:
-        return crypto_utils.decrypt(row["value_enc"])
-    except Exception:
-        return None
+        for key, enc in rows.items():
+            if enc is None:
+                conn.execute("DELETE FROM admin_api_configs WHERE key = ?", (key,))
+            else:
+                conn.execute("INSERT OR REPLACE INTO admin_api_configs (key, value_enc, updated_at) "
+                             "VALUES (?, ?, CURRENT_TIMESTAMP)", (key, enc))
+        conn.commit()
+    finally:
+        conn.close()
+    admin_config.invalidate()
 
 
-def get_all_admin_api_configs() -> dict:
+def get_brand_avatars_list(owner_id: str = None, shared_only: bool = False):
+    """Người mẫu dùng chung + (nếu có owner_id) người mẫu riêng của shop đó. Bỏ qua mẫu đã xóa."""
     conn = get_db()
-    rows = conn.execute("SELECT key, value_enc FROM admin_api_configs").fetchall()
-    conn.close()
-    from backend import crypto_utils
-    out = {}
-    for r in rows:
-        try:
-            val = crypto_utils.decrypt(r["value_enc"])
-            if val:
-                out[r["key"]] = val
-        except Exception:
-            pass
-    return out
-
-
-def save_admin_api_config(key: str, value: str):
-    from backend import crypto_utils
-    val = (value or "").strip()
-    conn = get_db()
-    if not val:
-        conn.execute("DELETE FROM admin_api_configs WHERE key = ?", (key,))
+    if shared_only or not owner_id:
+        rows = conn.execute("SELECT * FROM brand_avatars WHERE owner_id IS NULL AND COALESCE(archived, 0) = 0 "
+                            "ORDER BY is_default DESC, created_at ASC").fetchall()
     else:
-        enc = crypto_utils.encrypt(val)
-        conn.execute("INSERT OR REPLACE INTO admin_api_configs (key, value_enc, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)", (key, enc))
-    conn.commit()
-    conn.close()
-
-
-def save_admin_api_configs_batch(configs: dict):
-    for k, v in configs.items():
-        if isinstance(v, str):
-            save_admin_api_config(k, v)
-
-
-
-def get_brand_avatars_list():
-    conn = get_db()
-    rows = conn.execute("SELECT * FROM brand_avatars ORDER BY is_default DESC, created_at ASC").fetchall()
+        rows = conn.execute("SELECT * FROM brand_avatars WHERE (owner_id IS NULL OR owner_id = ?) "
+                            "AND COALESCE(archived, 0) = 0 ORDER BY is_default DESC, owner_id IS NOT NULL, "
+                            "created_at ASC", (owner_id,)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+def count_private_avatars(owner_id: str) -> int:
+    conn = get_db()
+    n = conn.execute("SELECT COUNT(*) FROM brand_avatars WHERE owner_id = ? AND COALESCE(archived, 0) = 0",
+                     (owner_id,)).fetchone()[0]
+    conn.close()
+    return n
+
+
+def avatar_usable_by(avatar: dict, user_id: str) -> bool:
+    """Mẫu dùng chung hoặc mẫu riêng của chính shop, chưa bị xóa."""
+    return bool(avatar) and not avatar.get("archived") and avatar.get("owner_id") in (None, user_id)
 
 
 def get_brand_avatar(avatar_id: str):
@@ -469,16 +565,43 @@ def get_brand_avatar(avatar_id: str):
     return dict(row) if row else None
 
 
-def add_brand_avatar_entry(name: str, style: str, height: str, weight: str, measurements: str, avatar_url: str, badge: str = "Tùy Chỉnh"):
+def add_brand_avatar_entry(name: str, style: str, height: str, weight: str, measurements: str, avatar_url: str,
+                           badge: str = "Tùy Chỉnh", gender: str = "female", owner_id: str = None, region: str = None):
     avatar_id = f"model_{uuid.uuid4().hex[:6]}"
     conn = get_db()
     conn.execute('''
-    INSERT INTO brand_avatars (id, name, style, height, weight, measurements, avatar_url, badge, renders_count, is_default)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0)
-    ''', (avatar_id, name, style, height, weight, measurements, avatar_url, badge))
+    INSERT INTO brand_avatars (id, name, style, height, weight, measurements, avatar_url, badge, renders_count,
+                               is_default, gender, owner_id, consent_at, region)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, CASE WHEN ? IS NULL THEN NULL ELSE CURRENT_TIMESTAMP END, ?)
+    ''', (avatar_id, name, style, height, weight, measurements, avatar_url, badge, gender, owner_id, owner_id, region))
     conn.commit()
     conn.close()
-    return {"id": avatar_id, "name": name, "style": style, "height": height, "weight": weight, "measurements": measurements, "avatar_url": avatar_url, "badge": badge, "renders_count": 0, "is_default": 0}
+    return get_brand_avatar(avatar_id)
+
+
+def archive_brand_avatar(avatar_id: str):
+    conn = get_db()
+    conn.execute("UPDATE brand_avatars SET archived = 1, is_default = 0 WHERE id = ?", (avatar_id,))
+    conn.commit()
+    conn.close()
+
+
+_AVATAR_FIELDS = ("name", "style", "height", "weight", "measurements", "avatar_url", "badge", "gender", "region")
+
+
+def update_brand_avatar(avatar_id: str, **fields):
+    """Sửa thông tin/ảnh người mẫu. Trả về bản ghi mới, hoặc None nếu không tồn tại."""
+    fields = {k: v for k, v in fields.items() if k in _AVATAR_FIELDS}
+    conn = get_db()
+    try:
+        if fields:
+            sets = ", ".join(f"{k} = ?" for k in fields)
+            conn.execute(f"UPDATE brand_avatars SET {sets} WHERE id = ?", (*fields.values(), avatar_id))
+            conn.commit()
+        row = conn.execute("SELECT * FROM brand_avatars WHERE id = ?", (avatar_id,)).fetchone()
+    finally:
+        conn.close()
+    return dict(row) if row else None
 
 
 def set_default_brand_avatar(avatar_id: str):
@@ -487,7 +610,7 @@ def set_default_brand_avatar(avatar_id: str):
     if cursor.execute("SELECT 1 FROM brand_avatars WHERE id = ?", (avatar_id,)).fetchone() is None:
         conn.close()
         return None
-    cursor.execute("UPDATE brand_avatars SET is_default = (id = ?)", (avatar_id,))
+    cursor.execute("UPDATE brand_avatars SET is_default = (id = ?) WHERE owner_id IS NULL", (avatar_id,))
     cursor.execute("INSERT OR REPLACE INTO system_settings (key, value) VALUES ('default_model_id', ?)", (avatar_id,))
     conn.commit()
     conn.close()
@@ -504,15 +627,17 @@ def get_product(product_id: str):
 def create_product(owner_id: str, title: str, price: int, image_url: str, category: str = None,
                    fabric_type: str = None, original_price: int = None,
                    affiliate_shopee_url: str = None, affiliate_tiktok_url: str = None,
-                   analysis: dict = None) -> dict:
+                   analysis: dict = None, product_url: str = None, sizes: str = None,
+                   tryon_enabled: bool = False) -> dict:
     product_id = f"prod_{uuid.uuid4().hex[:10]}"
     conn = get_db()
     conn.execute('''
     INSERT INTO products (id, owner_id, title, price, original_price, category, fabric_type, image_url,
-                          affiliate_shopee_url, affiliate_tiktok_url, analysis_json)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                          affiliate_shopee_url, affiliate_tiktok_url, analysis_json, product_url, sizes, tryon_enabled)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (product_id, owner_id, title, price, original_price, category, fabric_type, image_url,
-          affiliate_shopee_url, affiliate_tiktok_url, json.dumps(analysis, ensure_ascii=False) if analysis else None))
+          affiliate_shopee_url, affiliate_tiktok_url, json.dumps(analysis, ensure_ascii=False) if analysis else None,
+          product_url, sizes, 1 if tryon_enabled else 0))
     conn.commit()
     conn.close()
     return get_product(product_id)
@@ -526,9 +651,35 @@ def save_product_analysis(product_id: str, analysis: dict):
     conn.close()
 
 
+_PRODUCT_FIELDS = ("title", "price", "original_price", "category", "fabric_type", "image_url", "product_url",
+                   "sizes", "tryon_enabled")
+
+
+def update_product(product_id: str, **fields) -> dict:
+    fields = {k: v for k, v in fields.items() if k in _PRODUCT_FIELDS}
+    conn = get_db()
+    try:
+        if fields:
+            sets = ", ".join(f"{k} = ?" for k in fields)
+            conn.execute(f"UPDATE products SET {sets} WHERE id = ?", (*fields.values(), product_id))
+            conn.commit()
+    finally:
+        conn.close()
+    return get_product(product_id)
+
+
+def archive_product(product_id: str):
+    """Ẩn khỏi Sản phẩm của tôi; video đã tạo từ sản phẩm này vẫn giữ nguyên."""
+    conn = get_db()
+    conn.execute("UPDATE products SET archived = 1, tryon_enabled = 0 WHERE id = ?", (product_id,))
+    conn.commit()
+    conn.close()
+
+
 def list_products(owner_id: str):
     conn = get_db()
-    rows = conn.execute("SELECT * FROM products WHERE owner_id = ? ORDER BY created_at DESC", (owner_id,)).fetchall()
+    rows = conn.execute("SELECT * FROM products WHERE owner_id = ? AND COALESCE(archived, 0) = 0 "
+                        "ORDER BY created_at DESC", (owner_id,)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
@@ -599,9 +750,40 @@ def get_dashboard_summary(user_id: str):
             'height': f"{max(8, int(count / max_count * 90))}%",
         })
 
+    conn = get_db()
+    products_count = conn.execute("SELECT COUNT(*) FROM products WHERE owner_id = ? AND COALESCE(archived, 0) = 0",
+                                  (user_id,)).fetchone()[0]
+    feed_row = conn.execute("SELECT COALESCE(SUM(views), 0), COALESCE(SUM(CASE WHEN feed_visible = 1 THEN 1 END), 0) "
+                            "FROM ai_jobs WHERE user_id = ?", (user_id,)).fetchone()
+    tryons_count = conn.execute("SELECT COUNT(*) FROM buyer_tryons WHERE shop_id = ?", (user_id,)).fetchone()[0]
+    models_count = conn.execute("SELECT COUNT(*) FROM brand_avatars WHERE (owner_id IS NULL OR owner_id = ?) "
+                                "AND COALESCE(archived, 0) = 0", (user_id,)).fetchone()[0]
+    private_models = conn.execute("SELECT COUNT(*) FROM brand_avatars WHERE owner_id = ? AND COALESCE(archived, 0) = 0",
+                                  (user_id,)).fetchone()[0]
+
+    def week_pair(sql: str) -> dict:
+        """7 ngày gần nhất so với 7 ngày trước đó"""
+        now = conn.execute(f"{sql} AND created_at >= datetime('now', '-7 days')", (user_id,)).fetchone()[0]
+        before = conn.execute(f"{sql} AND created_at >= datetime('now', '-14 days') AND created_at < datetime('now', '-7 days')",
+                              (user_id,)).fetchone()[0]
+        return {"week": now, "prev_week": before}
+
+    trends = {
+        "videos": week_pair("SELECT COUNT(*) FROM ai_jobs WHERE user_id = ? AND status = 'completed'"),
+        "products": week_pair("SELECT COUNT(*) FROM products WHERE owner_id = ? AND COALESCE(archived, 0) = 0"),
+    }
+    conn.close()
+
     return {
         "total_renders": total_renders,
         "completed_renders": completed_renders,
+        "products_count": products_count,
+        "models_count": models_count,
+        "private_models_count": private_models,
+        "trends": trends,
+        "feed_views": feed_row[0],
+        "feed_videos": feed_row[1],
+        "buyer_tryons": tryons_count,
         "published_videos": published_videos,
         "cache_hits": cache_hits,
         "cache_saved_usd": cache_saved_usd,

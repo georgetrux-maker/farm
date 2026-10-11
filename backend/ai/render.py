@@ -1,9 +1,12 @@
+import logging
 import math
 import os
 from typing import Optional
 
-from backend.ffmpeg_utils import ffmpeg_has_filter, probe_duration, run_ffmpeg
+from backend.ffmpeg_utils import FFmpegError, ffmpeg_has_filter, probe_duration, run_ffmpeg
 from backend.media_paths import media_path, media_url
+
+log = logging.getLogger(__name__)
 
 # Khung chuẩn cho TikTok / Reels / Shorts
 WIDTH, HEIGHT = 720, 1280
@@ -140,7 +143,9 @@ def _video_graph(n_inputs: int, clip_sec: float, total_sec: float, subtitle_file
         prev = f"x{i}"
     covered = clip_sec + (n_inputs - 1) * (clip_sec - fade)
     tail = [f"tpad=stop_mode=clone:stop_duration={max(0.0, total_sec - covered) + 0.5:.3f}"]
-    if subtitle_file and ffmpeg_has_filter("ass"):
+    if subtitle_file and not ffmpeg_has_filter("ass"):
+        log.warning("FFmpeg thiếu libass: video sẽ không có phụ đề in sẵn")
+    elif subtitle_file:
         fonts_dir = _fonts_dir_for_filter()
         tail.append(f"ass={subtitle_file}" + (f":fontsdir={fonts_dir}" if fonts_dir else ""))
     tail.append(f"trim=duration={total_sec:.3f},setpts=PTS-STARTPTS")
@@ -148,13 +153,61 @@ def _video_graph(n_inputs: int, clip_sec: float, total_sec: float, subtitle_file
     return ";".join(parts)
 
 
+# Hiệu ứng chuyển cảnh của Pro Studio -> tên hiệu ứng xfade của FFmpeg (None = cắt thẳng)
+TRANSITIONS = {"fade": "fade", "slide": "slideleft", "zoom": "zoomin", "cut": None}
+TRANSITION_SEC = 0.5
+
+
+def concat_scenes(clip_paths: list, transition: str = "fade", output_name: str = "scenes.mp4") -> dict:
+    """Pro Studio: nối các cảnh (mỗi cảnh một đoạn chuyển động) thành một video 720x1280 không tiếng.
+
+    Hai cảnh liền nhau chồng lên nhau `TRANSITION_SEC` giây theo hiệu ứng đã chọn; "cut" thì nối thẳng.
+    """
+    if not clip_paths:
+        raise ValueError("Chưa có cảnh nào để ghép")
+    if transition not in TRANSITIONS:
+        raise ValueError(f"Hiệu ứng chuyển cảnh không hợp lệ: {transition}")
+    output_path = media_path(output_name)
+    durations = [probe_duration(p) for p in clip_paths]
+    if any(d <= 0 for d in durations):
+        raise ValueError("Không đọc được độ dài một cảnh")
+    norm = (f"scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=decrease,"
+            f"pad={WIDTH}:{HEIGHT}:(ow-iw)/2:(oh-ih)/2:color=0x16120F,setsar=1,fps={FPS},format=yuv420p,settb=AVTB")
+    parts = [f"[{i}:v]{norm}[c{i}]" for i in range(len(clip_paths))]
+    effect = TRANSITIONS[transition]
+    if len(clip_paths) == 1:
+        parts.append("[c0]null[v]")
+        total = durations[0]
+    elif effect is None:
+        parts.append("".join(f"[c{i}]" for i in range(len(clip_paths))) + f"concat=n={len(clip_paths)}:v=1:a=0[v]")
+        total = sum(durations)
+    else:
+        # Chồng hình không quá 1/3 cảnh ngắn nhất để cảnh nào cũng còn đủ thời gian hiện rõ
+        fade = min(TRANSITION_SEC, min(durations) / 3)
+        prev, offset = "c0", 0.0
+        for i in range(1, len(clip_paths)):
+            offset += durations[i - 1] - fade
+            out = "v" if i == len(clip_paths) - 1 else f"x{i}"
+            parts.append(f"[{prev}][c{i}]xfade=transition={effect}:duration={fade:.3f}:offset={offset:.3f}[{out}]")
+            prev = out
+        total = sum(durations) - fade * (len(clip_paths) - 1)
+    args = []
+    for p in clip_paths:
+        args += ["-i", p]
+    run_ffmpeg([*args, "-filter_complex", ";".join(parts), "-map", "[v]", "-an",
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-r", str(FPS), output_path])
+    return {"video_path": output_path, "duration_sec": round(total, 2), "scenes": len(clip_paths),
+            "transition": transition}
+
+
 def render_final_video(video_path: str, audio_path: str, output_name: str = "final_fashion_review.mp4",
                        subtitle_phrases: Optional[list] = None, title: Optional[str] = None,
-                       price_text: Optional[str] = None) -> dict:
+                       price_text: Optional[str] = None, min_total_sec: float = 0) -> dict:
     """
     Task 6: Ghép video chuyển động + lồng tiếng + phụ đề thành MP4 720x1280 (H.264/AAC) cho TikTok/Reels.
-    Độ dài video = độ dài lời thoại. Nếu đoạn chuyển động ngắn hơn, nó được nối tiếp bằng hiệu ứng mờ chéo
-    thay vì lặp giật. `title`/`price_text` hiện thành thẻ tên + giá trong vài giây đầu.
+    Độ dài video = độ dài lời thoại (hoặc `min_total_sec` nếu dài hơn, vd. tổng các cảnh của Pro Studio).
+    Nếu đoạn chuyển động ngắn hơn, nó được nối tiếp bằng hiệu ứng mờ chéo thay vì lặp giật.
+    `title`/`price_text` hiện thành thẻ tên + giá trong vài giây đầu.
     Cả hai đường dẫn phải nằm trong thư mục media.
     """
     output_path = media_path(output_name)
@@ -162,7 +215,7 @@ def render_final_video(video_path: str, audio_path: str, output_name: str = "fin
     clip_sec = probe_duration(video_path)
     if audio_sec <= 0 or clip_sec <= 0:
         raise ValueError("Không đọc được độ dài video hoặc âm thanh")
-    total_sec = max(3.0, audio_sec + TAIL_SEC)
+    total_sec = max(3.0, audio_sec + TAIL_SEC, min_total_sec)
 
     n_inputs = 1
     if clip_sec < total_sec - 0.05 and clip_sec >= 1.0:
@@ -211,3 +264,20 @@ def render_final_video(video_path: str, audio_path: str, output_name: str = "fin
         "subtitles_burned": bool(subtitle_phrases),
         "title_tag": bool(title or price_text),
     }
+
+
+def extract_keyframes(video_path: str, count: int = 5, prefix: str = "scene") -> list:
+    """Ảnh chụp ở các thời điểm đều nhau trong video, cho dải "Các cảnh trong video" (bấm để tua tới)."""
+    duration = probe_duration(video_path)
+    if duration <= 0:
+        return []
+    frames = []
+    for i in range(count):
+        t = round(duration * (i + 0.5) / count, 2)
+        path = media_path(f"{prefix}_{i + 1}.jpg")
+        try:
+            run_ffmpeg(["-ss", f"{t:.2f}", "-i", video_path, "-frames:v", "1", "-vf", "scale=240:-2", "-q:v", "4", path])
+        except FFmpegError:
+            continue
+        frames.append({"time": t, "image_url": media_url(path)})
+    return frames

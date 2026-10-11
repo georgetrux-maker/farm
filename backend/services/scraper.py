@@ -1,196 +1,266 @@
+"""Đọc thông tin sản phẩm từ link Shopee / TikTok Shop / website thời trang.
+
+Thứ tự ưu tiên: dữ liệu Product trong JSON-LD -> thẻ OpenGraph -> thẻ <title> -> đoán tên từ link.
+Không bịa giá trị: thiếu giá/chất liệu thì để trống để người bán tự điền.
+Trang được tải qua safe_http (chặn địa chỉ nội bộ, giới hạn dung lượng).
+
+Lưu ý: Shopee và TikTok Shop dựng trang bằng JavaScript và thường chặn truy cập tự động, nên với các link
+này nhiều khi chỉ đoán được tên từ đường dẫn; người bán tải ảnh lên là cách chắc chắn nhất.
+"""
 import html
-import io
 import json
 import logging
-import os
 import re
 import urllib.parse
-import uuid
-
-import httpx
-from PIL import Image
+from html.parser import HTMLParser
+from typing import Optional
 
 from backend import config
-from backend.media_paths import media_path, media_url
+from backend.services import safe_http
+from backend.services.image_store import ImageRejected, MAX_SIDE, store_image_bytes
 
 log = logging.getLogger(__name__)
 
-FABRIC_KEYWORDS = [
-    "cotton", "lụa", "tơ tằm", "voan", "tuyết mưa", "linen", "đũi", "denim",
-    "kaki", "dạ", "len", "nỉ", "ren", "thun co giãn", "kate", "chiffon", "satin"
+MAX_PAGE_BYTES = 3 * 1024 * 1024
+
+# (mẫu regex khớp nguyên từ, tên hiển thị). Thứ tự chỉ dùng khi hai từ đứng cùng vị trí.
+FABRICS = [
+    (r"tơ\s*tằm", "Tơ tằm"), (r"lụa", "Lụa"), (r"voan", "Voan"), (r"chiffon", "Chiffon"),
+    (r"tuyết\s*mưa", "Tuyết mưa"), (r"linen|vải\s*lanh", "Linen"), (r"đũi", "Đũi"), (r"denim|vải\s*bò", "Denim"),
+    (r"kaki|khaki", "Kaki"), (r"dạ(?!\s*(?:hội|tiệc|quang))", "Dạ"), (r"len", "Len"), (r"nỉ", "Nỉ"),
+    (r"ren", "Ren"), (r"thun\s*lạnh", "Thun lạnh"), (r"thun\s*gân", "Thun gân"), (r"cotton", "Cotton"),
+    (r"kate", "Kate"), (r"satin", "Satin"), (r"nhung", "Nhung"), (r"tweed", "Tweed"), (r"jeans?", "Denim"),
 ]
-
-CATEGORY_KEYWORDS = [
-    ("đầm", "Đầm / Váy"),
-    ("váy", "Chân váy"),
-    ("blazer", "Áo Blazer"),
-    ("sơ mi", "Áo sơ mi"),
-    ("áo thun", "Áo thun"),
-    ("áo khoác", "Áo khoác"),
-    ("polo", "Áo Polo"),
-    ("quần jean", "Quần Jeans"),
-    ("quần tây", "Quần tây"),
-    ("set", "Set bộ thời trang"),
+CATEGORIES = [
+    (r"chân\s*váy", "Chân váy"), (r"đầm|váy", "Đầm / Váy"), (r"blazer|áo\s*vest", "Áo Blazer"),
+    (r"sơ\s*mi", "Áo sơ mi"), (r"áo\s*khoác|jacket|hoodie|cardigan", "Áo khoác"), (r"polo", "Áo Polo"),
+    (r"áo\s*thun|áo\s*phông|t-?shirt", "Áo thun"), (r"quần\s*(?:jeans?|bò)", "Quần Jeans"),
+    (r"quần\s*(?:tây|âu)", "Quần tây"), (r"quần", "Quần"), (r"set|bộ\s*đồ", "Set bộ thời trang"), (r"áo", "Áo"),
 ]
+_TITLE_SUFFIX = re.compile(r"\s*[|\-–—]\s*(shopee|tiktok|lazada|tiki|sendo)[^|\-–—]*$", re.IGNORECASE)
 
 
-def _extract_meta(html_text: str, prop: str) -> str:
-    patterns = [
-        rf'<meta\s+[^>]*property=["\'](?:og:|product:|twitter:)?{re.escape(prop)}["\'][^>]*content=["\']([^"\']+)["\']',
-        rf'<meta\s+[^>]*content=["\']([^"\']+)["\'][^>]*property=["\'](?:og:|product:|twitter:)?{re.escape(prop)}["\']',
-        rf'<meta\s+[^>]*name=["\'](?:og:|product:|twitter:)?{re.escape(prop)}["\'][^>]*content=["\']([^"\']+)["\']',
-        rf'<meta\s+[^>]*content=["\']([^"\']+)["\'][^>]*name=["\'](?:og:|product:|twitter:)?{re.escape(prop)}["\']',
-    ]
-    for pat in patterns:
-        m = re.search(pat, html_text, re.IGNORECASE)
-        if m:
-            return html.unescape(m.group(1).strip())
-    return ""
+class _PageParser(HTMLParser):
+    """Gom thẻ meta, <title> và các khối JSON-LD; bỏ qua phần còn lại của trang."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.meta, self.title, self.ld_blocks = {}, "", []
+        self._in_title = False
+        self._ld = None
+
+    def handle_starttag(self, tag, attrs):
+        a = {k.lower(): (v or "") for k, v in attrs}
+        if tag == "meta":
+            key = (a.get("property") or a.get("name") or a.get("itemprop") or "").strip().lower()
+            if key and a.get("content") and key not in self.meta:
+                self.meta[key] = a["content"].strip()
+        elif tag == "title":
+            self._in_title = True
+        elif tag == "script" and a.get("type", "").lower() == "application/ld+json":
+            self._ld = []
+
+    def handle_endtag(self, tag):
+        if tag == "title":
+            self._in_title = False
+        elif tag == "script" and self._ld is not None:
+            self.ld_blocks.append("".join(self._ld))
+            self._ld = None
+
+    def handle_data(self, data):
+        if self._ld is not None:
+            self._ld.append(data)
+        elif self._in_title and not self.title:
+            self.title = data.strip()
 
 
-def _extract_json_ld(html_text: str) -> dict:
-    blocks = re.findall(r'<script\s+[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', html_text, re.DOTALL | re.IGNORECASE)
-    for b in blocks:
+def _walk_nodes(data):
+    if isinstance(data, list):
+        for item in data:
+            yield from _walk_nodes(item)
+    elif isinstance(data, dict):
+        yield data
+        for key in ("@graph", "mainEntity", "itemListElement"):
+            if key in data:
+                yield from _walk_nodes(data[key])
+
+
+def _is_product(node: dict) -> bool:
+    types = node.get("@type")
+    types = types if isinstance(types, list) else [types]
+    return any(t in ("Product", "ProductGroup", "IndividualProduct") for t in types)
+
+
+def _product_node(blocks: list) -> dict:
+    for block in blocks:
         try:
-            data = json.loads(b.strip())
-            if isinstance(data, dict):
-                if data.get("@type") == "Product" or "name" in data:
-                    return data
-            elif isinstance(data, list):
-                for item in data:
-                    if isinstance(item, dict) and (item.get("@type") == "Product" or "name" in item):
-                        return item
-        except Exception:
+            data = json.loads(block.strip(), strict=False)
+        except ValueError:
             continue
+        for node in _walk_nodes(data):
+            if _is_product(node):
+                return node
     return {}
 
 
-def _save_image_from_url(url: str) -> str:
-    """Tải ảnh gốc về server và lưu vào media/uploads để AI xử lý."""
-    if not url or not url.startswith("http"):
-        return ""
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-        "Referer": url,
-    }
+def parse_vnd(raw) -> Optional[int]:
+    """'1.290.000', '1,290,000', '149000.00', '₫199.000', 149000 -> số đồng. Ngoài khoảng hợp lý -> None."""
+    if raw is None or isinstance(raw, bool):
+        return None
+    if isinstance(raw, (int, float)):
+        number = float(raw)
+    else:
+        text = re.sub(r"[^\d.,]", "", str(raw))
+        if not text:
+            return None
+        if re.fullmatch(r"\d{1,3}(?:[.,]\d{3})+", text):
+            number = float(re.sub(r"[.,]", "", text))
+        elif re.fullmatch(r"\d+(?:[.,]\d{1,2})?", text):
+            number = float(text.replace(",", "."))
+        else:
+            return None
+    value = int(round(number))
+    return value if 1_000 <= value <= 1_000_000_000 else None
+
+
+def _offer_price(offers) -> Optional[int]:
+    for offer in offers if isinstance(offers, list) else [offers]:
+        if not isinstance(offer, dict):
+            continue
+        currency = str(offer.get("priceCurrency") or "VND").upper()
+        if currency not in ("VND", "VNĐ"):
+            continue
+        for key in ("price", "lowPrice"):
+            price = parse_vnd(offer.get(key))
+            if price:
+                return price
+        spec = offer.get("priceSpecification")
+        if isinstance(spec, dict):
+            price = parse_vnd(spec.get("price"))
+            if price:
+                return price
+    return None
+
+
+def _first_image(value) -> Optional[str]:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list) and value:
+        return _first_image(value[0])
+    if isinstance(value, dict):
+        return value.get("url") or value.get("contentUrl")
+    return None
+
+
+def _clean_title(text: str) -> Optional[str]:
+    text = " ".join(html.unescape(text or "").split())
+    text = _TITLE_SUFFIX.sub("", text).strip(" |-–—")
+    return text[:200] if len(text) >= 3 else None
+
+
+def _title_from_url(url: str) -> Optional[str]:
+    path = urllib.parse.urlsplit(url).path.rstrip("/")
+    slug = urllib.parse.unquote(path.split("/")[-1]) if path else ""
+    slug = re.sub(r"-i\.\d+\.\d+$", "", slug)                      # mã sản phẩm Shopee
+    slug = re.sub(r"\.(html?|php|aspx?)$", "", slug, flags=re.IGNORECASE)
+    words = re.sub(r"[-_+]+", " ", slug).strip()
+    if len(words) < 4 or not re.search(r"[^\W\d_]", words) or words.replace(" ", "").isdigit():
+        return None
+    return words[:1].upper() + words[1:]
+
+
+def _find_keyword(patterns: list, *texts: str) -> Optional[str]:
+    """Từ khóa xuất hiện sớm nhất (khớp nguyên từ) trong văn bản đầu tiên có chứa từ khóa."""
+    for text in texts:
+        if not text:
+            continue
+        best = None
+        for pattern, label in patterns:
+            m = re.search(rf"(?<!\w)(?:{pattern})(?!\w)", text, re.IGNORECASE)
+            if m and (best is None or m.start() < best[0]):
+                best = (m.start(), label)
+        if best:
+            return best[1]
+    return None
+
+
+def extract_product(page_html: str, url: str) -> dict:
+    parser = _PageParser()
     try:
-        with httpx.Client(timeout=12.0, follow_redirects=True, headers=headers) as client:
-            res = client.get(url)
-            if res.status_code != 200 or len(res.content) < 500:
-                return ""
-            img = Image.open(io.BytesIO(res.content))
-            img.verify()
-            img = Image.open(io.BytesIO(res.content))
-            os.makedirs(media_path("uploads"), exist_ok=True)
-            fname = f"scraped_{uuid.uuid4().hex[:12]}.jpg"
-            out_file = media_path(os.path.join("uploads", fname))
-            img.convert("RGB").save(out_file, "JPEG", quality=92)
-            return media_url(out_file)
-    except Exception as e:
-        log.warning("Không tải được ảnh từ %s: %s", url, e)
-        return ""
+        parser.feed(page_html)
+    except Exception:  # HTML hỏng: dùng những gì đã đọc được
+        pass
+    meta, node = parser.meta, _product_node(parser.ld_blocks)
+
+    title = (_clean_title(str(node.get("name") or "")) or _clean_title(meta.get("og:title", ""))
+             or _clean_title(meta.get("twitter:title", "")) or _clean_title(parser.title) or _title_from_url(url))
+    price = _offer_price(node.get("offers")) if node else None
+    if price is None and meta.get("product:price:currency", "VND").upper() in ("VND", "VNĐ"):
+        price = parse_vnd(meta.get("product:price:amount") or meta.get("og:price:amount"))
+    image = (_first_image(node.get("image")) or meta.get("og:image:secure_url") or meta.get("og:image")
+             or meta.get("twitter:image"))
+    description = " ".join(str(x) for x in (node.get("description"), meta.get("og:description"),
+                                             meta.get("description")) if x)[:3000]
+    material = str(node.get("material") or "")
+    category_hint = str(node.get("category") or "")
+    return {
+        "title": title,
+        "price": price,
+        "fabric": _find_keyword(FABRICS, material, title or "", description),
+        "category": _find_keyword(CATEGORIES, title or "", category_hint, description),
+        "image": urllib.parse.urljoin(url, image) if image else None,
+    }
+
+
+def _platform(host: str) -> str:
+    host = host.lower()
+    for name in ("shopee", "tiktok", "lazada", "tiki"):
+        if name in host:
+            return name
+    return "website"
+
+
+def _download_image(url: str) -> Optional[str]:
+    try:
+        res = safe_http.fetch(url, max_bytes=config.max_upload_bytes(), accept="image/*")
+        return store_image_bytes(res.content, prefix="scraped", max_side=MAX_SIDE)["media_url"]
+    except (safe_http.UnsafeURL, safe_http.FetchError, ImageRejected) as e:
+        log.info("Không lấy được ảnh sản phẩm %s: %s", url, e)
+        return None
 
 
 def scrape_product_url(product_url: str) -> dict:
+    """Trả về title, price, fabric, category, image_url (đã lưu vào /media/uploads) và message nếu thiếu gì.
+
+    Raise safe_http.UnsafeURL nếu link không hợp lệ hoặc trỏ tới địa chỉ nội bộ.
     """
-    Đọc thông tin sản phẩm từ link Shopee / TikTok Shop / Website thời trang bất kỳ.
-    Bóc tách OpenGraph, Schema JSON-LD và tải ảnh sản phẩm chất lượng cao về hệ thống.
-    """
-    parsed = urllib.parse.urlparse(product_url)
-    if parsed.scheme not in ("http", "https") or not parsed.netloc:
-        raise ValueError("Đường dẫn sản phẩm không hợp lệ")
-
-    domain = parsed.netloc.lower()
-    platform = "shopee" if "shopee" in domain else ("tiktok" if "tiktok" in domain else ("lazada" if "lazada" in domain else "website"))
-
-    # Dự phòng đoán tên từ URL slug
-    slug = urllib.parse.unquote(parsed.path.rstrip("/").split("/")[-1])
-    slug = re.sub(r"-i\.\d+\.\d+$", "", slug)
-    title_from_slug = re.sub(r"[-_]+", " ", slug).strip()
-    if len(title_from_slug) < 4 or title_from_slug.replace(" ", "").isdigit():
-        title_from_slug = None
-
-    title = title_from_slug.title() if title_from_slug else None
-    price = None
-    fabric = None
-    category = None
-    image_url = None
-    raw_img_url = None
-
-    headers = {
-        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
-    }
-
+    url = product_url.strip()
+    parts = safe_http.parse_public_url(url)
+    result = {"title": None, "price": None, "fabric": None, "category": None, "image": None}
+    message = None
     try:
-        with httpx.Client(timeout=10.0, follow_redirects=True, headers=headers) as client:
-            res = client.get(product_url)
-            if res.status_code == 200:
-                html_text = res.text
+        page = safe_http.fetch(url, max_bytes=MAX_PAGE_BYTES, accept="text/html,application/xhtml+xml")
+        result = extract_product(page.text, page.url)
+    except safe_http.FetchError as e:
+        message = f"Không đọc được trang: {e}."
+        result["title"] = _title_from_url(url)
 
-                # 1. Bóc tách JSON-LD Schema
-                json_ld = _extract_json_ld(html_text)
-                if json_ld:
-                    if json_ld.get("name"):
-                        title = str(json_ld["name"]).strip()
-                    offers = json_ld.get("offers")
-                    if isinstance(offers, dict) and offers.get("price"):
-                        try:
-                            price = int(float(offers["price"]))
-                        except (ValueError, TypeError):
-                            pass
-                    img = json_ld.get("image")
-                    if isinstance(img, str):
-                        raw_img_url = img
-                    elif isinstance(img, list) and img and isinstance(img[0], str):
-                        raw_img_url = img[0]
-
-                # 2. Bóc tách OpenGraph tags nếu chưa có
-                if not title:
-                    og_title = _extract_meta(html_text, "title")
-                    if og_title and len(og_title) > 3:
-                        title = og_title
-
-                if not raw_img_url:
-                    og_img = _extract_meta(html_text, "image") or _extract_meta(html_text, "image:secure_url")
-                    if og_img and og_img.startswith("http"):
-                        raw_img_url = og_img
-
-                if not price:
-                    price_str = _extract_meta(html_text, "price:amount") or _extract_meta(html_text, "amount")
-                    if price_str:
-                        clean_p = re.sub(r"[^\d.]", "", price_str).split(".")[0]
-                        if clean_p.isdigit() and int(clean_p) > 1000:
-                            price = int(clean_p)
-
-                # Tìm chất liệu và danh mục trong nội dung
-                full_text = (html_text[:10000] + " " + (title or "")).lower()
-                for kw in FABRIC_KEYWORDS:
-                    if kw in full_text:
-                        fabric = kw.title()
-                        break
-                for kw, cat_name in CATEGORY_KEYWORDS:
-                    if kw in full_text:
-                        category = cat_name
-                        break
-    except Exception as e:
-        log.warning("Lỗi cào URL %s: %s", product_url, e)
-
-    # Nếu tìm thấy ảnh trực tiếp thì tải về máy chủ
-    if raw_img_url:
-        image_url = _save_image_from_url(raw_img_url)
-
+    image_url = _download_image(result["image"]) if result["image"] else None
+    missing = [name for name, value in (("ảnh", image_url), ("tên", result["title"]), ("giá", result["price"]))
+               if not value]
+    if missing:
+        hint = "Bạn tải ảnh sản phẩm lên" if not image_url else "Bạn kiểm tra lại"
+        message = " ".join(filter(None, [message, f"Chưa lấy được {', '.join(missing)}. {hint} và điền phần còn thiếu nhé."]))
     return {
-        "status": "success",
-        "platform": platform,
-        "product_url": product_url,
-        "title": title,
-        "price": price,
-        "fabric": fabric,
-        "category": category,
+        "status": "success" if not missing else "partial",
+        "platform": _platform(parts.hostname),
+        "product_url": url,
+        "title": result["title"],
+        "price": result["price"],
+        "fabric": result["fabric"],
+        "category": result["category"],
         "image_url": image_url,
         "images": [image_url] if image_url else [],
-        "needs_manual_input": not bool(image_url and title),
+        "needs_manual_input": bool(missing),
+        "message": message,
     }
-

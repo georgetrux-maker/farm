@@ -1,11 +1,17 @@
 import React, { useState } from 'react'
-import { ArrowRight, Eye, EyeOff, Loader2, Send, Shirt, Wand2 } from 'lucide-react'
-import { login, register, setApiToken, type UserProfile } from '../../services/api'
-import { GarmentArt } from '../ui/GarmentArt'
+import { ArrowLeft, ArrowRight, Eye, EyeOff, Loader2, Send, Shirt, Wand2 } from 'lucide-react'
+import { login, register, setApiToken, type AccountRole, type UserProfile } from '../../services/api'
+import { PhoneMockups } from '../ui/PhoneMockups'
 import { Wordmark } from '../ui/Wordmark'
 
 interface LoginViewProps {
   onLoggedIn: (user: UserProfile, isNewAccount: boolean) => void
+  initialMode?: 'login' | 'register'
+  initialRole?: AccountRole
+  /** Có thì hiện nút quay lại trang giới thiệu */
+  onBack?: () => void
+  /** Lý do phải đăng nhập (vd bấm Thử đồ trên feed khi chưa có tài khoản) */
+  notice?: string | null
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -16,39 +22,11 @@ const FEATURES = [
   { icon: Send, text: 'Đăng thẳng lên TikTok, Facebook' },
 ]
 
-/** Ba "video" minh họa: trang phục vẽ bằng SVG trên phông nền studio */
-const SHOWCASE = [
-  {
-    garment: 'blazer' as const,
-    colors: ['#3F3531', '#1E1916'] as [string, string],
-    backdrop: 'from-[#EFE4D8] to-[#DCC8B4]',
-    price: '459.000đ',
-    caption: 'Blazer form chuẩn, đi làm là đẹp',
-    pos: 'left-0 top-16 w-[44%] rotate-[-5deg] animate-float-slow',
-  },
-  {
-    garment: 'dress' as const,
-    colors: ['#D896A9', '#A8506A'] as [string, string],
-    backdrop: 'from-[#F6E7EA] to-[#E9CBD3]',
-    price: '289.000đ',
-    caption: 'Mặc lên nhẹ tênh, xòe cực xinh!',
-    pos: 'left-[28%] top-0 w-[46%] z-10 animate-float',
-  },
-  {
-    garment: 'tee' as const,
-    colors: ['#A9BFAE', '#6F8C76'] as [string, string],
-    backdrop: 'from-[#E8EEE6] to-[#CFDCCD]',
-    price: '159.000đ',
-    caption: 'Cotton mát lạnh, phối gì cũng hợp',
-    pos: 'right-0 top-24 w-[42%] rotate-[5deg] animate-float-slow [animation-delay:-3s]',
-    priceRight: true,
-  },
-]
-
 type Field = 'name' | 'email' | 'password'
 
-export const LoginView: React.FC<LoginViewProps> = ({ onLoggedIn }) => {
-  const [mode, setMode] = useState<'login' | 'register'>('login')
+export const LoginView: React.FC<LoginViewProps> = ({ onLoggedIn, initialMode = 'login', initialRole = 'shop', onBack, notice }) => {
+  const [mode, setMode] = useState<'login' | 'register'>(initialMode)
+  const [role, setRole] = useState<AccountRole>(initialRole)
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -60,7 +38,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoggedIn }) => {
   // Tự kiểm tra để thông báo bằng tiếng Việt (thông báo mặc định của trình duyệt theo ngôn ngữ máy)
   const validate = () => {
     const errs: Partial<Record<Field, string>> = {}
-    if (mode === 'register' && !name.trim()) errs.name = 'Vui lòng nhập tên shop'
+    if (mode === 'register' && !name.trim()) errs.name = role === 'shop' ? 'Vui lòng nhập tên shop' : 'Vui lòng nhập tên của bạn'
     if (!EMAIL_RE.test(email.trim())) errs.email = 'Vui lòng nhập email hợp lệ, ví dụ ten@gmail.com'
     if (!password) errs.password = 'Vui lòng nhập mật khẩu'
     else if (mode === 'register' && password.length < 8) errs.password = 'Mật khẩu cần ít nhất 8 ký tự'
@@ -75,7 +53,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoggedIn }) => {
     setBusy(true)
     try {
       const res =
-        mode === 'login' ? await login(email.trim(), password) : await register(name.trim(), email.trim(), password)
+        mode === 'login' ? await login(email.trim(), password) : await register(name.trim(), email.trim(), password, role)
       setApiToken(res.token)
       onLoggedIn(res.user, mode === 'register')
     } catch (err: any) {
@@ -113,37 +91,33 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoggedIn }) => {
             Người mẫu AI mặc thử, lời review được viết sẵn, lồng tiếng và phụ đề tiếng Việt, sẵn sàng đăng TikTok.
           </p>
         </div>
-        <div className="relative h-[340px] xl:h-[380px] max-w-xl w-full" aria-hidden="true">
-          {SHOWCASE.map((s) => (
-            <div key={s.garment} className={`absolute ${s.pos}`}>
-              <div className="phone-frame">
-                <div className={`relative aspect-[9/16] overflow-hidden bg-gradient-to-b ${s.backdrop}`}>
-                  <span
-                    className={`absolute top-3 ${'priceRight' in s ? 'right-3' : 'left-3'} glass rounded-full px-2.5 py-1 text-xs font-semibold`}
-                  >
-                    {s.price}
-                  </span>
-                  <GarmentArt garment={s.garment} colors={s.colors} className="absolute inset-x-[16%] top-[16%] h-[62%]" />
-                  <span className="absolute bottom-4 inset-x-3 text-center text-xs font-bold text-white [text-shadow:0_1px_3px_rgba(0,0,0,0.6)]">
-                    {s.caption}
-                  </span>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
+        <PhoneMockups className="h-[340px] xl:h-[380px] max-w-xl w-full" />
       </aside>
 
       {/* Bên phải: biểu mẫu */}
       <div className="overflow-y-auto">
         <div className="min-h-full flex flex-col justify-center px-5 py-10 sm:px-10">
           <form onSubmit={submit} noValidate className="w-full max-w-sm mx-auto animate-fade-up">
+            {onBack && (
+              <button type="button" onClick={onBack} className="btn btn-ghost btn-sm -ml-3 mb-4">
+                <ArrowLeft className="w-4 h-4" /> Trang chủ Aura
+              </button>
+            )}
             <Wordmark className="lg:hidden text-2xl block text-center mb-8" />
-            <h2 className="display text-3xl">{mode === 'login' ? 'Chào mừng trở lại' : 'Tạo tài khoản shop'}</h2>
+            {notice && (
+              <p className="mb-5 text-sm p-3 rounded-xl bg-[var(--accent-soft)] text-[var(--accent-text)] font-medium" role="status">
+                {notice}
+              </p>
+            )}
+            <h2 className="display text-3xl">
+              {mode === 'login' ? 'Chào mừng trở lại' : role === 'shop' ? 'Tạo tài khoản shop' : 'Tạo tài khoản người mua'}
+            </h2>
             <p className="text-[var(--text-muted)] mt-2">
               {mode === 'login'
-                ? 'Đăng nhập để tiếp tục tạo video cho shop của bạn.'
-                : 'Bắt đầu làm video review cho sản phẩm thời trang của bạn.'}
+                ? 'Đăng nhập bằng tài khoản shop hoặc người mua.'
+                : role === 'shop'
+                  ? 'Bắt đầu làm video review cho sản phẩm thời trang của bạn.'
+                  : 'Lưu video yêu thích, thử đồ lên ảnh của bạn rồi mua ở shop.'}
             </p>
 
             <ul className="lg:hidden mt-5 space-y-2">
@@ -173,9 +147,33 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoggedIn }) => {
 
             <div className="space-y-4 mt-6">
               {mode === 'register' && (
+                <div role="radiogroup" aria-label="Loại tài khoản" className="grid grid-cols-2 gap-2">
+                  {(
+                    [
+                      { id: 'shop', title: 'Tôi bán hàng', text: 'Tạo video cho shop' },
+                      { id: 'buyer', title: 'Tôi mua hàng', text: 'Xem feed, thử đồ' },
+                    ] as const
+                  ).map((r) => (
+                    <button
+                      key={r.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={role === r.id}
+                      onClick={() => setRole(r.id)}
+                      className={`text-left p-3 rounded-2xl border transition-colors ${
+                        role === r.id ? 'border-[var(--ink)] bg-[var(--accent-soft)]' : 'border-[var(--border-subtle)] hover:border-[var(--border-strong)]'
+                      }`}
+                    >
+                      <span className="block text-sm font-semibold">{r.title}</span>
+                      <span className="block text-xs text-[var(--text-muted)]">{r.text}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {mode === 'register' && (
                 <div>
                   <label htmlFor="name" className="field-label">
-                    Tên shop
+                    {role === 'shop' ? 'Tên shop' : 'Tên của bạn'}
                   </label>
                   <input
                     id="name"
@@ -183,8 +181,8 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoggedIn }) => {
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     maxLength={80}
-                    autoComplete="organization"
-                    placeholder="Ví dụ: Tiệm Áo Mây"
+                    autoComplete={role === 'shop' ? 'organization' : 'name'}
+                    placeholder={role === 'shop' ? 'Ví dụ: Tiệm Áo Mây' : 'Ví dụ: Ngọc Lan'}
                     aria-invalid={!!fieldErrors.name}
                     aria-describedby={fieldErrors.name ? 'name-error' : undefined}
                   />

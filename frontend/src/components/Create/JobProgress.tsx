@@ -32,8 +32,7 @@ export const JobProgress: React.FC<JobProgressProps> = ({ job, fallbackImage, on
       </div>
 
       <div>
-        <p className="eyebrow">Đang tạo video</p>
-        <h2 className="display text-2xl sm:text-3xl mt-1.5">AI đang làm video cho bạn</h2>
+        <h2 className="display text-2xl sm:text-3xl">AI đang làm video cho bạn</h2>
         <ol className="mt-6 space-y-3.5">
           {STEPS.map((s, i) => {
             const from = i === 0 ? 0 : STEPS[i - 1].until

@@ -1,5 +1,6 @@
 import type {
-  AIJob, BrandAvatar, CreditTransaction, DashboardStats, MyVideo, SystemAuditReport,
+  AIJob, BrandAvatar, CreditTransaction, DashboardStats, LibraryProduct, MyVideosPage, ProductLibraryPage, Region, SceneSpec,
+  SystemAuditReport, VideoEffects, VideoFilter, VideoSort,
 } from '../types'
 
 const TOKEN_KEY = 'aura_api_token'
@@ -78,6 +79,78 @@ export interface UserProfile {
   email: string
   role: string
   credits: number
+  /** Gói tháng đang dùng (null các trường khi chưa mua gói) */
+  plan?: UserPlanSummary
+}
+
+export interface UserPlanSummary {
+  plan_id: string | null
+  plan_name: string | null
+  cycle: 'monthly' | 'yearly' | null
+  credits_per_month: number | null
+  next_credit_at: string | null
+  /** Ngày hết hạn cuối cùng (tính cả kỳ đã mua nối tiếp) */
+  active_until: string | null
+  days_left: number | null
+  /** Còn 3 ngày trở xuống và chưa gia hạn */
+  renew_reminder: boolean
+  has_upcoming: boolean
+}
+
+// ----------------------------------------------------------------- Gói tháng
+export interface PlanInfo {
+  id: string
+  name: string
+  price_vnd: number
+  credits_per_month: number
+  private_models: number
+  description: string
+  highlight: boolean
+  active: boolean
+  yearly_price_vnd: number
+  yearly_monthly_vnd: number
+  /** % credit nhiều hơn so với nạp lẻ cùng số tiền */
+  bonus_percent: number
+  videos_per_month: number
+}
+
+export interface SubscriptionPeriod {
+  id: string
+  plan_id: string
+  plan_name: string
+  cycle: 'monthly' | 'yearly'
+  months: number
+  price_vnd: number
+  credits_per_month: number
+  private_models: number
+  starts_at: string
+  expires_at: string
+  grants_done: number
+  next_credit_at?: string | null
+}
+
+export interface PlanStatus {
+  current: SubscriptionPeriod | null
+  upcoming: SubscriptionPeriod[]
+  active_until: string | null
+  days_left: number | null
+  renew_reminder: boolean
+  pending_payments: number
+}
+
+export interface PlansResponse {
+  plans: PlanInfo[]
+  yearly_discount: number
+  remind_days: number
+  status?: PlanStatus
+}
+
+export function fetchPlans(): Promise<PlansResponse> {
+  return request('/api/plans', {}, 'Không tải được bảng giá gói tháng')
+}
+
+export function subscribePlan(planId: string, cycle: 'monthly' | 'yearly'): Promise<DepositInfo> {
+  return post('/api/plans/subscribe', { plan_id: planId, cycle }, 'Không tạo được mã thanh toán gói')
 }
 
 export function fetchProfile(): Promise<UserProfile> {
@@ -93,14 +166,20 @@ export interface PipelineParams {
   custom_script?: string
   duration_sec?: number
   require_approval?: boolean
+  /** Bối cảnh: studio, street, cafe, beach, indoor */
+  scene?: string
+  /** Pro Studio: các cảnh, mỗi cảnh một kiểu chuyển động, bối cảnh, thời lượng */
+  scenes?: SceneSpec[]
+  effects?: VideoEffects
 }
 
 export interface ScriptPreviewResult {
-  hook: string
-  body: string
-  cta: string
+  hook_3s: string
+  body_text: string
+  cta_text: string
   full_script: string
   engine: string
+  warning: string | null
 }
 
 export function previewScript(data: {
@@ -109,6 +188,8 @@ export function previewScript(data: {
   fabric?: string
   category?: string
   style?: string
+  /** Điểm nổi bật AI nhận ra từ ảnh để lời review cụ thể hơn */
+  features?: string[]
 }): Promise<ScriptPreviewResult> {
   return post('/api/ai/script/preview', data, 'Không thể tạo kịch bản xem trước')
 }
@@ -120,8 +201,21 @@ export function triggerPipelineRun(
   return post('/api/pipeline/run', params, 'Lỗi khi kích hoạt luồng AI')
 }
 
-export function fetchMyVideos(): Promise<MyVideo[]> {
-  return request('/api/jobs', {}, 'Không thể tải danh sách video')
+export function fetchMyVideos(params: {
+  page?: number
+  pageSize?: number
+  q?: string
+  status?: VideoFilter
+  sort?: VideoSort
+} = {}): Promise<MyVideosPage> {
+  const query = new URLSearchParams()
+  if (params.page) query.set('page', String(params.page))
+  if (params.pageSize) query.set('page_size', String(params.pageSize))
+  if (params.q) query.set('q', params.q)
+  if (params.status && params.status !== 'all') query.set('status', params.status)
+  if (params.sort) query.set('sort', params.sort)
+  const qs = query.toString()
+  return request(`/api/jobs${qs ? `?${qs}` : ''}`, {}, 'Không thể tải danh sách video')
 }
 
 export function fetchJobStatus(jobId: string): Promise<AIJob> {
@@ -132,7 +226,13 @@ export interface DepositInfo {
   status: string
   transaction_id: string
   amount_vnd: number
-  credits_awarded: number
+  /** Nạp credit lẻ */
+  credits_awarded?: number
+  /** Mua gói tháng */
+  plan_name?: string
+  cycle?: 'monthly' | 'yearly'
+  months?: number
+  credits_per_month?: number
   qr_code_url: string
   bank_id: string
   account_number: string
@@ -146,7 +246,7 @@ export function createDeposit(amountVnd: number): Promise<DepositInfo> {
 
 export function fetchDepositStatus(
   transactionId: string,
-): Promise<{ transaction_id: string; status: 'pending' | 'success'; credits: number; balance: number }> {
+): Promise<{ transaction_id: string; status: 'pending' | 'success' | 'cancelled'; credits: number; balance: number }> {
   return request(`/api/wallet/transactions/${encodeURIComponent(transactionId)}`, {}, 'Không thể kiểm tra giao dịch')
 }
 
@@ -154,8 +254,90 @@ export function fetchCreditHistory(): Promise<CreditTransaction[]> {
   return request('/api/wallet/transactions', {}, 'Không thể tải lịch sử credit')
 }
 
-export function fetchAvatars(): Promise<BrandAvatar[]> {
-  return request('/api/avatars', {}, 'Không thể tải danh sách người mẫu')
+export interface WalletSummary {
+  balance: number
+  deposited_vnd: number
+  deposited_credits: number
+  used_credits: number
+  refunded_credits: number
+  adjusted_credits: number
+  plan_credits: number
+  plan_paid_vnd: number
+}
+
+export function fetchWalletSummary(): Promise<WalletSummary> {
+  return request('/api/wallet/summary', {}, 'Không tải được thông tin ví')
+}
+
+// ----------------------------------------------------------------- Sản phẩm của tôi
+export function fetchProductLibrary(params: { q?: string; category?: string | null; page?: number; pageSize?: number }): Promise<ProductLibraryPage> {
+  const qs = new URLSearchParams()
+  if (params.q?.trim()) qs.set('q', params.q.trim())
+  if (params.category !== undefined && params.category !== 'all') qs.set('category', params.category ?? '__none__')
+  if (params.page) qs.set('page', String(params.page))
+  if (params.pageSize) qs.set('page_size', String(params.pageSize))
+  return request(`/api/products/library?${qs}`, {}, 'Không tải được danh sách sản phẩm')
+}
+
+export interface ProductInput {
+  title: string
+  price: number
+  image_url: string
+  original_price?: number | null
+  category?: string | null
+  fabric_type?: string | null
+  product_url?: string | null
+  sizes?: string[]
+  tryon_enabled?: boolean
+}
+
+export function createLibraryProduct(data: ProductInput): Promise<LibraryProduct> {
+  return post('/api/products/library', { ...data, product_url: data.product_url || null }, 'Không thêm được sản phẩm')
+}
+
+export function updateProduct(id: string, data: Partial<ProductInput>): Promise<LibraryProduct> {
+  return request(`/api/products/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(data) },
+    'Không lưu được sản phẩm')
+}
+
+export function archiveProduct(id: string): Promise<{ status: string }> {
+  return request(`/api/products/${encodeURIComponent(id)}`, { method: 'DELETE' }, 'Không ẩn được sản phẩm')
+}
+
+export function batchCreateVideos(productIds: string[], scene?: string): Promise<{ total_jobs: number; remaining_credits: number }> {
+  return post('/api/batch/create', { product_ids: productIds, scene }, 'Không tạo được video hàng loạt')
+}
+
+// ----------------------------------------------------------------- Người mẫu riêng của shop
+export function fetchModelQuota(): Promise<{ used: number; limit: number; consent_text: string }> {
+  return request('/api/my/avatars/quota', {}, 'Không tải được thông tin người mẫu riêng')
+}
+
+export interface PrivateModelInput {
+  name: string
+  style: string
+  gender: 'female' | 'male'
+  region?: Region
+  height?: string
+  weight?: string
+  measurements?: string
+}
+
+export function createPrivateModel(data: PrivateModelInput & { avatar_url: string; consent: true }): Promise<BrandAvatar> {
+  return post('/api/my/avatars', data, 'Không tạo được người mẫu')
+}
+
+export function updatePrivateModel(id: string, data: Partial<PrivateModelInput>): Promise<BrandAvatar> {
+  return request(`/api/my/avatars/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(data) },
+    'Không lưu được người mẫu')
+}
+
+export function deletePrivateModel(id: string): Promise<{ status: string }> {
+  return request(`/api/my/avatars/${encodeURIComponent(id)}`, { method: 'DELETE' }, 'Không xóa được người mẫu')
+}
+
+export function fetchAvatars(scope: 'all' | 'shared' = 'all'): Promise<BrandAvatar[]> {
+  return request(`/api/avatars?scope=${scope}`, {}, 'Không thể tải danh sách người mẫu')
 }
 
 export function fetchDashboardStats(): Promise<DashboardStats> {
@@ -170,19 +352,14 @@ export function addNewAvatar(data: {
   measurements: string
   avatar_url: string
   badge?: string
+  gender?: 'female' | 'male'
+  region?: Region
 }) {
   return post<BrandAvatar>('/api/avatars', data, 'Không thể thêm người mẫu')
 }
 
 export function setDefaultAvatar(avatarId: string) {
   return post('/api/avatars/set-default', { avatar_id: avatarId }, 'Không thể cập nhật người mẫu mặc định')
-}
-
-export const addAvatar = addNewAvatar
-export type { BrandAvatar }
-
-export function verifyDepositManually(transactionId: string): Promise<{ ok: boolean; message: string }> {
-  return post('/api/admin/wallet/verify', { transaction_id: transactionId }, 'Không thể xác nhận giao dịch')
 }
 
 export function uploadImage(file: File): Promise<{ media_url: string; width: number; height: number }> {
@@ -221,6 +398,7 @@ export function createAnalyzedProduct(data: {
   title: string
   price: number
   image_url: string
+  original_price?: number
   category?: string
   fabric_type?: string
   analysis?: ProductAnalysisAI | null
@@ -232,7 +410,11 @@ export interface StudioOptions {
   templates: { id: string; label: string }[]
   voices: { id: string; label: string }[]
   script_styles: string[]
+  scenes: { id: string; label: string }[]
+  transitions: VideoEffects['transition'][]
+  max_scenes: number
   pipeline_cost_credits: number
+  extra_scene_cost_credits: number
   tryon_preview_cost_credits: number
   engines: { analysis: string; tryon: string; video: string }
 }
@@ -259,8 +441,10 @@ export interface AuthResult {
   user: UserProfile
 }
 
-export function register(name: string, email: string, password: string): Promise<AuthResult> {
-  return post('/api/auth/register', { name, email, password }, 'Không thể đăng ký')
+export type AccountRole = 'shop' | 'buyer'
+
+export function register(name: string, email: string, password: string, role: AccountRole = 'shop'): Promise<AuthResult> {
+  return post('/api/auth/register', { name, email, password, role }, 'Không thể đăng ký')
 }
 
 export function login(email: string, password: string): Promise<AuthResult> {
@@ -348,9 +532,10 @@ export function fetchPublications(jobId?: string): Promise<Publication[]> {
   return request(`/api/social/publications${q}`, {}, 'Không thể tải lịch sử đăng')
 }
 
-// ----------------------------------------------------------------- Cào dữ liệu sản phẩm từ link
+// ----------------------------------------------------------------- Lấy thông tin sản phẩm từ link
 export interface ScrapedProduct {
-  status: string
+  /** success: đủ ảnh, tên, giá; partial: thiếu một phần, xem message */
+  status: 'success' | 'partial'
   platform: string
   product_url: string
   title: string | null
@@ -360,82 +545,448 @@ export interface ScrapedProduct {
   image_url: string | null
   images: string[]
   needs_manual_input: boolean
+  message: string | null
 }
 
 export function scrapeProduct(url: string): Promise<ScrapedProduct> {
   return post<ScrapedProduct>('/api/scraper/product', { url }, 'Không thể đọc thông tin từ link sản phẩm')
 }
 
-// ----------------------------------------------------------------- Quản trị API Keys & Hệ thống
-export interface AdminApiKeysConfig {
-  anthropic: { is_configured: boolean; masked_key: string; model: string }
-  fashn: { is_configured: boolean; masked_key: string; model_name: string; mode: string }
-  replicate: { is_configured: boolean; masked_key: string; video_model: string; kling_mode: string }
-  vietqr: { bank_id: string; account_no: string; account_name: string; is_configured: boolean }
-  sepay: { is_configured: boolean; masked_key: string }
-  tiktok: { is_configured: boolean; client_key: string; has_secret: boolean }
-  facebook: { is_configured: boolean; app_id: string; has_secret: boolean }
-  pricing: { pipeline_cost_credits: number; tryon_preview_cost_credits: number; signup_bonus_credits: number }
+// ----------------------------------------------------------------- Ảnh sản phẩm mẫu
+export interface SampleProduct {
+  id: string
+  title: string
+  price: number
+  fabric: string
+  category: string
+  thumbnail_url: string
 }
 
-export function fetchAdminApiKeys(): Promise<AdminApiKeysConfig> {
-  return request<AdminApiKeysConfig>('/api/admin/api-keys', {}, 'Không tải được cấu hình API')
+export interface ProductPrefill {
+  title: string
+  price: number | null
+  fabric?: string | null
+  category?: string | null
+  image_url: string | null
 }
 
-export function saveAdminApiKeys(payload: Record<string, any>): Promise<{ status: string; message: string }> {
-  return post('/api/admin/api-keys', payload, 'Không lưu được cài đặt API')
+export function fetchSampleProducts(): Promise<{ products: SampleProduct[] }> {
+  return request('/api/samples/products', {}, 'Không tải được ảnh mẫu')
 }
 
-export function testAdminApiKey(provider: string): Promise<{ ok: boolean; message: string }> {
-  return post('/api/admin/api-keys/test', { provider }, 'Lỗi kiểm tra kết nối API')
+export function prepareSampleProduct(sampleId: string): Promise<ProductPrefill> {
+  return post(`/api/samples/products/${encodeURIComponent(sampleId)}/use`, {}, 'Không chuẩn bị được ảnh mẫu')
 }
 
-// ----------------------------------------------------------------- Quản trị Doanh thu & Người dùng
+// ----------------------------------------------------------------- Quản trị: cài đặt API & hệ thống
+export type AdminSettingKind = 'secret' | 'text' | 'choice' | 'int' | 'bool'
+export type AdminSettingSource = 'admin' | 'env' | 'default' | 'none'
+
+export interface AdminSetting {
+  key: string
+  provider: string
+  label: string
+  kind: AdminSettingKind
+  /** Key bí mật: bản đã che; số: number; công tắc: boolean; còn lại: chuỗi */
+  value: string | number | boolean | null
+  source: AdminSettingSource
+  configured: boolean
+  hint: string
+  placeholder: string
+  options?: string[]
+  min?: number
+  max?: number
+}
+
+export interface AdminSettings {
+  secret_key_ready: boolean
+  settings: AdminSetting[]
+}
+
+export type ProviderId = 'anthropic' | 'fashn' | 'replicate' | 'sepay' | 'tiktok' | 'facebook'
+
+export interface ProviderCheck {
+  ok: boolean
+  status: 'ok' | 'invalid_key' | 'no_credit' | 'not_configured' | 'error' | 'info'
+  message: string
+}
+
+export function fetchAdminSettings(): Promise<AdminSettings> {
+  return request('/api/admin/api-keys', {}, 'Không tải được cấu hình')
+}
+
+/** Chỉ gửi các ô đã sửa; null hoặc chuỗi rỗng = xóa giá trị trong Admin, dùng lại backend/.env */
+export function saveAdminSettings(
+  changes: Record<string, string | number | boolean | null>,
+): Promise<{ status: string; saved: string[]; message: string; settings: AdminSetting[] }> {
+  return post('/api/admin/api-keys', changes, 'Không lưu được cấu hình')
+}
+
+/** values: các ô vừa gõ (chưa lưu) để thử trước khi lưu */
+export function testProvider(provider: ProviderId, values: Record<string, string> = {}): Promise<ProviderCheck> {
+  return post('/api/admin/api-keys/test', { provider, values }, 'Lỗi kiểm tra kết nối')
+}
+
+// ----------------------------------------------------------------- Quản trị: doanh thu, người dùng, nạp tiền
+export interface PeriodCounts {
+  total: number
+  today: number
+  week: number
+  month: number
+}
+
 export interface AdminStatsOverview {
   summary: {
-    total_users: number
-    total_credits_in_circulation: number
-    total_revenue_vnd: number
+    revenue_vnd: PeriodCounts
+    new_shops: PeriodCounts
+    completed_videos: PeriodCounts
     total_jobs: number
-    completed_jobs: number
+    credits_in_wallets: number
+    pending_deposits: number
   }
-  recent_users: Array<{ id: string; name: string; email: string; role: string; credits: number; created_at: string }>
-  recent_transactions: Array<CreditTransaction & { user_name?: string; user_email?: string }>
+  /** Cùng kỳ trước để so sánh: hôm qua (đến cùng giờ), tháng trước (đến cùng ngày) */
+  previous: {
+    revenue_today: number
+    revenue_month: number
+    new_shops_month: number
+    completed_videos_month: number
+  }
+  /** Theo từng ngày (giờ Việt Nam), ngày cũ nhất trước */
+  series: { dates: string[]; revenue_vnd: number[]; completed_videos: number[] }
+  /** Doanh thu trong cùng khoảng ngày của biểu đồ, theo nguồn: sepay = tự động, manual = admin duyệt tay */
+  revenue_sources: Partial<Record<'sepay' | 'manual' | 'other', number>>
+  /** Nạp credit lẻ hay mua gói tháng */
+  revenue_products?: Partial<Record<'credits' | 'plan', number>>
+  recent_users: Array<{ id: string; name: string; email: string | null; role: string; credits: number; created_at: string }>
 }
 
-export function fetchAdminStatsOverview(): Promise<AdminStatsOverview> {
-  return request<AdminStatsOverview>('/api/admin/stats-overview', {}, 'Không tải được báo cáo quản trị')
+export function fetchAdminStatsOverview(days = 7): Promise<AdminStatsOverview> {
+  return request(`/api/admin/stats-overview?days=${days}`, {}, 'Không tải được báo cáo quản trị')
 }
 
-// ----------------------------------------------------------------- Thư viện Video Mẫu & Nghe thử giọng
+export interface AdminDeposit {
+  id: string
+  user_id: string
+  user_name: string | null
+  user_email: string | null
+  amount_vnd: number | null
+  amount_credits: number
+  transaction_type: 'deposit' | 'subscription'
+  /** Nội dung chuyển khoản khách phải ghi, ví dụ "NAPTIEN TX1A2B3C" */
+  transfer_content: string | null
+  status: 'pending' | 'success' | 'cancelled'
+  created_at: string
+  confirmed_at: string | null
+  confirmed_by: string | null
+}
+
+export interface AdminDepositPage {
+  items: AdminDeposit[]
+  total: number
+  page: number
+  page_size: number
+  has_more: boolean
+  counts: Partial<Record<AdminDepositStatus | 'all', number>>
+}
+
+export type AdminDepositStatus = 'pending' | 'success' | 'cancelled'
+
+export function fetchAdminDeposits(params: {
+  status?: AdminDepositStatus | 'all'
+  q?: string
+  page?: number
+  pageSize?: number
+}): Promise<AdminDepositPage> {
+  const qs = new URLSearchParams()
+  if (params.status) qs.set('status', params.status)
+  if (params.q?.trim()) qs.set('q', params.q.trim())
+  if (params.page) qs.set('page', String(params.page))
+  if (params.pageSize) qs.set('page_size', String(params.pageSize))
+  return request(`/api/admin/deposits?${qs}`, {}, 'Không tải được lịch sử nạp tiền')
+}
+
+export function verifyDeposit(
+  transactionId: string,
+): Promise<{ status: 'success' | 'already_processed'; credits_added?: number; new_balance?: number; message?: string }> {
+  return post(`/api/admin/deposits/${encodeURIComponent(transactionId)}/verify`, {}, 'Không thể xác nhận giao dịch')
+}
+
+export function cancelDeposit(transactionId: string): Promise<{ status: 'cancelled' }> {
+  return post(`/api/admin/deposits/${encodeURIComponent(transactionId)}/cancel`, {}, 'Không thể hủy giao dịch')
+}
+
+export interface AdminUser {
+  id: string
+  name: string
+  email: string | null
+  role: string
+  credits: number
+  disabled: boolean
+  created_at: string
+  /** Số video đã tạo xong */
+  videos: number
+  deposited_vnd: number
+}
+
+export interface AdminUserPage {
+  items: AdminUser[]
+  total: number
+  page: number
+  page_size: number
+  has_more: boolean
+  counts: { all: number; active: number; locked: number }
+}
+
+export function fetchAdminUsers(params: {
+  q?: string
+  role?: 'all' | 'shop' | 'admin'
+  status?: 'all' | 'active' | 'locked'
+  page?: number
+  pageSize?: number
+}): Promise<AdminUserPage> {
+  const qs = new URLSearchParams()
+  if (params.q?.trim()) qs.set('q', params.q.trim())
+  if (params.role) qs.set('role', params.role)
+  if (params.status) qs.set('status', params.status)
+  if (params.page) qs.set('page', String(params.page))
+  if (params.pageSize) qs.set('page_size', String(params.pageSize))
+  return request(`/api/admin/users?${qs}`, {}, 'Không tải được danh sách người dùng')
+}
+
+export function adjustUserCredits(userId: string, delta: number, reason: string): Promise<{ new_balance: number }> {
+  return post(`/api/admin/users/${encodeURIComponent(userId)}/credits`, { delta, reason }, 'Không điều chỉnh được credit')
+}
+
+export function setUserLocked(userId: string, locked: boolean): Promise<{ status: 'locked' | 'active' }> {
+  return post(`/api/admin/users/${encodeURIComponent(userId)}/lock`, { locked }, 'Không cập nhật được tài khoản')
+}
+
+export interface AuditLog {
+  id: number
+  actor_id: string | null
+  actor_name: string
+  action: string
+  action_label: string
+  target: string | null
+  detail: string | null
+  created_at: string
+}
+
+export function fetchAuditLogs(params: { q?: string; action?: string; page?: number; pageSize?: number }): Promise<{
+  items: AuditLog[]
+  total: number
+  page: number
+  page_size: number
+  has_more: boolean
+  actions: Record<string, string>
+}> {
+  const qs = new URLSearchParams()
+  if (params.q?.trim()) qs.set('q', params.q.trim())
+  if (params.action) qs.set('action', params.action)
+  if (params.page) qs.set('page', String(params.page))
+  if (params.pageSize) qs.set('page_size', String(params.pageSize))
+  return request(`/api/admin/audit?${qs}`, {}, 'Không tải được nhật ký hệ thống')
+}
+
+export interface SupportInfo {
+  hotline: string
+  zalo: string
+  email: string
+}
+
+export function fetchSupportInfo(): Promise<SupportInfo> {
+  return request('/api/support/info', {}, 'Không tải được thông tin hỗ trợ')
+}
+
+export function updateAvatar(
+  avatarId: string,
+  data: Partial<Pick<BrandAvatar, 'name' | 'style' | 'height' | 'weight' | 'measurements' | 'avatar_url' | 'badge' | 'gender' | 'region'>>,
+): Promise<BrandAvatar> {
+  return request(`/api/avatars/${encodeURIComponent(avatarId)}`, { method: 'PATCH', body: JSON.stringify(data) },
+    'Không thể cập nhật người mẫu')
+}
+
+// ----------------------------------------------------------------- Thư viện mẫu video & nghe thử giọng
 export interface ShowcaseTemplate {
   id: string
   title: string
   category: string
   badge: string
-  video_url: string
-  thumbnail_url: string
-  motion_template: string
-  voice_id: string
-  voice_name: string
-  script_style: string
-  music_name: string
   description: string
   tags: string[]
+  motion_template: string
+  template_label: string
+  voice_id: string
+  voice_label: string
+  script_style: string
+  avatar_id: string | null
+  sample_product_id: string
+  image_url: string
+  caption_lines: string[]
+  /** Video mẫu thật nếu đã đặt trong backend/samples/showcase; null thì mô phỏng góc quay trên ảnh */
+  video_url: string | null
 }
 
 export function fetchTemplateShowcase(): Promise<{ templates: ShowcaseTemplate[] }> {
-  return request<{ templates: ShowcaseTemplate[] }>('/api/templates/showcase', {}, 'Không tải được thư viện mẫu')
+  return request('/api/templates/showcase', {}, 'Không tải được thư viện mẫu')
 }
 
-export interface VoicePreviewItem {
+/** Link nghe thử giọng (file do máy chủ tạo bằng đúng giọng đó) */
+export const voicePreviewUrl = (voiceId: string) => `/api/ai/tts/preview/${encodeURIComponent(voiceId)}`
+
+// ----------------------------------------------------------------- Quản trị: gói tháng
+export interface AdminPlanConfig {
   id: string
-  label: string
-  gender: 'female' | 'male'
-  preview_url: string
+  name: string
+  price_vnd: number
+  credits_per_month: number
+  private_models: number
+  description: string
+  highlight: boolean
+  active: boolean
 }
 
-export function fetchVoicePreviews(): Promise<{ voices: VoicePreviewItem[] }> {
-  return request<{ voices: VoicePreviewItem[] }>('/api/ai/tts/voices-preview', {}, 'Không tải được danh sách mẫu giọng')
+export interface AdminPlans {
+  plans: AdminPlanConfig[]
+  yearly_discount: number
+  active_shops: Record<string, number>
+  revenue_month_vnd: number
 }
 
+export function fetchAdminPlans(): Promise<AdminPlans> {
+  return request('/api/admin/plans', {}, 'Không tải được cấu hình gói')
+}
+
+export function saveAdminPlans(plans: AdminPlanConfig[], yearlyDiscount: number): Promise<{ plans: AdminPlanConfig[]; yearly_discount: number }> {
+  return request(
+    '/api/admin/plans',
+    { method: 'PUT', body: JSON.stringify({ plans, yearly_discount: yearlyDiscount }), headers: { 'Content-Type': 'application/json' } },
+    'Không lưu được cấu hình gói',
+  )
+}
+
+export interface AdminSubscription {
+  id: string
+  user_id: string
+  user_name: string | null
+  user_email: string | null
+  plan_id: string
+  plan_name: string
+  cycle: 'monthly' | 'yearly'
+  price_vnd: number
+  credits_per_month: number
+  status: 'pending' | 'active' | 'expired' | 'cancelled'
+  starts_at: string | null
+  expires_at: string | null
+  grants_done: number
+  months: number
+  transaction_id: string
+  created_at: string
+}
+
+export function fetchAdminSubscriptions(status: 'active' | 'pending' | 'expired' | 'all' = 'active', page = 1): Promise<{
+  items: AdminSubscription[]
+  total: number
+  has_more: boolean
+}> {
+  return request(`/api/admin/subscriptions?status=${status}&page=${page}`, {}, 'Không tải được danh sách gói đã bán')
+}
+
+// ----------------------------------------------------------------- Feed của Aura (công khai)
+export interface FeedItem {
+  id: string
+  video_url: string
+  poster_url: string | null
+  caption: string
+  hashtags: string[]
+  shop: { id: string; name: string }
+  product: {
+    id: string
+    title: string
+    price: number
+    original_price: number | null
+    image_url: string
+    sizes: string[]
+    product_url: string | null
+    tryon_enabled: boolean
+  }
+  views: number
+  likes: number
+  saves: number
+  liked: boolean
+  saved: boolean
+  published_at: string | null
+}
+
+export type FeedSort = 'new' | 'top'
+
+export function fetchFeed(page = 1, pageSize = 8, sort: FeedSort = 'new'): Promise<{ items: FeedItem[]; page: number; has_more: boolean }> {
+  return request(`/api/feed?page=${page}&page_size=${pageSize}&sort=${sort}`, {}, 'Không tải được feed')
+}
+
+export function fetchFeedItem(id: string): Promise<FeedItem> {
+  return request(`/api/feed/${encodeURIComponent(id)}`, {}, 'Video không còn trên feed')
+}
+
+export function fetchSavedFeed(): Promise<{ items: FeedItem[] }> {
+  return request('/api/feed/saved', {}, 'Không tải được video đã lưu')
+}
+
+export function fetchFeedInfo(): Promise<{ photo_hours: number; daily_limit: number }> {
+  return request('/api/feed/info', {}, 'Không tải được thông tin')
+}
+
+export function countFeedView(id: string) {
+  return post<{ counted: boolean }>(`/api/feed/${encodeURIComponent(id)}/view`, {}).catch(() => ({ counted: false }))
+}
+
+export function reactFeed(id: string, kind: 'like' | 'save', active: boolean): Promise<{ count: number; active: boolean }> {
+  return request(
+    `/api/feed/${encodeURIComponent(id)}/reactions/${kind}`,
+    { method: 'PUT', body: JSON.stringify({ active }) },
+    'Không lưu được thao tác',
+  )
+}
+
+export function setFeedVisibility(jobId: string, visible: boolean): Promise<{ feed_visible: boolean }> {
+  return request(
+    `/api/jobs/${encodeURIComponent(jobId)}/feed`,
+    { method: 'PUT', body: JSON.stringify({ visible }) },
+    'Không đổi được trạng thái trên feed',
+  )
+}
+
+// ----------------------------------------------------------------- Người mua thử đồ ảo
+export interface BuyerTryon {
+  id: string
+  product_id: string
+  size: string | null
+  engine: string
+  before_url: string
+  after_url: string
+  created_at: string
+  expires_at: string
+  product?: { title: string; price: number; product_url: string | null; sizes: string[]; image_url: string }
+}
+
+export function fetchTryonInfo(): Promise<{ daily_limit: number; used_24h: number; photo_hours: number; privacy_text: string }> {
+  return request('/api/buyer/tryon/info', {}, 'Không tải được thông tin thử đồ')
+}
+
+export async function uploadBuyerPhoto(file: File): Promise<{ photo_url: string }> {
+  const body = new FormData()
+  body.append('file', file)
+  return request('/api/buyer/photo', { method: 'POST', body }, 'Không tải được ảnh')
+}
+
+export function createBuyerTryon(input: { product_id: string; photo_url: string; size?: string | null; job_id?: string }): Promise<BuyerTryon> {
+  return post('/api/buyer/tryon', { ...input, consent: true }, 'Chưa thử được, bạn thử lại nhé')
+}
+
+export function fetchBuyerTryons(): Promise<{ items: BuyerTryon[] }> {
+  return request('/api/buyer/tryons', {}, 'Không tải được lượt thử đồ')
+}
+
+export function deleteBuyerTryon(id: string) {
+  return request(`/api/buyer/tryons/${encodeURIComponent(id)}`, { method: 'DELETE' }, 'Không xóa được ảnh')
+}

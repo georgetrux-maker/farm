@@ -324,11 +324,28 @@ def list_publications(user_id: str, job_id: str = None) -> list:
     return [dict(r) for r in rows]
 
 
+def mark_publication_failed(pub_id: str, message: str):
+    _set_publication(pub_id, "failed", error=message)
+
+
+def run_publication_for(pub_id: str, user_id: str, account_id: str, video_url: str, caption: str,
+                        options: dict):
+    """Chạy trong luồng nền hoặc worker Celery: đọc lại tài khoản (kèm token) từ cơ sở dữ liệu rồi đăng."""
+    account = get_account(account_id, user_id)
+    if account is None:
+        _set_publication(pub_id, "failed", error="Tài khoản mạng xã hội đã bị ngắt kết nối")
+        return
+    run_publication(pub_id, account, video_url, caption, options)
+
+
 def recover_stale_publications() -> int:
     conn = get_db()
+    # Chế độ celery: việc đăng nằm trong Redis nên chỉ xử lý bài treo quá lâu
+    older = f" AND updated_at < datetime('now', '-{config.stale_job_minutes()} minutes')" \
+        if config.queue_backend() == "celery" else ""
     cur = conn.execute("UPDATE publications SET status = 'failed', error_message = "
                        "'Máy chủ khởi động lại khi đang đăng, vui lòng kiểm tra trên nền tảng rồi đăng lại' "
-                       "WHERE status IN ('pending', 'processing')")
+                       "WHERE status IN ('pending', 'processing')" + older)
     conn.commit()
     conn.close()
     return cur.rowcount

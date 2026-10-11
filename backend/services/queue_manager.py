@@ -1,32 +1,25 @@
 import json
 import logging
+import os
 import uuid
-from concurrent.futures import ThreadPoolExecutor
 
 from backend import config
 from backend.ai.motion import DEFAULT_TEMPLATE, generate_motion
-from backend.ai.render import render_final_video
-from backend.ai.script import generate_koc_script
+from backend.ai.render import TRANSITION_SEC, concat_scenes, extract_keyframes, render_final_video
+from backend.ai.scenes import DEFAULT_SCENE
+from backend.ai.script import caption_and_hashtags, generate_koc_script
 from backend.ai.segmentation import segment_garment
 from backend.ai.product_analysis import analyze_product
 from backend.ai.tts import DEFAULT_VOICE, generate_speech
 from backend.ai.vton import engine_name as vton_engine_name
-from backend.ai.vton import generate_tryon
-from backend.database import get_brand_avatar, get_db, get_product, save_product_analysis
-from backend.media_paths import try_resolve_media_ref
+from backend.ai.vton import generate_tryon, restage_placeholder
+from backend.database import get_brand_avatar, get_db, get_product, save_product_analysis, search_key
+from backend.media_paths import media_path, try_resolve_media_ref
+from backend.services.plans import sync_user_plan
+from backend.services.task_queue import QueueUnavailable, enqueue_job
 from backend.services.wallet import deduct_credits, refund_credits
 
 log = logging.getLogger(__name__)
-
-_executor = None
-
-
-def _get_executor() -> ThreadPoolExecutor:
-    global _executor
-    if _executor is None:
-        _executor = ThreadPoolExecutor(max_workers=config.max_workers(), thread_name_prefix="aura-job")
-    return _executor
-
 
 class InsufficientCredits(Exception):
     pass
@@ -36,6 +29,7 @@ def create_ai_jobs(user_id: str, product_ids: list, params: dict, cost_per_job: 
     """Trừ credit và tạo job trong cùng một transaction (đủ tiền cho tất cả thì mới tạo)."""
     total = cost_per_job * len(product_ids)
     job_ids = [f"JOB_{uuid.uuid4().hex[:10]}" for _ in product_ids]
+    sync_user_plan(user_id)  # credit tháng mới của gói (nếu tới mốc) được cộng trước khi trừ
     conn = get_db()
     try:
         conn.execute("BEGIN IMMEDIATE")
@@ -52,8 +46,14 @@ def create_ai_jobs(user_id: str, product_ids: list, params: dict, cost_per_job: 
     finally:
         conn.close()
 
-    for job_id in job_ids:
-        _get_executor().submit(_process_job_worker, job_id)
+    try:
+        for job_id in job_ids:
+            enqueue_job(job_id)
+    except QueueUnavailable:
+        # Không đưa được vào hàng đợi: hủy các job vừa tạo và hoàn lại toàn bộ credit
+        for job_id in job_ids:
+            fail_job(job_id, "Hàng đợi xử lý không hoạt động, credit đã được hoàn lại")
+        raise
     return {"job_ids": job_ids, "remaining_credits": res["remaining_credits"], "credits_deducted": total}
 
 
@@ -72,6 +72,7 @@ def _update_job(job_id: str, status: str, progress: int, step: str, **outputs):
         output_image_url = COALESCE(?, output_image_url),
         output_audio_url = COALESCE(?, output_audio_url),
         script_json = COALESCE(?, script_json),
+        updated_at = CURRENT_TIMESTAMP,
         completed_at = CASE WHEN ? = 'completed' THEN CURRENT_TIMESTAMP ELSE completed_at END
     WHERE id = ?
     ''', (status, progress, step, outputs.get("video"), outputs.get("image"), outputs.get("audio"),
@@ -137,7 +138,8 @@ def _run_tryon_stage(job_id: str, params: dict, product: dict) -> dict:
     return generate_tryon(garment, avatar_id=avatar_id, avatar_row=get_brand_avatar(avatar_id),
                           output_name=f"tryon_{job_id}.jpg",
                           garment_type=analysis.get("garment_type", "auto"),
-                          photo_type=analysis.get("photo_type", "auto"))
+                          photo_type=analysis.get("photo_type", "auto"),
+                          scene=params.get("scene") or DEFAULT_SCENE)
 
 
 def _run_video_stage(job_id: str, params: dict, product: dict, tryon_path: str):
@@ -155,6 +157,8 @@ def _run_video_stage(job_id: str, params: dict, product: dict, tryon_path: str):
             "cta": lines[2] if len(lines) > 2 else (lines[-1] if len(lines) > 1 else ""),
             "full_script": custom_txt,
             "engine": "custom_user_script",
+            # Người bán tự viết lời: vẫn kèm caption + hashtag để đăng mạng xã hội
+            **caption_and_hashtags(product["title"], product["price"], product.get("category")),
         }
     else:
         script = generate_koc_script(product["title"], product["price"], product.get("fabric_type"),
@@ -165,16 +169,27 @@ def _run_video_stage(job_id: str, params: dict, product: dict, tryon_path: str):
     _update_job(job_id, 'processing', 65, 'Bước 5/5: Tạo chuyển động video 9:16 (AI có thể mất vài phút)',
                 audio=tts["audio_url"], script=json.dumps(script, ensure_ascii=False))
 
-    motion = generate_motion(tryon_path, duration_sec=int(params.get("duration_sec") or 5),
-                             template=params.get("template") or DEFAULT_TEMPLATE, output_name=f"motion_{job_id}.mp4",
-                             fill_duration_sec=tts["duration_sec"] + 0.4)
+    scenes = params.get("scenes") or []
+    effects = params.get("effects") or {}
+    min_total = 0.0
+    if len(scenes) > 1:
+        motion, min_total = _render_scenes(job_id, params, tryon_path, scenes, effects.get("transition") or "fade",
+                                           voice_sec=tts["duration_sec"] + 0.4)
+    else:
+        motion = generate_motion(tryon_path, duration_sec=int(params.get("duration_sec") or 5),
+                                 template=params.get("template") or DEFAULT_TEMPLATE, output_name=f"motion_{job_id}.mp4",
+                                 fill_duration_sec=tts["duration_sec"] + 0.4, scene=params.get("scene"))
 
     _update_job(job_id, 'processing', 85, 'Bước 5/5: Ghép video, phụ đề và âm thanh')
-    price_text = f"{int(product['price']):,}đ".replace(",", ".") if product.get("price") else None
+    show_tag = effects.get("title_card", True)
+    price_text = f"{int(product['price']):,}đ".replace(",", ".") if product.get("price") and show_tag else None
     final = render_final_video(motion["video_path"], tts["audio_path"], output_name=f"final_{job_id}.mp4",
-                               subtitle_phrases=tts["phrases"], title=product["title"], price_text=price_text)
+                               subtitle_phrases=tts["phrases"] if effects.get("subtitles", True) else None,
+                               title=product["title"] if show_tag else None, price_text=price_text,
+                               min_total_sec=min_total)
     script.update({"motion_engine": motion["engine"], "video_resolution": final["resolution"],
-                   "video_duration_sec": final["duration_sec"], "subtitles_burned": final["subtitles_burned"]})
+                   "video_duration_sec": final["duration_sec"], "subtitles_burned": final["subtitles_burned"],
+                   "scenes": _scenes(final["output_path"], tts["phrases"], job_id)})
 
     conn = get_db()
     conn.execute("UPDATE brand_avatars SET renders_count = renders_count + 1 WHERE id = ?", (avatar_id,))
@@ -184,10 +199,71 @@ def _run_video_stage(job_id: str, params: dict, product: dict, tryon_path: str):
                 script=json.dumps(script, ensure_ascii=False))
 
 
+def _render_scenes(job_id: str, params: dict, tryon_path: str, scenes: list, transition: str, voice_sec: float):
+    """Pro Studio: mỗi cảnh một đoạn chuyển động (kiểu, bối cảnh, thời lượng riêng) rồi nối bằng hiệu ứng chuyển cảnh.
+
+    Ảnh thử đồ minh họa được dựng lại với phông nền của từng bối cảnh (rẻ, chạy tại chỗ);
+    ảnh thử đồ thật chỉ tạo một lần, bối cảnh của từng cảnh do model video đảm nhận.
+    Lời thoại dài hơn tổng các cảnh: engine FFmpeg kéo dài cảnh cuối cho vừa (AI video thì nối lặp khi ghép).
+    """
+    seg_path = media_path(f"seg_{job_id}.png")
+    images = {params.get("scene") or DEFAULT_SCENE: tryon_path}
+    overlap = 0 if transition == "cut" else TRANSITION_SEC
+    planned = sum(int(spec.get("duration_sec") or 5) for spec in scenes) - overlap * (len(scenes) - 1)
+    clips, engine = [], None
+    for i, spec in enumerate(scenes):
+        _update_job(job_id, 'processing', 65 + round(18 * i / len(scenes)),
+                    f'Bước 5/5: Tạo cảnh {i + 1}/{len(scenes)} (AI có thể mất vài phút mỗi cảnh)')
+        scene = spec.get("scene") or DEFAULT_SCENE
+        if scene not in images:
+            images[scene] = restage_placeholder(seg_path if os.path.exists(seg_path) else None,
+                                                f"tryon_{job_id}_{scene}.jpg", scene) or tryon_path
+        duration = int(spec.get("duration_sec") or 5)
+        last = i == len(scenes) - 1
+        motion = generate_motion(images[scene], duration_sec=duration,
+                                 template=spec.get("template") or DEFAULT_TEMPLATE,
+                                 output_name=f"motion_{job_id}_{i + 1}.mp4", scene=scene,
+                                 fill_duration_sec=duration + max(0.0, voice_sec - planned) if last else None)
+        clips.append(motion["video_path"])
+        engine = motion["engine"]
+    joined = concat_scenes(clips, transition, output_name=f"motion_{job_id}.mp4")
+    for path in clips:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    return {"video_path": joined["video_path"], "engine": engine}, joined["duration_sec"]
+
+
+def _scenes(video_path: str, phrases: list, job_id: str) -> list:
+    """5 khung hình trong video kèm câu phụ đề đang đọc lúc đó. Lỗi thì bỏ qua, không làm hỏng video."""
+    try:
+        frames = extract_keyframes(video_path, prefix=f"scene_{job_id}")
+    except Exception:
+        log.exception("Không chụp được khung hình cho job %s", job_id)
+        return []
+    for frame in frames:
+        current = [text for start, end, text in phrases if start <= frame["time"]]
+        frame["caption"] = current[-1] if current else ""
+    return frames
+
+
+def run_job(job_id: str, resume_after_approval: bool = False):
+    """Điểm vào chung cho luồng nền (QUEUE_BACKEND=thread) và worker Celery."""
+    if resume_after_approval:
+        _process_job_worker(job_id, True)
+    else:
+        _process_job_worker(job_id)
+
+
 def _process_job_worker(job_id: str, resume_after_approval: bool = False):
     """Worker: thử đồ -> (chờ duyệt nếu được yêu cầu) -> tạo video."""
     try:
         job = _load_job(job_id)
+        if job["status"] not in ("queued", "processing"):
+            # Việc được giao lại sau khi đã xong (vd. worker mất kết nối lúc báo nhận): không làm lại
+            log.info("Bỏ qua job %s ở trạng thái %s", job_id, job["status"])
+            return
         params = json.loads(job["params_json"] or "{}")
         product = get_product(job["product_id"])
         if product is None:
@@ -216,13 +292,21 @@ def approve_job(job_id: str, user_id: str) -> bool:
     """Người bán đồng ý ảnh thử đồ: tiếp tục tạo video."""
     conn = get_db()
     cur = conn.execute(
-        "UPDATE ai_jobs SET status = 'queued', progress = 45, current_step = 'Đã duyệt, đang chờ tạo video' "
-        "WHERE id = ? AND user_id = ? AND status = 'awaiting_approval'", (job_id, user_id))
+        "UPDATE ai_jobs SET status = 'queued', progress = 45, current_step = 'Đã duyệt, đang chờ tạo video', "
+        "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ? AND status = 'awaiting_approval'", (job_id, user_id))
     conn.commit()
     conn.close()
     if cur.rowcount == 0:
         return False
-    _get_executor().submit(_process_job_worker, job_id, True)
+    try:
+        enqueue_job(job_id, resume_after_approval=True)
+    except QueueUnavailable:
+        conn = get_db()
+        conn.execute("UPDATE ai_jobs SET status = 'awaiting_approval', progress = 40, current_step = 'Chờ duyệt ảnh thử đồ' "
+                     "WHERE id = ? AND status = 'queued'", (job_id,))
+        conn.commit()
+        conn.close()
+        raise
     return True
 
 
@@ -249,12 +333,24 @@ def reject_job(job_id: str, user_id: str):
 
 
 def recover_stale_jobs() -> int:
-    """Khi server khởi động lại, job đang dở sẽ không bao giờ chạy tiếp: đánh dấu lỗi và hoàn credit."""
+    """Đánh dấu lỗi và hoàn credit cho job không bao giờ chạy tiếp.
+
+    - thread: job nằm trong bộ nhớ tiến trình web nên khởi động lại là mất hết việc đang dở.
+    - celery: việc nằm trong Redis và được giao lại khi worker chết, nên chỉ xử lý job không cập nhật tiến độ
+      quá lâu (job đang chạy cập nhật updated_at mỗi bước; job duyệt muộn tính từ lúc duyệt).
+    """
     conn = get_db()
-    ids = [r[0] for r in conn.execute("SELECT id FROM ai_jobs WHERE status IN ('queued', 'processing')")]
+    if config.queue_backend() == "celery":
+        rows = conn.execute("SELECT id FROM ai_jobs WHERE status IN ('queued', 'processing') "
+                            "AND COALESCE(updated_at, created_at) < datetime('now', ?)", (f"-{config.stale_job_minutes()} minutes",))
+        message = "Job bị treo quá lâu trong hàng đợi, credit đã được hoàn lại"
+    else:
+        rows = conn.execute("SELECT id FROM ai_jobs WHERE status IN ('queued', 'processing')")
+        message = "Máy chủ khởi động lại khi job đang chạy, credit đã được hoàn lại"
+    ids = [r[0] for r in rows]
     conn.close()
     for job_id in ids:
-        fail_job(job_id, "Máy chủ khởi động lại khi job đang chạy, credit đã được hoàn lại")
+        fail_job(job_id, message)
     return len(ids)
 
 
@@ -276,6 +372,8 @@ def _job_dict(row) -> dict:
         "script": json.loads(row["script_json"]) if row["script_json"] else None,
         "created_at": row["created_at"],
         "completed_at": row["completed_at"],
+        "feed_visible": bool(row["feed_visible"]) if "feed_visible" in row.keys() else False,
+        "views": (row["views"] or 0) if "views" in row.keys() else 0,
     }
 
 
@@ -288,22 +386,66 @@ def get_job_status(job_id: str, user_id: str = None):
     return _job_dict(row)
 
 
-def list_jobs(user_id: str, limit: int = 60) -> list:
-    """Video của một người dùng (mới nhất trước), kèm tên/ảnh sản phẩm và số lần đã đăng."""
+# Nhóm trạng thái dùng cho bộ lọc trên trang "Video của tôi"
+STATUS_GROUPS = {
+    "completed": ("completed",),
+    "busy": ("queued", "pending", "processing"),
+    "awaiting_approval": ("awaiting_approval",),
+    "other": ("failed", "rejected"),
+}
+SORTS = {
+    "newest": "j.created_at DESC, j.rowid DESC",
+    "oldest": "j.created_at ASC, j.rowid ASC",
+    "title": "search_key(p.title) ASC, j.created_at DESC, j.rowid DESC",
+}
+
+
+def list_jobs(user_id: str, page: int = 1, page_size: int = 24, q: str = None, status: str = None,
+              sort: str = "newest") -> dict:
+    """Video của một người dùng, có phân trang, tìm theo tên sản phẩm (không cần gõ dấu),
+    lọc theo nhóm trạng thái và sắp xếp. Kèm số lượng theo từng nhóm để hiện trên bộ lọc."""
+    where, args = ["j.user_id = ?"], [user_id]
+    key = search_key(q)
+    if key:
+        escaped = key.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        where.append("search_key(p.title) LIKE ? ESCAPE '\\'")
+        args.append(f"%{escaped}%")
+    base = "FROM ai_jobs j LEFT JOIN products p ON p.id = j.product_id WHERE " + " AND ".join(where)
+
     conn = get_db()
-    rows = conn.execute('''
-    SELECT j.*, p.title AS product_title, p.image_url AS product_image_url,
-           (SELECT COUNT(*) FROM publications pb WHERE pb.job_id = j.id AND pb.status = 'published') AS published_count
-    FROM ai_jobs j LEFT JOIN products p ON p.id = j.product_id
-    WHERE j.user_id = ?
-    ORDER BY j.created_at DESC, j.rowid DESC
-    LIMIT ?
-    ''', (user_id, limit)).fetchall()
-    conn.close()
-    jobs = []
+    try:
+        by_status = dict(conn.execute(f"SELECT j.status, COUNT(*) {base} GROUP BY j.status", args).fetchall())
+        counts = {group: sum(by_status.get(s, 0) for s in members) for group, members in STATUS_GROUPS.items()}
+        counts["all"] = sum(by_status.values())
+
+        filtered, filter_args = base, list(args)
+        if status in STATUS_GROUPS:
+            members = STATUS_GROUPS[status]
+            filtered += f" AND j.status IN ({','.join('?' * len(members))})"
+            filter_args += list(members)
+        total = conn.execute(f"SELECT COUNT(*) {filtered}", filter_args).fetchone()[0]
+        rows = conn.execute(f'''
+        SELECT j.*, p.title AS product_title, p.image_url AS product_image_url, p.price AS product_price,
+               p.original_price AS product_original_price, p.category AS product_category,
+               p.fabric_type AS product_fabric,
+               (SELECT COUNT(*) FROM publications pb WHERE pb.job_id = j.id AND pb.status = 'published') AS published_count,
+               (SELECT GROUP_CONCAT(DISTINCT pb.platform) FROM publications pb
+                 WHERE pb.job_id = j.id AND pb.status = 'published') AS published_platforms
+        {filtered}
+        ORDER BY {SORTS.get(sort, SORTS["newest"])}
+        LIMIT ? OFFSET ?
+        ''', filter_args + [page_size, (page - 1) * page_size]).fetchall()
+    finally:
+        conn.close()
+
+    items = []
     for row in rows:
         job = _job_dict(row)
         job.update({"product_title": row["product_title"], "product_image_url": row["product_image_url"],
-                    "published_count": row["published_count"]})
-        jobs.append(job)
-    return jobs
+                    "product_price": row["product_price"], "product_original_price": row["product_original_price"],
+                    "product_category": row["product_category"], "product_fabric": row["product_fabric"],
+                    "published_count": row["published_count"],
+                    "published_platforms": sorted(filter(None, (row["published_platforms"] or "").split(",")))})
+        items.append(job)
+    return {"items": items, "total": total, "page": page, "page_size": page_size,
+            "has_more": page * page_size < total, "counts": counts}

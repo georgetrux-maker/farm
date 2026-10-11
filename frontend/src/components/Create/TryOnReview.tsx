@@ -60,8 +60,7 @@ export const TryOnReview: React.FC<TryOnReviewProps> = ({
         <img src={imageUrl} alt="Ảnh thử đồ" className="w-full max-h-[64vh] object-contain" />
       </div>
       <div>
-        <p className="eyebrow">Bước duyệt</p>
-        <h2 className="display text-2xl sm:text-3xl mt-1.5">Ảnh thử đồ đã xong</h2>
+        <h2 className="display text-2xl sm:text-3xl">Ảnh thử đồ đã xong</h2>
         <p className="text-[var(--text-muted)] mt-2">Video sẽ được tạo từ ảnh này. Bạn kiểm tra giúp:</p>
         <ul className="mt-4 space-y-2.5 text-sm">
           {CHECKS.map((c) => (

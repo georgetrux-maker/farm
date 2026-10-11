@@ -27,6 +27,7 @@ USER aura
 VOLUME ["/data"]
 EXPOSE 3456
 HEALTHCHECK --interval=30s --timeout=5s CMD python -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:3456/api/health')"
-# 1 tiến trình: hàng đợi job và bộ giới hạn tần suất nằm trong bộ nhớ
+# 1 tiến trình: bộ giới hạn tần suất nằm trong bộ nhớ.
+# Job tạo video chạy ở service "worker" (Celery) khi QUEUE_BACKEND=celery, xem docker-compose.yml
 CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "3456", "--workers", "1", \
      "--proxy-headers", "--forwarded-allow-ips", "*"]

@@ -19,7 +19,7 @@ export const AvatarImage: React.FC<AvatarImageProps> = ({ src, name, className =
       .toUpperCase()
     return (
       <div
-        className={`flex items-center justify-center bg-gradient-to-br from-[#EED9DF] via-[#F3E7DC] to-[#E6D3C1] dark:from-[#3A2A2F] dark:via-[#2F2622] dark:to-[#3A3027] text-[#7A4255] dark:text-[#EBB3C3] font-display text-3xl font-semibold ${className}`}
+        className={`flex items-center justify-center bg-[radial-gradient(120%_90%_at_30%_15%,var(--accent-soft),var(--bg-surface)_70%)] text-[var(--accent-text)] font-display text-3xl font-semibold ${className}`}
         role="img"
         aria-label={name}
       >

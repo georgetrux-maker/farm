@@ -1,5 +1,5 @@
 import React from 'react'
-import { NAV_ITEMS, type View } from '../lib/navigation'
+import { MOBILE_NAV, type View } from '../lib/navigation'
 
 interface BottomNavProps {
   activeView: View
@@ -13,7 +13,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({ activeView, setActiveView 
     aria-label="Menu chính"
   >
     <div className="grid grid-flow-col auto-cols-fr h-16">
-      {NAV_ITEMS.map(({ id, label, icon: Icon }) => {
+      {MOBILE_NAV.map(({ id, label, icon: Icon }) => {
         const active = activeView === id
         return (
           <button

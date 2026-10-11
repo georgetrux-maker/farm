@@ -50,11 +50,15 @@ def _template_script(title: str, price: int, fabric: str, style: str, category: 
                 "Mọi người nên xem kỹ bảng size trước khi đặt để chọn vừa nhất.")
         cta = f"Giá {_vnd(price)}, mọi người tham khảo ở giỏ hàng nhé."
 
+    return {"hook_3s": hook, "body_text": body, "cta_text": cta, **caption_and_hashtags(title, price, category)}
+
+
+def caption_and_hashtags(title: str, price: int, category: str = None) -> dict:
+    """Caption + hashtag mẫu (dùng khi không có Claude, hoặc khi người bán tự viết lời review)."""
     hashtags = [h for h in dict.fromkeys([
         _hashtag(category) if category else "", _hashtag(title), "#reviewthoitrang", "#outfit", "#tiktokfashion",
     ]) if h]
-    return {"hook_3s": hook, "body_text": body, "cta_text": cta,
-            "post_caption": f"{title} chỉ {_vnd(price)}", "hashtags": hashtags}
+    return {"post_caption": f"{title} chỉ {_vnd(int(price))}", "hashtags": hashtags}
 
 
 def generate_koc_script(product_title: str, price: int, fabric: str = None, style: str = "genz",
