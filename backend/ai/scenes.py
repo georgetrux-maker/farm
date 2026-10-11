@@ -5,6 +5,13 @@
   (vị trí 0..1 từ trên xuống, màu RGB), để các bối cảnh nhìn khác nhau ngay cả ở chế độ xem thử.
 """
 
+import os
+
+from backend import config
+
+# Ảnh phông nền thật của từng bối cảnh (9:16, 720x1280), nguồn ghi trong backend/samples/img/ASSETS.md
+IMG_DIR = os.path.join(config.SAMPLES_DIR, "img")
+
 SCENES = {
     "studio": {
         "label": "Studio",
@@ -35,6 +42,12 @@ SCENES = {
 }
 DEFAULT_SCENE = "studio"
 MAX_SCENES = 5  # số cảnh tối đa một video của Pro Studio
+
+
+def backdrop_image_path(scene: str):
+    """Đường dẫn ảnh phông của bối cảnh; None nếu không có file (dùng phông màu dự phòng)."""
+    path = os.path.join(IMG_DIR, f"scene_{scene}.jpg")
+    return path if os.path.isfile(path) else None
 
 
 def backdrop_color(scene: str, ratio: float) -> tuple:

@@ -9,7 +9,7 @@ import {
 import type { AIJob, BrandAvatar, LibraryProduct, SceneSpec, VideoEffects } from '../../types'
 import type { CreateRequest, ProductSeed } from '../../lib/createRequest'
 import { formatNumber, formatVnd } from '../../lib/format'
-import { SCENE_BACKDROPS, SCENE_LABELS, STYLE_LABELS, TEMPLATE_SHORT_LABELS, TRANSITION_LABELS } from '../../lib/labels'
+import { sceneBackground, SCENE_LABELS, STYLE_LABELS, TEMPLATE_SHORT_LABELS, TRANSITION_LABELS } from '../../lib/labels'
 import { useVoicePreview } from '../../lib/useVoicePreview'
 import { CostSummary } from '../Create/CostSummary'
 import { JobProgress } from '../Create/JobProgress'
@@ -72,7 +72,7 @@ const ScenePreview: React.FC<{
 }> = ({ product, scene, effects, caption, label }) => (
   <figure className="w-44 sm:w-56 lg:w-full lg:max-w-[16rem] mx-auto">
     <div className="phone-frame">
-      <div className="relative aspect-[9/16] overflow-hidden" style={{ background: SCENE_BACKDROPS[scene.scene] }}>
+      <div className="relative aspect-[9/16] overflow-hidden" style={{ background: sceneBackground(scene.scene) }}>
         {product?.image_url ? (
           <div key={`${scene.key}-${scene.template}`} className={`absolute inset-0 motion-preview motion-${scene.template} is-playing`}>
             <div className="absolute inset-x-[16%] top-[20%] bottom-[22%] flex items-center justify-center">
@@ -553,7 +553,7 @@ export const ProStudioView: React.FC<ProStudioViewProps> = ({ credits, onCredits
                         }`}
                       >
                         <button type="button" onClick={() => setActive(i)} aria-pressed={selected} className="w-full text-left">
-                          <span className="relative block aspect-[4/3] rounded-xl overflow-hidden mb-2" style={{ background: SCENE_BACKDROPS[s.scene] }}>
+                          <span className="relative block aspect-[4/3] rounded-xl overflow-hidden mb-2" style={{ background: sceneBackground(s.scene) }}>
                             {product?.image_url && (
                               <img src={product.image_url} alt="" className="absolute inset-0 m-auto h-[78%] w-auto max-w-[70%] object-contain rounded-md" />
                             )}

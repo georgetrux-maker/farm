@@ -101,3 +101,15 @@ def test_concat_scenes_transitions(client):
     assert abs(probe_duration(fade["video_path"]) - 5.5) < 0.15 and fade["duration_sec"] == 5.5
     with pytest.raises(ValueError):
         concat_scenes(clips, "spin")
+
+
+def test_every_scene_has_a_backdrop_photo_and_credit():
+    """Ảnh phông của 5 bối cảnh phải có mặt (9:16) và được ghi nguồn trong ASSETS.md."""
+    from backend.ai.scenes import SCENES, backdrop_image_path, IMG_DIR
+    notes = open(os.path.join(IMG_DIR, "ASSETS.md"), encoding="utf-8").read()
+    for scene in SCENES:
+        path = backdrop_image_path(scene)
+        assert path, f"thiếu ảnh phông cho bối cảnh {scene}"
+        with Image.open(path) as img:
+            assert img.size == (720, 1280)
+        assert f"scene_{scene}.jpg" in notes

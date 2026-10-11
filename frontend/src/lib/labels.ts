@@ -30,6 +30,12 @@ export const SCENE_BACKDROPS: Record<string, string> = {
   indoor: 'linear-gradient(180deg, rgb(240 234 226) 0%, rgb(226 216 202) 70%, rgb(196 176 152) 71%, rgb(172 150 124) 100%)',
 }
 
+/** Ảnh phông của từng bối cảnh (backend/samples/img, phục vụ ở /samples); chưa tải được thì dùng màu ở SCENE_BACKDROPS */
+export const sceneBackground = (id: string): string => {
+  const gradient = SCENE_BACKDROPS[id] ?? 'var(--bg-surface)'
+  return SCENE_BACKDROPS[id] ? `url(/samples/img/scene_${id}.jpg) center/cover no-repeat, ${gradient}` : gradient
+}
+
 export const TRANSITION_LABELS: Record<string, string> = {
   fade: 'Mờ dần',
   slide: 'Trượt ngang',

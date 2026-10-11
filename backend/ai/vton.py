@@ -11,7 +11,7 @@ from PIL import Image, ImageDraw, ImageFilter
 from backend import config
 from backend.ai import http_utils
 from backend.ai.http_utils import ProviderError
-from backend.ai.scenes import DEFAULT_SCENE, backdrop_color
+from backend.ai.scenes import DEFAULT_SCENE, backdrop_color, backdrop_image_path
 from backend.media_paths import media_path, media_url, try_resolve_media_ref
 
 log = logging.getLogger(__name__)
@@ -114,11 +114,17 @@ def _fashn_tryon(garment_path: str, model_image_ref: str, garment_type: str, pho
 def _placeholder_tryon(garment_path: Optional[str], output_name: str, scene: str = DEFAULT_SCENE) -> str:
     output_path = media_path(output_name)
     width, height = 720, 1280
-    base = Image.new("RGB", (width, height))
-    draw = ImageDraw.Draw(base)
-    # Phông nền theo bối cảnh (mặc định studio màu ngà chuyển dần sang be, như ảnh chụp sản phẩm thời trang)
-    for y in range(height):
-        draw.line([(0, y), (width, y)], fill=backdrop_color(scene, y / (height - 1)))
+    photo = backdrop_image_path(scene)
+    if photo:
+        # Ảnh bối cảnh thật (đã làm mờ nhẹ như xóa phông)
+        with Image.open(photo) as bg:
+            base = bg.convert("RGB").resize((width, height))
+    else:
+        base = Image.new("RGB", (width, height))
+        draw = ImageDraw.Draw(base)
+        # Phông màu theo bối cảnh (studio: ngà chuyển dần sang be, như ảnh chụp sản phẩm thời trang)
+        for y in range(height):
+            draw.line([(0, y), (width, y)], fill=backdrop_color(scene, y / (height - 1)))
     if garment_path:
         with Image.open(garment_path) as g:
             garment = g.convert("RGBA")

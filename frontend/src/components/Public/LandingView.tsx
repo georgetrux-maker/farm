@@ -4,7 +4,6 @@ import {
 } from 'lucide-react'
 import { fetchFeedInfo, fetchPlans, type PlanInfo } from '../../services/api'
 import { formatNumber, formatVnd } from '../../lib/format'
-import { PhoneMockups } from '../ui/PhoneMockups'
 import { Wordmark } from '../ui/Wordmark'
 
 interface LandingViewProps {
@@ -103,7 +102,32 @@ export const LandingView: React.FC<LandingViewProps> = ({ onLogin, onRegister, o
               </p>
             )}
           </div>
-          <PhoneMockups className="h-[300px] sm:h-[400px] w-full max-w-xl mx-auto" />
+          <div className="relative w-full max-w-sm mx-auto lg:ml-auto animate-fade-up" style={{ animationDelay: '120ms' }}>
+            <img
+              src="/samples/img/hero_1.jpg"
+              alt="Người mẫu mặc váy hoa trong video review do Aura tạo"
+              width={960}
+              height={1200}
+              className="w-full aspect-[4/5] object-cover rounded-[2rem] shadow-[var(--shadow-pop)] bg-[var(--bg-surface)]"
+              onError={(e) => (e.currentTarget.style.visibility = 'hidden')}
+            />
+            <div className="absolute -left-3 sm:-left-8 top-8 glass rounded-2xl px-3.5 py-2.5 shadow-lg flex items-center gap-2.5 animate-float-slow">
+              <span className="w-8 h-8 rounded-[10px] bg-[var(--ink)] text-[var(--on-ink)] flex items-center justify-center">
+                <Shirt className="w-4 h-4" />
+              </span>
+              <span className="text-sm leading-tight">
+                <span className="block font-semibold">Thử đồ 1 chạm</span>
+                <span className="block text-xs opacity-70">Ngay trên ảnh của bạn</span>
+              </span>
+            </div>
+            <div className="absolute -right-2 sm:-right-6 bottom-10 glass rounded-2xl px-3.5 py-2.5 shadow-lg animate-float">
+              <span className="block text-xs opacity-70">Video review</span>
+              <span className="block text-sm font-semibold">Váy hoa nhí · 289.000đ</span>
+              <span className="mt-1.5 inline-flex items-center gap-1 text-xs font-semibold text-[var(--accent-text)]">
+                <PlayCircle className="w-3.5 h-3.5" /> Tạo video AI
+              </span>
+            </div>
+          </div>
         </section>
 
         {/* Tính năng */}

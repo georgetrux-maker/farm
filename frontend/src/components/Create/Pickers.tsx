@@ -1,7 +1,7 @@
 import React from 'react'
 import { Check, Clapperboard, Footprints, MapPin, Play, RotateCw, Square, ZoomIn } from 'lucide-react'
 import type { BrandAvatar } from '../../types'
-import { SCENE_BACKDROPS } from '../../lib/labels'
+import { sceneBackground } from '../../lib/labels'
 import { MotionPreview } from '../ui/MotionPreview'
 import { AvatarImage } from '../ui/AvatarImage'
 
@@ -155,7 +155,7 @@ export const ScenePicker: React.FC<{
             className={`relative block rounded-xl ring-2 ring-offset-2 ring-offset-[var(--bg-card)] transition ${
               size === 'sm' ? 'aspect-square' : 'aspect-[3/4]'
             } ${selected ? 'ring-[var(--accent-color)]' : 'ring-transparent group-hover:ring-[var(--border-strong)]'}`}
-            style={{ background: SCENE_BACKDROPS[s.id] ?? 'var(--bg-surface)' }}
+            style={{ background: sceneBackground(s.id) }}
           >
             {selected && (
               <span className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-[var(--accent-color)] text-[var(--on-accent)] flex items-center justify-center animate-scale-in">
