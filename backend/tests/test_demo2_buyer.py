@@ -93,6 +93,24 @@ def test_views_likes_saves(client, shop):
     assert client.put(f"/api/feed/{job}/reactions/wow", headers=buyer, json={"active": True}).status_code == 422
 
 
+def test_feed_trending_sort(client, shop):
+    product = _product(client, shop)
+    first, second = _job(shop, product, "JOB_OLD"), _job(shop, product, "JOB_NEW")
+    for job in (first, second):
+        client.put(f"/api/jobs/{job}/feed", headers=shop["headers"], json={"visible": True})
+    conn = database.get_db()
+    conn.execute("UPDATE ai_jobs SET feed_at = '2026-01-01 00:00:00' WHERE id = ?", (first,))
+    conn.execute("UPDATE ai_jobs SET feed_at = '2026-02-01 00:00:00' WHERE id = ?", (second,))
+    conn.commit()
+    conn.close()
+    assert [i["id"] for i in client.get("/api/feed").json()["items"]] == [second, first]            # mới nhất trước
+    buyer = _buyer(client)
+    client.put(f"/api/feed/{first}/reactions/like", headers=buyer, json={"active": True})
+    client.put(f"/api/feed/{first}/reactions/save", headers=buyer, json={"active": True})
+    assert [i["id"] for i in client.get("/api/feed?sort=top").json()["items"]] == [first, second]   # nhiều tương tác hơn
+    assert client.get("/api/feed?sort=hot").status_code == 422
+
+
 def test_public_feed_info(client):
     assert client.get("/api/feed/info").json() == {"photo_hours": 24, "daily_limit": 5}
 

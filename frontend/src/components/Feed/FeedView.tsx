@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { Bookmark, Heart, Loader2, Share2, Shirt, ShoppingBag, Volume2, VolumeX } from 'lucide-react'
-import { countFeedView, fetchFeed, fetchFeedItem, reactFeed, type FeedItem, type UserProfile } from '../../services/api'
+import {
+  countFeedView, fetchFeed, fetchFeedItem, reactFeed, type FeedItem, type FeedSort, type UserProfile,
+} from '../../services/api'
 import { formatNumber, formatVnd } from '../../lib/format'
 import { useToast } from '../ui/toastContext'
 import { TryOnSheet } from './TryOnSheet'
@@ -10,6 +12,8 @@ interface FeedViewProps {
   user: UserProfile | null
   /** Mở từ link chia sẻ: video này hiện đầu tiên */
   startId?: string | null
+  /** Tab mở sẵn: Dành cho bạn (mới nhất) hoặc Xu hướng */
+  initialSort?: FeedSort
   onRequireLogin: (reason: string) => void
 }
 
@@ -110,7 +114,7 @@ const FeedCard: React.FC<{
 }
 
 /** Feed video dọc của Aura: vuốt lên/xuống để xem video kế tiếp. */
-export const FeedView: React.FC<FeedViewProps> = ({ user, startId, onRequireLogin }) => {
+export const FeedView: React.FC<FeedViewProps> = ({ user, startId, initialSort = 'new', onRequireLogin }) => {
   const toast = useToast()
   const [items, setItems] = useState<FeedItem[] | null>(null)
   const [page, setPage] = useState(1)
@@ -120,13 +124,14 @@ export const FeedView: React.FC<FeedViewProps> = ({ user, startId, onRequireLogi
   const [muted, setMuted] = useState(true)
   const [tryOn, setTryOn] = useState<FeedItem | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [sort, setSort] = useState<FeedSort>(initialSort)
   const scrollerRef = useRef<HTMLDivElement>(null)
   const counted = useRef(new Set<string>())
 
   // Trang đầu (kèm video được chia sẻ, nếu có, ở vị trí đầu tiên)
   useEffect(() => {
     let alive = true
-    Promise.all([fetchFeed(1, PAGE_SIZE), startId ? fetchFeedItem(startId).catch(() => null) : Promise.resolve(null)])
+    Promise.all([fetchFeed(1, PAGE_SIZE, sort), startId ? fetchFeedItem(startId).catch(() => null) : Promise.resolve(null)])
       .then(([res, first]) => {
         if (!alive) return
         const rest = res.items.filter((i) => i.id !== first?.id)
@@ -140,7 +145,7 @@ export const FeedView: React.FC<FeedViewProps> = ({ user, startId, onRequireLogi
     return () => {
       alive = false
     }
-  }, [startId, user?.id])
+  }, [startId, sort, user?.id])
 
   // Video nào đang chiếm phần lớn màn hình thì là video đang xem
   useEffect(() => {
@@ -161,7 +166,7 @@ export const FeedView: React.FC<FeedViewProps> = ({ user, startId, onRequireLogi
   const loadMore = useCallback(async () => {
     setLoadingMore(true)
     try {
-      const res = await fetchFeed(page + 1, PAGE_SIZE)
+      const res = await fetchFeed(page + 1, PAGE_SIZE, sort)
       setItems((list) => {
         const seen = new Set((list ?? []).map((i) => i.id))
         return [...(list ?? []), ...res.items.filter((i) => !seen.has(i.id))]
@@ -173,7 +178,7 @@ export const FeedView: React.FC<FeedViewProps> = ({ user, startId, onRequireLogi
     } finally {
       setLoadingMore(false)
     }
-  }, [page])
+  }, [page, sort])
 
   // Đếm lượt xem một lần cho mỗi video; gần hết danh sách thì tải thêm
   const current = items?.[active]
@@ -233,6 +238,36 @@ export const FeedView: React.FC<FeedViewProps> = ({ user, startId, onRequireLogi
         className="relative h-full w-full sm:max-w-[min(100%,calc((100dvh-4rem)*9/16))] overflow-y-scroll snap-y snap-mandatory no-scrollbar"
         aria-label="Feed video"
       >
+        {/* Tab nổi phía trên video (như demo) */}
+        <div
+          role="tablist"
+          aria-label="Nguồn video"
+          className="sticky top-3 z-20 -mb-10 h-10 mx-auto w-fit flex items-center gap-1 rounded-full bg-black/35 backdrop-blur px-1.5"
+        >
+          {(
+            [
+              { id: 'new', label: 'Dành cho bạn' },
+              { id: 'top', label: 'Xu hướng' },
+            ] as const
+          ).map((t) => (
+            <button
+              key={t.id}
+              role="tab"
+              aria-selected={sort === t.id}
+              onClick={() => {
+                if (sort !== t.id) {
+                  setItems(null)
+                  setSort(t.id)
+                }
+              }}
+              className={`h-8 px-3.5 rounded-full text-sm font-semibold transition-colors ${
+                sort === t.id ? 'bg-white text-[#1E1916]' : 'text-white/85 hover:text-white'
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
         {items === null ? (
           <div className="h-full flex items-center justify-center text-white/70">
             {error ?? <Loader2 className="w-6 h-6 animate-spin" aria-label="Đang tải" />}

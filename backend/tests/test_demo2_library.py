@@ -108,6 +108,18 @@ def test_private_model_requires_consent_and_stays_private(client, shop):
     assert mine["id"] not in {a["id"] for a in client.get("/api/avatars", headers=h).json()}
 
 
+def test_model_region_filter_data(client, shop):
+    h = shop["headers"]
+    mine = _model(client, h, region="europe").json()
+    assert mine["region"] == "europe"
+    assert client.patch(f"/api/my/avatars/{mine['id']}", headers=h, json={"region": "asia"}).json()["region"] == "asia"
+    assert client.patch(f"/api/my/avatars/{mine['id']}", headers=h, json={"region": "mars"}).status_code == 422
+    regions = {a["id"]: a["region"] for a in client.get("/api/avatars", headers=h).json()}
+    assert regions["model_01"] == "asia" and regions[mine["id"]] == "asia"
+    # Admin đặt vùng cho người mẫu dùng chung
+    assert client.patch("/api/avatars/model_02", headers=DEMO_AUTH, json={"region": "europe"}).json()["region"] == "europe"
+
+
 def test_private_model_limit(client, shop, monkeypatch):
     monkeypatch.setenv("PRIVATE_MODELS_LIMIT", "1")
     h = shop["headers"]

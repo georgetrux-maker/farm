@@ -3,25 +3,33 @@ import { ImagePlus, Loader2, Pencil, Plus, ShieldCheck, Trash2, Wand2 } from 'lu
 import {
   createPrivateModel, deletePrivateModel, fetchAvatars, fetchModelQuota, updatePrivateModel, uploadImage,
 } from '../../services/api'
-import type { BrandAvatar } from '../../types'
+import type { BrandAvatar, Region } from '../../types'
 import { invalidateStudioLabels } from '../../lib/useStudioLabels'
 import { AvatarImage } from '../ui/AvatarImage'
 import { Modal } from '../ui/Modal'
+import { RegionField } from '../ui/RegionField'
 import { useToast } from '../ui/toastContext'
 
 interface ModelsViewProps {
   onUseModel: (avatarId: string) => void
 }
 
-type Tab = 'all' | 'female' | 'male' | 'mine'
+type Tab = 'all' | 'female' | 'male' | 'asia' | 'europe' | 'mine'
 const TABS: { id: Tab; label: string }[] = [
   { id: 'all', label: 'Tất cả' },
   { id: 'female', label: 'Nữ' },
   { id: 'male', label: 'Nam' },
+  { id: 'asia', label: 'Châu Á' },
+  { id: 'europe', label: 'Châu Âu' },
   { id: 'mine', label: 'Mẫu của tôi' },
 ]
 
-const EMPTY = { name: '', style: '', gender: 'female' as 'female' | 'male', height: '', weight: '', measurements: '', avatar_url: '' }
+const EMPTY = {
+  name: '', style: '', gender: 'female' as 'female' | 'male', region: '' as Region | '', height: '', weight: '', measurements: '', avatar_url: '',
+}
+/** Người mẫu có thuộc tab này không */
+const inTab = (a: BrandAvatar, t: Tab) =>
+  t === 'all' ? true : t === 'mine' ? !!a.mine : t === 'asia' || t === 'europe' ? a.region === t : genderOf(a) === t
 const genderOf = (a: BrandAvatar) => a.gender ?? 'female'
 
 /** Kho người mẫu AI cho shop: xem mẫu dùng chung, tạo người mẫu riêng từ ảnh của mình (cam kết có quyền dùng ảnh). */
@@ -52,8 +60,8 @@ export const ModelsView: React.FC<ModelsViewProps> = ({ onUseModel }) => {
     return () => clearTimeout(id)
   }, [load])
 
-  const shown = (avatars ?? []).filter((a) => (tab === 'all' ? true : tab === 'mine' ? a.mine : genderOf(a) === tab))
-  const count = (t: Tab) => (avatars ?? []).filter((a) => (t === 'all' ? true : t === 'mine' ? a.mine : genderOf(a) === t)).length
+  const shown = (avatars ?? []).filter((a) => inTab(a, tab))
+  const count = (t: Tab) => (avatars ?? []).filter((a) => inTab(a, t)).length
   const canCreate = quota ? quota.used < quota.limit : false
 
   const openNew = () => {
@@ -63,7 +71,7 @@ export const ModelsView: React.FC<ModelsViewProps> = ({ onUseModel }) => {
     setEditing('new')
   }
   const openEdit = (a: BrandAvatar) => {
-    setForm({ name: a.name, style: a.style, gender: genderOf(a), height: a.height, weight: a.weight, measurements: a.measurements, avatar_url: a.avatar_url })
+    setForm({ name: a.name, style: a.style, gender: genderOf(a), region: a.region ?? '', height: a.height, weight: a.weight, measurements: a.measurements, avatar_url: a.avatar_url })
     setError(null)
     setEditing(a)
   }
@@ -87,7 +95,7 @@ export const ModelsView: React.FC<ModelsViewProps> = ({ onUseModel }) => {
     setError(null)
     if (!form.name.trim() || !form.style.trim()) return setError('Vui lòng nhập tên và phong cách')
     const info = {
-      name: form.name.trim(), style: form.style.trim(), gender: form.gender,
+      name: form.name.trim(), style: form.style.trim(), gender: form.gender, region: form.region || undefined,
       height: form.height.trim(), weight: form.weight.trim(), measurements: form.measurements.trim(),
     }
     setBusy('save')
@@ -150,7 +158,7 @@ export const ModelsView: React.FC<ModelsViewProps> = ({ onUseModel }) => {
         </div>
 
         <div className="flex gap-1 p-1 rounded-full bg-[var(--bg-surface)] overflow-x-auto no-scrollbar w-fit max-w-full" role="tablist">
-          {TABS.map((t) => (
+          {TABS.filter((t) => (t.id !== 'asia' && t.id !== 'europe') || count(t.id) > 0).map((t) => (
             <button
               key={t.id}
               role="tab"
@@ -275,6 +283,7 @@ export const ModelsView: React.FC<ModelsViewProps> = ({ onUseModel }) => {
               </button>
             ))}
           </div>
+          <RegionField value={form.region} onChange={(region) => setForm((f) => ({ ...f, region }))} />
           <label className="block">
             <span className="field-label">Tên người mẫu *</span>
             <input className="field" value={form.name} onChange={set('name')} maxLength={80} placeholder="Ví dụ: Hạnh Nguyên" />

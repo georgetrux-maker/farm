@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  ArrowDownLeft, ArrowUpRight, BadgeCheck, Check, Copy, Loader2, QrCode, ScanLine, Settings2, Undo2, Wallet, XCircle,
+  ArrowDownLeft, ArrowRight, ArrowUpRight, BadgeCheck, Check, Copy, Loader2, QrCode, ScanLine, Settings2, Undo2, Wallet, XCircle,
 } from 'lucide-react'
 import {
   createDeposit, fetchCreditHistory, fetchStudioOptions, fetchWalletSummary, type DepositInfo, type WalletSummary,
@@ -150,6 +150,8 @@ export const WalletView: React.FC<WalletViewProps> = ({ credits, pending, onCrea
     }
   }
 
+  const scrollTo = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+
   const videosFor = (c: number) => (videoCost ? Math.floor(c / videoCost) : null)
 
   return (
@@ -164,9 +166,9 @@ export const WalletView: React.FC<WalletViewProps> = ({ credits, pending, onCrea
           </p>
         </div>
 
-        {/* Số dư (con số chính của trang) + các tổng trong một dải */}
-        <div className="grid lg:grid-cols-[minmax(0,1fr)_minmax(0,2.2fr)] gap-3 sm:gap-4">
-          <div className="rounded-[1.25rem] p-5 border border-[var(--accent-border)] bg-[radial-gradient(90%_120%_at_0%_0%,var(--accent-soft),transparent_70%)] bg-[var(--bg-card)] shadow-[var(--shadow-card)]">
+        {/* Số dư bên trái, bảng gói tháng bên phải (như demo); các tổng nằm ngay dưới */}
+        <div className="grid lg:grid-cols-[minmax(0,17rem)_minmax(0,1fr)] gap-4 sm:gap-5 items-start">
+          <div className="rounded-[1.25rem] p-5 border lg:sticky lg:top-0 border-[var(--accent-border)] bg-[radial-gradient(90%_120%_at_0%_0%,var(--accent-soft),transparent_70%)] bg-[var(--bg-card)] shadow-[var(--shadow-card)]">
             <span className="text-sm text-[var(--text-muted)] flex items-center gap-1.5">
               <Wallet className="w-4 h-4" /> Số dư hiện tại
             </span>
@@ -177,30 +179,43 @@ export const WalletView: React.FC<WalletViewProps> = ({ credits, pending, onCrea
               ≈ {formatVnd(credits * VND_PER_CREDIT)}
               {videosFor(credits) !== null ? `, đủ ${formatNumber(videosFor(credits)!)} video` : ''}
             </div>
+            <div className="mt-5 flex flex-wrap items-center gap-x-4 gap-y-2">
+              <button type="button" onClick={() => scrollTo('nap-le')} className="btn btn-primary">
+                Nạp thêm
+              </button>
+              <button
+                type="button"
+                onClick={() => scrollTo('lich-su')}
+                className="text-sm font-semibold text-[var(--accent-text)] inline-flex items-center gap-1 group"
+              >
+                Lịch sử sử dụng <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5" />
+              </button>
+            </div>
           </div>
-          <StatStrip
-            items={[
-              { label: 'Đã nạp', value: summary ? formatVnd(summary.deposited_vnd) : '…', sub: summary ? `${formatNumber(summary.deposited_credits)} credit` : undefined },
-              { label: 'Đã dùng', value: summary ? formatNumber(summary.used_credits) : '…', sub: 'credit để tạo video' },
-              {
-                label: 'Được hoàn',
-                value: summary ? formatNumber(summary.refunded_credits) : '…',
-                sub: summary?.adjusted_credits
-                  ? `điều chỉnh ${summary.adjusted_credits > 0 ? '+' : ''}${formatNumber(summary.adjusted_credits)}`
-                  : 'credit từ video lỗi/hủy',
-              },
-              ...(summary?.plan_credits
-                ? [{ label: 'Từ gói tháng', value: formatNumber(summary.plan_credits), sub: `đã trả ${formatVnd(summary.plan_paid_vnd)}` }]
-                : []),
-            ]}
-          />
+          <PlansSection pending={pending} onCreated={onCreated} credits={credits} />
         </div>
 
-        <PlansSection pending={pending} onCreated={onCreated} credits={credits} />
+        <StatStrip
+          items={[
+            { label: 'Đã nạp', value: summary ? formatVnd(summary.deposited_vnd) : '…', sub: summary ? `${formatNumber(summary.deposited_credits)} credit` : undefined },
+            { label: 'Đã dùng', value: summary ? formatNumber(summary.used_credits) : '…', sub: 'credit để tạo video' },
+            {
+              label: 'Được hoàn',
+              value: summary ? formatNumber(summary.refunded_credits) : '…',
+              sub: summary?.adjusted_credits
+                ? `điều chỉnh ${summary.adjusted_credits > 0 ? '+' : ''}${formatNumber(summary.adjusted_credits)}`
+                : 'credit từ video lỗi/hủy',
+            },
+            ...(summary?.plan_credits
+              ? [{ label: 'Từ gói tháng', value: formatNumber(summary.plan_credits), sub: `đã trả ${formatVnd(summary.plan_paid_vnd)}` }]
+              : []),
+          ]}
+          />
+
 
         <div className="grid lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)] gap-5 sm:gap-6 items-start">
           {/* Chọn gói */}
-          <section className="card p-4 sm:p-6 space-y-4">
+          <section id="nap-le" className="card p-4 sm:p-6 space-y-4 scroll-mt-4">
             <h2 className="title text-lg">Nạp credit lẻ</h2>
             <div className="grid grid-cols-2 gap-3">
               {PACKAGES.map((c) => {
@@ -327,7 +342,7 @@ export const WalletView: React.FC<WalletViewProps> = ({ credits, pending, onCrea
         </div>
 
         {/* Lịch sử */}
-        <section className="card p-4 sm:p-6">
+        <section id="lich-su" className="card p-4 sm:p-6 scroll-mt-4">
           <h2 className="title text-lg mb-3">Lịch sử giao dịch</h2>
           {!history ? (
             <div className="space-y-3">

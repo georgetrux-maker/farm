@@ -36,6 +36,12 @@ export const sceneBackground = (id: string): string => {
   return SCENE_BACKDROPS[id] ? `url(/samples/img/scene_${id}.jpg) center/cover no-repeat, ${gradient}` : gradient
 }
 
+export const REGION_LABELS: Record<string, string> = {
+  asia: 'Châu Á',
+  europe: 'Châu Âu',
+  other: 'Khác',
+}
+
 export const TRANSITION_LABELS: Record<string, string> = {
   fade: 'Mờ dần',
   slide: 'Trượt ngang',

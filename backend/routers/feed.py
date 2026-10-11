@@ -69,13 +69,16 @@ def _query(sql_tail: str, args: list, user: Optional[dict]) -> list:
 
 @router.get("/api/feed")
 def api_feed(page: int = Query(1, ge=1, le=1000), page_size: int = Query(10, ge=1, le=30),
-             shop_id: Optional[str] = Query(None, max_length=40), user: Optional[dict] = Depends(optional_user)):
-    """Video mới nhất trước. Không cần đăng nhập; đã đăng nhập thì biết mình đã thích/lưu video nào."""
+             shop_id: Optional[str] = Query(None, max_length=40),
+             sort: Literal["new", "top"] = Query("new", description="new = mới nhất; top = xu hướng (xem, thích, lưu nhiều)"),
+             user: Optional[dict] = Depends(optional_user)):
+    """Mặc định video mới nhất trước. Không cần đăng nhập; đã đăng nhập thì biết mình đã thích/lưu video nào."""
     tail, args = "", []
     if shop_id:
         tail, args = " AND u.id = ?", [shop_id]
-    items = _query(tail + " ORDER BY j.feed_at DESC, j.rowid DESC LIMIT ? OFFSET ?",
-                   args + [page_size + 1, (page - 1) * page_size], user)
+    order = (" ORDER BY (COALESCE(j.views, 0) + 5 * likes + 8 * saves) DESC, j.feed_at DESC, j.rowid DESC"
+             if sort == "top" else " ORDER BY j.feed_at DESC, j.rowid DESC")
+    items = _query(tail + order + " LIMIT ? OFFSET ?", args + [page_size + 1, (page - 1) * page_size], user)
     return {"items": items[:page_size], "page": page, "has_more": len(items) > page_size}
 
 

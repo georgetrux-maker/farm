@@ -55,6 +55,11 @@
   --on-ink: #FFFFFF;
 
   --accent-color: #A8506A; /* hồng đất: thanh tiến độ, lựa chọn, điểm nhấn */
+  --side-bg: #26191C;          /* menu Admin: nền tối */
+  --side-text: #F3E9E4;
+  --side-muted: #B9A9A2;
+  --side-hover: rgba(255,255,255,0.08);
+  --side-active: #E3A1B4;
   --on-accent: #FFFFFF;
   --accent-text: #9B4560;
   --accent-soft: #F8EBEF;
@@ -103,6 +108,11 @@ html.dark {
   --on-ink: #1B1714;
 
   --accent-color: #E3A1B4;
+  --side-bg: #120E0D;          /* menu Admin: nền tối */
+  --side-text: #F3E9E4;
+  --side-muted: #B9A9A2;
+  --side-hover: rgba(255,255,255,0.07);
+  --side-active: #E3A1B4;
   --on-accent: #1B1714;
   --accent-text: #EBB3C3;
   --accent-soft: rgba(227, 161, 180, 0.12);
@@ -152,6 +162,11 @@ html[data-palette="violet"] {
   --on-ink: #FFFFFF;
 
   --accent-color: #6D4AFF;
+  --side-bg: #1C1840;          /* menu Admin: nền tối */
+  --side-text: #EEEAFF;
+  --side-muted: #A9A3D0;
+  --side-hover: rgba(255,255,255,0.09);
+  --side-active: #B3A4FF;
   --on-accent: #FFFFFF;
   --accent-text: #4F33D6;
   --accent-soft: #EFEBFF;
@@ -186,6 +201,11 @@ html.dark[data-palette="violet"] {
   --on-ink: #FFFFFF;
 
   --accent-color: #9B87FF;
+  --side-bg: #100E26;          /* menu Admin: nền tối */
+  --side-text: #EEEAFF;
+  --side-muted: #A9A3D0;
+  --side-hover: rgba(255,255,255,0.08);
+  --side-active: #B3A4FF;
   --on-accent: #0F0D1A;
   --accent-text: #B6A8FF;
   --accent-soft: rgba(155, 135, 255, 0.14);

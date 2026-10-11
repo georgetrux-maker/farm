@@ -161,6 +161,7 @@ class PrivateModelCreate(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     style: str = Field(min_length=1, max_length=120)
     gender: Literal["female", "male"] = "female"
+    region: Optional[Literal["asia", "europe", "other"]] = None
     height: str = Field(default="", max_length=20)
     weight: str = Field(default="", max_length=20)
     measurements: str = Field(default="", max_length=40)
@@ -172,6 +173,7 @@ class PrivateModelUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=80)
     style: Optional[str] = Field(default=None, min_length=1, max_length=120)
     gender: Optional[Literal["female", "male"]] = None
+    region: Optional[Literal["asia", "europe", "other"]] = None
     height: Optional[str] = Field(default=None, max_length=20)
     weight: Optional[str] = Field(default=None, max_length=20)
     measurements: Optional[str] = Field(default=None, max_length=40)
@@ -199,7 +201,8 @@ def api_create_private_model(req: PrivateModelCreate, user: dict = Depends(get_c
     url = media_url(resolve_media_ref(req.avatar_url))  # chỉ nhận ảnh đã tải lên máy chủ, không nhận link ngoài
     avatar = add_brand_avatar_entry(
         name=req.name.strip(), style=req.style.strip(), height=req.height.strip(), weight=req.weight.strip(),
-        measurements=req.measurements.strip(), avatar_url=url, badge="Mẫu riêng", gender=req.gender, owner_id=user["id"])
+        measurements=req.measurements.strip(), avatar_url=url, badge="Mẫu riêng", gender=req.gender, owner_id=user["id"],
+        region=req.region)
     return avatar_out(avatar, user)
 
 

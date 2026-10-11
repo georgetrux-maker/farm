@@ -107,7 +107,7 @@ export const PlansSection: React.FC<PlansSectionProps> = ({ pending, onCreated, 
 
       {error && <p className="text-sm text-[var(--danger-text)] mt-3">{error}</p>}
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4 mt-5">
+      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-1 xl:grid-cols-3 gap-3 sm:gap-4 mt-5">
         {!data
           ? [0, 1, 2].map((i) => <div key={i} className="skeleton rounded-2xl h-72" />)
           : data.plans.map((p) => {

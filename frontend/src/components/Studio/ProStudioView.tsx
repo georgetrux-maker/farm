@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import {
-  AlertTriangle, ArrowLeft, ArrowRight, Copy, Film, Loader2, Package, Plus, RefreshCw, RotateCcw, Sparkles, X,
+  AlertTriangle, ArrowDown, ArrowUp, Copy, Film, Loader2, Package, Plus, RefreshCw, RotateCcw, Sparkles, X,
 } from 'lucide-react'
 import {
   ApiError, fetchAvatars, fetchJobStatus, fetchProfile, fetchStudioOptions, previewScript, triggerPipelineRun,
@@ -9,7 +9,7 @@ import {
 import type { AIJob, BrandAvatar, LibraryProduct, SceneSpec, VideoEffects } from '../../types'
 import type { CreateRequest, ProductSeed } from '../../lib/createRequest'
 import { formatNumber, formatVnd } from '../../lib/format'
-import { sceneBackground, SCENE_LABELS, STYLE_LABELS, TEMPLATE_SHORT_LABELS, TRANSITION_LABELS } from '../../lib/labels'
+import { sceneBackground, SCENE_LABELS, STYLE_LABELS, TRANSITION_LABELS } from '../../lib/labels'
 import { useVoicePreview } from '../../lib/useVoicePreview'
 import { CostSummary } from '../Create/CostSummary'
 import { JobProgress } from '../Create/JobProgress'
@@ -70,7 +70,7 @@ const ScenePreview: React.FC<{
   caption: string
   label: string
 }> = ({ product, scene, effects, caption, label }) => (
-  <figure className="w-44 sm:w-56 lg:w-full lg:max-w-[16rem] mx-auto">
+  <figure className="w-48 sm:w-56 lg:w-72 shrink-0">
     <div className="phone-frame">
       <div className="relative aspect-[9/16] overflow-hidden" style={{ background: sceneBackground(scene.scene) }}>
         {product?.image_url ? (
@@ -301,11 +301,24 @@ export const ProStudioView: React.FC<ProStudioViewProps> = ({ credits, onCredits
   return (
     <div className="flex-1 h-full overflow-y-auto text-[var(--text-main)]">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-5 sm:py-8 space-y-5 sm:space-y-6">
-        <div>
-          <h1 className="display text-3xl sm:text-4xl">Pro Studio</h1>
-          <p className="text-[var(--text-muted)] mt-2 max-w-2xl">
-            Dựng video nhiều cảnh: mỗi cảnh một bối cảnh, kiểu chuyển động và thời lượng riêng, nối bằng hiệu ứng chuyển cảnh.
-          </p>
+        <div className="flex items-end justify-between gap-4 flex-wrap">
+          <div>
+            <h1 className="display text-3xl sm:text-4xl">Pro Studio</h1>
+            <p className="text-[var(--text-muted)] mt-2 max-w-2xl">
+              Dựng video nhiều cảnh: mỗi cảnh một bối cảnh, kiểu chuyển động và thời lượng riêng, nối bằng hiệu ứng chuyển cảnh.
+            </p>
+          </div>
+          {phase === 'edit' && (
+            <button
+              type="button"
+              onClick={missingCredits > 0 ? onOpenDeposit : exportVideo}
+              disabled={submitting || !options || (missingCredits === 0 && !product)}
+              className="btn btn-primary btn-lg hidden lg:inline-flex"
+            >
+              {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Film className="w-4 h-4" />}
+              {missingCredits > 0 ? `Nạp thêm ${formatNumber(missingCredits)}` : 'Xuất video'}
+            </button>
+          )}
         </div>
 
         {phase === 'running' && job && <JobProgress job={job} fallbackImage={product?.image_url ?? null} onOpenVideos={onOpenVideos} />}
@@ -379,19 +392,8 @@ export const ProStudioView: React.FC<ProStudioViewProps> = ({ credits, onCredits
               )}
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_18rem] gap-5 lg:gap-6 items-start">
-              {/* Xem trước: trên cùng ở điện thoại, cột phải ở máy tính */}
-              <div className="lg:order-2 lg:sticky lg:top-0">
-                <ScenePreview
-                  product={product}
-                  scene={current}
-                  effects={effects}
-                  caption={caption}
-                  label={`Cảnh ${Math.min(active, scenes.length - 1) + 1}/${scenes.length} · ${SCENE_LABELS[current.scene] ?? current.scene} · ${current.duration_sec} giây`}
-                />
-              </div>
-
-              <section className="card lg:order-1 min-w-0">
+            <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_auto] gap-5 lg:gap-6 items-start">
+              <section className="card min-w-0">
                 <div role="tablist" aria-label="Chỉnh sửa" className="flex gap-1 overflow-x-auto no-scrollbar border-b border-[var(--border-subtle)] px-3 sm:px-4">
                   {TABS.map((t) => (
                     <button
@@ -531,94 +533,77 @@ export const ProStudioView: React.FC<ProStudioViewProps> = ({ credits, onCredits
                   )}
                 </div>
               </section>
-            </div>
 
-            {/* Danh sách cảnh */}
-            <section className="card p-4 sm:p-5">
-              <div className="flex items-baseline justify-between gap-3 mb-3 flex-wrap">
-                <h2 className="title text-lg">Các cảnh</h2>
-                <span className="text-sm text-[var(--text-muted)]">
-                  {scenes.length} cảnh · khoảng {Math.round(totalSec)} giây
-                  {extraCost > 0 && <span className="hidden sm:inline"> · mỗi cảnh thêm {formatNumber(extraCost)} credit</span>}
-                </span>
-              </div>
-              <ol className="flex gap-3 overflow-x-auto no-scrollbar pb-1">
-                {scenes.map((s, i) => {
-                  const selected = i === Math.min(active, scenes.length - 1)
-                  return (
-                    <li key={s.key} className="shrink-0 w-36 sm:w-40">
-                      <div
-                        className={`rounded-2xl border p-2 transition-colors ${
-                          selected ? 'border-[var(--ink)] bg-[var(--accent-soft)]' : 'border-[var(--border-subtle)] hover:border-[var(--border-strong)]'
-                        }`}
-                      >
-                        <button type="button" onClick={() => setActive(i)} aria-pressed={selected} className="w-full text-left">
-                          <span className="relative block aspect-[4/3] rounded-xl overflow-hidden mb-2" style={{ background: sceneBackground(s.scene) }}>
+              {/* Xem trước lớn + cột các cảnh bên phải (điện thoại: cột cảnh nằm dưới) */}
+              <div className="flex flex-col items-center gap-4 lg:flex-row lg:items-start lg:sticky lg:top-0">
+                <ScenePreview
+                  product={product}
+                  scene={current}
+                  effects={effects}
+                  caption={caption}
+                  label={`Cảnh ${Math.min(active, scenes.length - 1) + 1}/${scenes.length} · ${SCENE_LABELS[current.scene] ?? current.scene} · ${current.duration_sec} giây`}
+                />
+                <div className="w-full lg:w-[5.25rem] shrink-0" aria-label="Các cảnh">
+                  <ol className="flex lg:flex-col gap-2.5 overflow-x-auto lg:overflow-visible no-scrollbar pb-1 justify-center lg:justify-start">
+                    {scenes.map((s, i) => {
+                      const selected = i === Math.min(active, scenes.length - 1)
+                      return (
+                        <li key={s.key} className="shrink-0 w-[4.5rem] lg:w-full">
+                          <button
+                            type="button"
+                            onClick={() => setActive(i)}
+                            aria-pressed={selected}
+                            aria-label={`Cảnh ${i + 1}, ${SCENE_LABELS[s.scene] ?? s.scene}, ${s.duration_sec} giây`}
+                            className={`group relative block w-full aspect-[3/4] rounded-xl overflow-hidden ring-2 ring-offset-2 ring-offset-[var(--bg-main)] transition ${
+                              selected ? 'ring-[var(--accent-color)]' : 'ring-transparent hover:ring-[var(--border-strong)]'
+                            }`}
+                            style={{ background: sceneBackground(s.scene) }}
+                          >
                             {product?.image_url && (
-                              <img src={product.image_url} alt="" className="absolute inset-0 m-auto h-[78%] w-auto max-w-[70%] object-contain rounded-md" />
+                              <img src={product.image_url} alt="" className="absolute inset-0 m-auto h-[62%] w-auto max-w-[70%] object-contain rounded" />
                             )}
-                          </span>
-                          <span className="block text-sm font-semibold">
-                            Cảnh {i + 1} · {s.duration_sec} giây
-                          </span>
-                          <span className="block text-xs text-[var(--text-muted)] truncate">
-                            {TEMPLATE_SHORT_LABELS[s.template] ?? s.template}, {SCENE_LABELS[s.scene] ?? s.scene}
-                          </span>
+                            <span className="absolute inset-x-0 bottom-0 bg-black/55 text-white text-[11px] font-semibold py-0.5 text-center tabular-nums">
+                              Cảnh {i + 1} · {s.duration_sec}s
+                            </span>
+                          </button>
+                        </li>
+                      )
+                    })}
+                    {scenes.length < maxScenes && (
+                      <li className="shrink-0 w-[4.5rem] lg:w-full">
+                        <button
+                          type="button"
+                          onClick={addScene}
+                          aria-label="Thêm cảnh"
+                          className="w-full aspect-[3/4] rounded-xl border-2 border-dashed border-[var(--border-strong)] text-[var(--text-sub)] hover:border-[var(--accent-color)] hover:text-[var(--text-main)] transition-colors flex flex-col items-center justify-center gap-0.5 text-xs font-semibold"
+                        >
+                          <Plus className="w-5 h-5" />
+                          Thêm
+                          {extraCost > 0 && <span className="font-normal text-[10px] text-[var(--text-muted)]">+{formatNumber(extraCost)}</span>}
                         </button>
-                        <div className="flex items-center justify-between mt-1.5 -mx-1">
-                          <div className="flex">
-                            <button type="button" onClick={() => moveScene(i, -1)} disabled={i === 0} className="icon-btn w-7 h-7" aria-label={`Đưa cảnh ${i + 1} lên trước`}>
-                              <ArrowLeft className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => moveScene(i, 1)}
-                              disabled={i === scenes.length - 1}
-                              className="icon-btn w-7 h-7"
-                              aria-label={`Đưa cảnh ${i + 1} ra sau`}
-                            >
-                              <ArrowRight className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                          <div className="flex">
-                            <button
-                              type="button"
-                              onClick={() => duplicateScene(i)}
-                              disabled={scenes.length >= maxScenes}
-                              className="icon-btn w-7 h-7"
-                              aria-label={`Nhân đôi cảnh ${i + 1}`}
-                            >
-                              <Copy className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => removeScene(i)}
-                              disabled={scenes.length <= 1}
-                              className="icon-btn w-7 h-7"
-                              aria-label={`Xóa cảnh ${i + 1}`}
-                            >
-                              <X className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    </li>
-                  )
-                })}
-                {scenes.length < maxScenes && (
-                  <li className="shrink-0 w-36 sm:w-40">
-                    <button
-                      type="button"
-                      onClick={addScene}
-                      className="w-full h-full min-h-[11rem] rounded-2xl border-2 border-dashed border-[var(--border-strong)] text-[var(--text-sub)] hover:border-[var(--accent-color)] hover:text-[var(--text-main)] transition-colors flex flex-col items-center justify-center gap-1 text-sm font-semibold"
-                    >
-                      <Plus className="w-5 h-5" /> Thêm cảnh
-                      {extraCost > 0 && <span className="text-xs font-normal text-[var(--text-muted)]">+{formatNumber(extraCost)} credit</span>}
-                    </button>
-                  </li>
-                )}
-              </ol>
-            </section>
+                      </li>
+                    )}
+                  </ol>
+                  <div className="mt-3 flex lg:flex-wrap items-center justify-center gap-0.5">
+                    {(
+                      [
+                        { label: 'Đưa cảnh lên trước', icon: ArrowUp, run: () => moveScene(Math.min(active, scenes.length - 1), -1), off: Math.min(active, scenes.length - 1) === 0 },
+                        { label: 'Đưa cảnh ra sau', icon: ArrowDown, run: () => moveScene(Math.min(active, scenes.length - 1), 1), off: Math.min(active, scenes.length - 1) === scenes.length - 1 },
+                        { label: 'Nhân đôi cảnh', icon: Copy, run: () => duplicateScene(Math.min(active, scenes.length - 1)), off: scenes.length >= maxScenes },
+                        { label: 'Xóa cảnh', icon: X, run: () => removeScene(Math.min(active, scenes.length - 1)), off: scenes.length <= 1 },
+                      ] as const
+                    ).map((a) => (
+                      <button key={a.label} type="button" onClick={a.run} disabled={a.off} className="icon-btn w-8 h-8" aria-label={`${a.label} ${Math.min(active, scenes.length - 1) + 1}`} title={a.label}>
+                        <a.icon className="w-4 h-4" />
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-xs text-[var(--text-muted)] text-center mt-2 leading-snug">
+                    {scenes.length} cảnh<br className="hidden lg:block" /> khoảng {Math.round(totalSec)} giây
+                  </p>
+                </div>
+              </div>
+            </div>
 
             {/* Chi phí và nút xuất: luôn nằm ở đáy màn hình */}
             <div className="sticky bottom-3 sm:bottom-5 z-10">

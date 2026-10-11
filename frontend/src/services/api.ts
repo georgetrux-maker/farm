@@ -1,5 +1,5 @@
 import type {
-  AIJob, BrandAvatar, CreditTransaction, DashboardStats, LibraryProduct, MyVideosPage, ProductLibraryPage, SceneSpec,
+  AIJob, BrandAvatar, CreditTransaction, DashboardStats, LibraryProduct, MyVideosPage, ProductLibraryPage, Region, SceneSpec,
   SystemAuditReport, VideoEffects, VideoFilter, VideoSort,
 } from '../types'
 
@@ -317,6 +317,7 @@ export interface PrivateModelInput {
   name: string
   style: string
   gender: 'female' | 'male'
+  region?: Region
   height?: string
   weight?: string
   measurements?: string
@@ -352,6 +353,7 @@ export function addNewAvatar(data: {
   avatar_url: string
   badge?: string
   gender?: 'female' | 'male'
+  region?: Region
 }) {
   return post<BrandAvatar>('/api/avatars', data, 'Không thể thêm người mẫu')
 }
@@ -798,7 +800,7 @@ export function fetchSupportInfo(): Promise<SupportInfo> {
 
 export function updateAvatar(
   avatarId: string,
-  data: Partial<Pick<BrandAvatar, 'name' | 'style' | 'height' | 'weight' | 'measurements' | 'avatar_url' | 'badge' | 'gender'>>,
+  data: Partial<Pick<BrandAvatar, 'name' | 'style' | 'height' | 'weight' | 'measurements' | 'avatar_url' | 'badge' | 'gender' | 'region'>>,
 ): Promise<BrandAvatar> {
   return request(`/api/avatars/${encodeURIComponent(avatarId)}`, { method: 'PATCH', body: JSON.stringify(data) },
     'Không thể cập nhật người mẫu')
@@ -916,8 +918,10 @@ export interface FeedItem {
   published_at: string | null
 }
 
-export function fetchFeed(page = 1, pageSize = 8): Promise<{ items: FeedItem[]; page: number; has_more: boolean }> {
-  return request(`/api/feed?page=${page}&page_size=${pageSize}`, {}, 'Không tải được feed')
+export type FeedSort = 'new' | 'top'
+
+export function fetchFeed(page = 1, pageSize = 8, sort: FeedSort = 'new'): Promise<{ items: FeedItem[]; page: number; has_more: boolean }> {
+  return request(`/api/feed?page=${page}&page_size=${pageSize}&sort=${sort}`, {}, 'Không tải được feed')
 }
 
 export function fetchFeedItem(id: string): Promise<FeedItem> {

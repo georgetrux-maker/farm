@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { Bookmark, Clapperboard, LogOut, Moon, Shirt, ShoppingBag, Sun, Trash2 } from 'lucide-react'
+import { Bookmark, Clapperboard, LogOut, Moon, Shirt, ShoppingBag, Sun, Trash2, TrendingUp } from 'lucide-react'
 import {
   deleteBuyerTryon, fetchBuyerTryons, fetchSavedFeed, type BuyerTryon, type FeedItem, type UserProfile,
 } from '../../services/api'
@@ -11,9 +11,10 @@ import { useToast } from '../ui/toastContext'
 import { BeforeAfter } from './TryOnSheet'
 import { FeedView } from './FeedView'
 
-type BuyerView = 'feed' | 'saved' | 'tryons'
+type BuyerView = 'feed' | 'trending' | 'saved' | 'tryons'
 const TABS: { id: BuyerView; label: string; icon: React.ElementType }[] = [
   { id: 'feed', label: 'Feed', icon: Clapperboard },
+  { id: 'trending', label: 'Xu hướng', icon: TrendingUp },
   { id: 'saved', label: 'Đã lưu', icon: Bookmark },
   { id: 'tryons', label: 'Ảnh thử đồ', icon: Shirt },
 ]
@@ -21,7 +22,7 @@ const TABS: { id: BuyerView; label: string; icon: React.ElementType }[] = [
 /** "#feed/JOB_1" -> { view: 'feed', id: 'JOB_1' } */
 function parseBuyerHash(hash: string): { view: BuyerView; id: string | null } {
   const [head, id] = hash.replace(/^#\/?/, '').split('/')
-  const view = (['feed', 'saved', 'tryons'] as const).find((v) => v === head) ?? 'feed'
+  const view = (['feed', 'trending', 'saved', 'tryons'] as const).find((v) => v === head) ?? 'feed'
   return { view, id: view === 'feed' && id ? decodeURIComponent(id) : null }
 }
 
@@ -219,12 +220,13 @@ export const BuyerApp: React.FC<BuyerAppProps> = ({ user, mode, onModeChange, on
       </header>
 
       <main id="noi-dung" className="flex-1 min-h-0 flex">
-        {route.view === 'feed' && <FeedView user={user} startId={route.id} onRequireLogin={() => {}} />}
+        {route.view === 'feed' && <FeedView key="feed" user={user} startId={route.id} onRequireLogin={() => {}} />}
+        {route.view === 'trending' && <FeedView key="trending" user={user} initialSort="top" onRequireLogin={() => {}} />}
         {route.view === 'saved' && <SavedView onOpen={(id) => go('feed', id)} />}
         {route.view === 'tryons' && <TryonsView />}
       </main>
 
-      <nav className="sm:hidden shrink-0 border-t border-[var(--border-subtle)] bg-[var(--bg-card)] grid grid-cols-3 pb-[env(safe-area-inset-bottom)]" aria-label="Menu người mua">
+      <nav className="sm:hidden shrink-0 border-t border-[var(--border-subtle)] bg-[var(--bg-card)] grid grid-cols-4 pb-[env(safe-area-inset-bottom)]" aria-label="Menu người mua">
         {TABS.map((t) => (
           <button
             key={t.id}

@@ -254,6 +254,7 @@ def init_db():
     _add_column_if_missing(cursor, "wallet_transactions", "amount_vnd", "INTEGER")
     _add_column_if_missing(cursor, "users", "disabled", "INTEGER DEFAULT 0")  # 1 = quản trị viên đã khóa
     _add_column_if_missing(cursor, "brand_avatars", "gender", "TEXT DEFAULT 'female'")
+    _add_column_if_missing(cursor, "brand_avatars", "region", "TEXT")  # asia | europe | other (bộ lọc Châu Á / Châu Âu)
     # Sản phẩm của tôi: link mua, size, cho khách thử đồ (shop trả phí), ẩn thay vì xóa (video cũ vẫn trỏ tới)
     _add_column_if_missing(cursor, "products", "product_url", "TEXT")
     _add_column_if_missing(cursor, "products", "sizes", "TEXT")
@@ -371,6 +372,7 @@ def init_db():
         INSERT OR IGNORE INTO brand_avatars (id, name, style, height, weight, measurements, avatar_url, badge, renders_count, is_default)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', row)
+    cursor.execute("UPDATE brand_avatars SET region = 'asia' WHERE id = 'model_01' AND region IS NULL")
 
     cursor.execute("SELECT COUNT(*) FROM users WHERE id = ?", (DEMO_USER_ID,))
     if cursor.fetchone()[0] == 0:
@@ -564,14 +566,14 @@ def get_brand_avatar(avatar_id: str):
 
 
 def add_brand_avatar_entry(name: str, style: str, height: str, weight: str, measurements: str, avatar_url: str,
-                           badge: str = "Tùy Chỉnh", gender: str = "female", owner_id: str = None):
+                           badge: str = "Tùy Chỉnh", gender: str = "female", owner_id: str = None, region: str = None):
     avatar_id = f"model_{uuid.uuid4().hex[:6]}"
     conn = get_db()
     conn.execute('''
     INSERT INTO brand_avatars (id, name, style, height, weight, measurements, avatar_url, badge, renders_count,
-                               is_default, gender, owner_id, consent_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, CASE WHEN ? IS NULL THEN NULL ELSE CURRENT_TIMESTAMP END)
-    ''', (avatar_id, name, style, height, weight, measurements, avatar_url, badge, gender, owner_id, owner_id))
+                               is_default, gender, owner_id, consent_at, region)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, CASE WHEN ? IS NULL THEN NULL ELSE CURRENT_TIMESTAMP END, ?)
+    ''', (avatar_id, name, style, height, weight, measurements, avatar_url, badge, gender, owner_id, owner_id, region))
     conn.commit()
     conn.close()
     return get_brand_avatar(avatar_id)
@@ -584,7 +586,7 @@ def archive_brand_avatar(avatar_id: str):
     conn.close()
 
 
-_AVATAR_FIELDS = ("name", "style", "height", "weight", "measurements", "avatar_url", "badge", "gender")
+_AVATAR_FIELDS = ("name", "style", "height", "weight", "measurements", "avatar_url", "badge", "gender", "region")
 
 
 def update_brand_avatar(avatar_id: str, **fields):

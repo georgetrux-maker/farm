@@ -16,6 +16,8 @@ const GENDERS = [
   { id: 'all', label: 'Tất cả' },
   { id: 'female', label: 'Nữ' },
   { id: 'male', label: 'Nam' },
+  { id: 'asia', label: 'Châu Á' },
+  { id: 'europe', label: 'Châu Âu' },
   { id: 'mine', label: 'Mẫu của tôi' },
 ] as const
 
@@ -36,14 +38,24 @@ export const ModelPicker: React.FC<{ avatars: BrandAvatar[]; value: string; onCh
     )
   }
   const hasMine = avatars.some((a) => a.mine)
-  const hasBoth = (avatars.some((a) => a.gender === 'male') && avatars.some((a) => (a.gender ?? 'female') === 'female')) || hasMine
+  const hasRegion = avatars.some((a) => a.region === 'asia' || a.region === 'europe')
+  const hasBoth =
+    (avatars.some((a) => a.gender === 'male') && avatars.some((a) => (a.gender ?? 'female') === 'female')) || hasMine || hasRegion
   const shown =
-    gender === 'all' ? avatars : gender === 'mine' ? avatars.filter((a) => a.mine) : avatars.filter((a) => (a.gender ?? 'female') === gender)
+    gender === 'all'
+      ? avatars
+      : gender === 'mine'
+        ? avatars.filter((a) => a.mine)
+        : gender === 'asia' || gender === 'europe'
+          ? avatars.filter((a) => a.region === gender)
+          : avatars.filter((a) => (a.gender ?? 'female') === gender)
   return (
     <div>
       {hasBoth && (
         <div role="tablist" aria-label="Lọc người mẫu" className="flex gap-1 p-1 rounded-full bg-[var(--bg-surface)] w-fit mb-4">
-          {GENDERS.filter((g) => g.id !== 'mine' || hasMine).map((g) => (
+          {GENDERS.filter(
+            (g) => (g.id !== 'mine' || hasMine) && ((g.id !== 'asia' && g.id !== 'europe') || avatars.some((a) => a.region === g.id)),
+          ).map((g) => (
             <button
               key={g.id}
               role="tab"

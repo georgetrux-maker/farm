@@ -88,6 +88,7 @@ export interface BrandAvatar {
   avatar_url: string
   badge?: string | null
   gender?: 'female' | 'male'
+  region?: Region | null
   /** Người mẫu riêng của shop đang đăng nhập */
   mine?: boolean
   renders_count?: number
@@ -176,3 +177,6 @@ export interface VideoEffects {
   subtitles: boolean
   title_card: boolean
 }
+
+/** Vùng của người mẫu, dùng cho bộ lọc Châu Á / Châu Âu */
+export type Region = 'asia' | 'europe' | 'other'

@@ -50,6 +50,7 @@ class AddAvatarRequest(BaseModel):
     avatar_url: str = Field(max_length=1000, description="URL https hoặc /media/... (ảnh toàn thân đã upload)")
     badge: Optional[str] = Field(default="Tùy Chỉnh", max_length=40)
     gender: Literal["female", "male"] = "female"
+    region: Optional[Literal["asia", "europe", "other"]] = None
 
 
 @router.post("/api/avatars")
@@ -58,6 +59,7 @@ def api_add_avatar(req: AddAvatarRequest, user: dict = Depends(require_admin_rol
     res = add_brand_avatar_entry(
         name=req.name, style=req.style, height=req.height, weight=req.weight,
         measurements=req.measurements, avatar_url=url, badge=req.badge or "Tùy Chỉnh", gender=req.gender,
+        region=req.region,
     )
     audit.record(user, "avatar.create", res["id"], req.name)
     return res
@@ -77,6 +79,7 @@ class UpdateAvatarRequest(BaseModel):
     avatar_url: Optional[str] = Field(default=None, max_length=1000, description="URL https hoặc /media/... đã upload")
     badge: Optional[str] = Field(default=None, max_length=40)
     gender: Optional[Literal["female", "male"]] = None
+    region: Optional[Literal["asia", "europe", "other"]] = None
 
 
 @router.patch("/api/avatars/{avatar_id}")

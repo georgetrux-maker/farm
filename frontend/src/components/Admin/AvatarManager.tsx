@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { Check, ImagePlus, Loader2, Pencil, Plus, RefreshCw, Users2 } from 'lucide-react'
 import { addNewAvatar, fetchAvatars, setDefaultAvatar, updateAvatar, uploadImage } from '../../services/api'
-import type { BrandAvatar } from '../../types'
+import type { BrandAvatar, Region } from '../../types'
 import { AvatarImage } from '../ui/AvatarImage'
 import { Modal } from '../ui/Modal'
+import { RegionField } from '../ui/RegionField'
 import { useToast } from '../ui/toastContext'
 
 type Gender = 'female' | 'male'
@@ -11,7 +12,7 @@ const DEFAULTS: Record<Gender, { height: string; weight: string; measurements: s
   female: { height: '1m65', weight: '48kg', measurements: '84-60-90' },
   male: { height: '1m76', weight: '68kg', measurements: '96-78-94' },
 }
-const EMPTY_FORM = { name: '', style: '', ...DEFAULTS.female, avatar_url: '', gender: 'female' as Gender }
+const EMPTY_FORM = { name: '', style: '', ...DEFAULTS.female, avatar_url: '', gender: 'female' as Gender, region: '' as Region | '' }
 
 type Tab = 'all' | Gender | 'default'
 const genderOf = (a: BrandAvatar): Gender => a.gender ?? 'female'
@@ -101,7 +102,7 @@ export const AvatarManager: React.FC = () => {
     setEditing(a)
     setForm({
       name: a.name, style: a.style, height: a.height, weight: a.weight, measurements: a.measurements,
-      avatar_url: a.avatar_url, gender: genderOf(a),
+      avatar_url: a.avatar_url, gender: genderOf(a), region: a.region ?? '',
     })
     setFormError(null)
     setAdding(true)
@@ -121,7 +122,7 @@ export const AvatarManager: React.FC = () => {
     if (!form.avatar_url) return setFormError('Vui lòng tải ảnh toàn thân của người mẫu')
     setSaving(true)
     try {
-      const data = { ...form, name: form.name.trim(), style: form.style.trim() }
+      const data = { ...form, region: form.region || undefined, name: form.name.trim(), style: form.style.trim() }
       if (editing) {
         // Chỉ gửi ảnh khi đã đổi (ảnh mẫu có sẵn có thể là link ngoài)
         const { avatar_url, ...rest } = data
@@ -313,6 +314,7 @@ export const AvatarManager: React.FC = () => {
               ))}
             </div>
           </div>
+          <RegionField value={form.region} onChange={(region) => setForm((f) => ({ ...f, region }))} />
           <label className="block">
             <span className="field-label">Tên người mẫu *</span>
             <input className="field" value={form.name} onChange={set('name')} maxLength={80} placeholder="Ví dụ: Hoàng Yến" />
